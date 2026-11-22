@@ -19,9 +19,10 @@ registry_smoke_failure_classification() {
 
 registry_release_smoke_main() {
 	set -euo pipefail
-	local root_dir version registry_url registry_authority metadata_status smoke_status classification package_name registry_packages rc_tag_arg
+	local root_dir version registry_url registry_authority metadata_status smoke_status classification package_name registry_packages rc_tag_arg core_tarball
 	local -a package_args=()
 	local -a package_names=()
+	core_tarball=""
 	root_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 	cd "$root_dir"
 
@@ -61,9 +62,25 @@ registry_release_smoke_main() {
 	# Reuse the publish manifest enumeration so validation cannot silently omit a
 	# new first-party package or a runtime package emitted from an extension.
 	source "$root_dir/scripts/ci/publish-npm-packages.sh"
+	if ! validate_npm_core_publish_suspended; then
+		echo "REGISTRY RELEASE FAIL [configuration]: NPM_CORE_PUBLISH_SUSPENDED must be true or false." >&2
+		return 1
+	fi
+	if npm_core_publish_suspended && [[ "${IS_STABLE:-}" == "true" ]]; then
+		echo "REGISTRY RELEASE FAIL [configuration]: stable releases are not supported while npm publication of veryfront is suspended." >&2
+		return 1
+	fi
 	while IFS= read -r package_name; do
-		package_args+=(--package "$package_name")
 		package_names+=("$package_name")
+		# While npm refuses the core, it is validated from the tested tarball
+		# below instead of from registry metadata.
+		if [[ "$package_name" == "veryfront" ]] && npm_core_publish_suspended; then
+			if [[ "${VF_NPM_SMOKE_DRY_RUN:-}" == "1" ]]; then
+				printf 'REGISTRY_CORE_SOURCE=release-tarball\n'
+			fi
+			continue
+		fi
+		package_args+=(--package "$package_name")
 		if [[ "${VF_NPM_SMOKE_DRY_RUN:-}" == "1" ]]; then
 			printf 'REGISTRY_PACKAGE_SPEC=%s@%s\n' "$package_name" "$version"
 		fi
@@ -73,6 +90,21 @@ registry_release_smoke_main() {
 		return 0
 	fi
 	printf -v registry_packages '%s\n' "${package_names[@]}"
+
+	if npm_core_publish_suspended; then
+		if [[ "${NPM_PACK_DIR:-}" != /* || ! -d "${NPM_PACK_DIR}" ]]; then
+			echo "REGISTRY RELEASE FAIL [configuration]: NPM_PACK_DIR must name the tested npm artifact directory while npm publication of veryfront is suspended." >&2
+			return 1
+		fi
+		if ! VERSION="$version" verify_npm_compatibility_artifact; then
+			recovery "Tested npm artifact verification failed."
+			return 1
+		fi
+		if ! core_tarball="$(VERSION="$version" canonical_tarball_for_package_name veryfront)" || [[ ! -f "$core_tarball" ]]; then
+			recovery "Tested veryfront tarball is missing from the npm artifact."
+			return 1
+		fi
+	fi
 
 	rc_tag_arg=""
 	if [[ "${IS_STABLE:-}" != "true" ]]; then
@@ -99,6 +131,7 @@ registry_release_smoke_main() {
 	VF_NPM_REGISTRY_PACKAGES="$registry_packages" \
 		VF_NPM_REGISTRY_URL="$registry_url" \
 		VF_NPM_REGISTRY_VERSION="$version" \
+		VF_NPM_REGISTRY_CORE_TARBALL="$core_tarball" \
 		deno run -A "$root_dir/scripts/test/npm-install-smoke.ts"
 	smoke_status=$?
 	set -e

@@ -1,6 +1,6 @@
-import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { publishPackages, relayPackageOutput } from "./publish-rc-packages.ts";
+import { parseCoreSuspended, publishPackages, relayPackageOutput } from "./publish-rc-packages.ts";
 
 describe("bounded RC publication", () => {
   it("publishes independent extensions together, dependencies first and root last", async () => {
@@ -86,6 +86,54 @@ describe("bounded RC publication", () => {
         () => publishPackages(entries, () => Promise.resolve()),
         Error,
       );
+    }
+  });
+
+  it("publishes extensions only while npm publication of the root is suspended", async () => {
+    const started: string[] = [];
+    await publishPackages([
+      { name: "base", directory: "base", dependencies: [] },
+      { name: "dependent", directory: "dependent", dependencies: ["base"] },
+    ], ({ name }) => {
+      started.push(name);
+      return Promise.resolve();
+    }, { coreSuspended: true });
+    assertEquals(started, ["base", "dependent"]);
+  });
+
+  it("refuses the root while suspended before publishing anything", async () => {
+    const started: string[] = [];
+    await assertRejects(
+      () =>
+        publishPackages([
+          { name: "base", directory: "base", dependencies: [] },
+          { name: "veryfront", directory: "npm", dependencies: [] },
+        ], ({ name }) => {
+          started.push(name);
+          return Promise.resolve();
+        }, { coreSuspended: true }),
+      Error,
+      "must not include the veryfront root",
+    );
+    assertEquals(started, []);
+  });
+
+  it("refuses an empty suspended publication", async () => {
+    await assertRejects(
+      () => publishPackages([], () => Promise.resolve(), { coreSuspended: true }),
+      Error,
+      "at least one package",
+    );
+  });
+});
+
+describe("core suspension switch", () => {
+  it("accepts only unset, true and false", () => {
+    assertEquals(parseCoreSuspended(undefined), false);
+    assertEquals(parseCoreSuspended("false"), false);
+    assertEquals(parseCoreSuspended("true"), true);
+    for (const value of ["", "TRUE", "1", "yes", " true"]) {
+      assertThrows(() => parseCoreSuspended(value), Error, "must be true or false");
     }
   });
 });

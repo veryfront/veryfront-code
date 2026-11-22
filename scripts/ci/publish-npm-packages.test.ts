@@ -3134,3 +3134,148 @@ describe("RC dependency scheduling", () => {
     );
   });
 });
+
+describe("npm core publication suspension", () => {
+  const sha = "0123456789abcdef0123456789abcdef01234567";
+
+  it("omits only the root package while suspended", async () => {
+    for (
+      const [suspended, expected] of [
+        ["false", "npm/extensions/ext-a\nnpm\n"],
+        ["true", "npm/extensions/ext-a\n"],
+      ]
+    ) {
+      await withTempDir(async (stateDir) => {
+        await Deno.mkdir(`${stateDir}/npm/extensions/ext-a`, { recursive: true });
+        await Deno.writeTextFile(
+          `${stateDir}/npm/extensions/ext-a/package.json`,
+          JSON.stringify({ name: "@veryfront/ext-a" }),
+        );
+        const output = await new Deno.Command("bash", {
+          args: ["-c", 'set -euo pipefail; source "$SCRIPT_PATH"; package_dirs'],
+          cwd: stateDir,
+          env: {
+            SCRIPT_PATH: scriptPath,
+            NPM_CORE_PUBLISH_SUSPENDED: suspended,
+            PATH: Deno.env.get("PATH") ?? "",
+          },
+          stdout: "piped",
+          stderr: "piped",
+        }).output();
+        assertEquals(output.code, 0, decoder.decode(output.stderr));
+        assertEquals(decoder.decode(output.stdout), expected);
+      });
+    }
+  });
+
+  it("refuses the root package and stable releases while suspended", async () => {
+    for (
+      const [call, message] of [
+        ["run_rc_publish_package npm", "suspended"],
+        ["run_release_publish", "Stable releases are not supported"],
+      ]
+    ) {
+      const output = await runBash(
+        [
+          "set -euo pipefail",
+          'source "$SCRIPT_PATH"',
+          'npm() { echo "unexpected npm $*"; }',
+          "verify_npm_compatibility_artifact() { echo unexpected-verify; }",
+          call,
+        ].join("\n"),
+        {
+          NPM_CORE_PUBLISH_SUSPENDED: "true",
+          VERSION: "0.1.0",
+          GITHUB_SHA: sha,
+          NPM_PACK_DIR: "/nonexistent",
+          PATH: Deno.env.get("PATH") ?? "",
+        },
+      );
+      assertEquals(output.code === 0, false);
+      assertStringIncludes(decoder.decode(output.stderr), message);
+      assertEquals(decoder.decode(output.stdout).includes("unexpected"), false);
+    }
+  });
+
+  it("rejects an invalid suspension switch", async () => {
+    const output = await runBash(
+      'set -euo pipefail; source "$SCRIPT_PATH"; validate_npm_core_publish_suspended',
+      { NPM_CORE_PUBLISH_SUSPENDED: "yes" },
+    );
+    assertEquals(output.code, 1);
+    assertStringIncludes(decoder.decode(output.stderr), "must be true or false");
+  });
+
+  it("writes the tested core tarball and its provenance as release assets", async () => {
+    await withTempDir(async (stateDir) => {
+      const artifactDir = `${stateDir}/artifact`;
+      const outputDir = `${stateDir}/release`;
+      await writeCanonicalTarballArtifact(stateDir, artifactDir);
+      await Deno.mkdir(outputDir);
+      const output = await runBash(
+        [
+          "set -euo pipefail",
+          'source "$SCRIPT_PATH"',
+          "verify_npm_compatibility_artifact() { :; }",
+          'run_core_release_assets "$OUTPUT_DIR"',
+        ].join("\n"),
+        {
+          VERSION: "0.1.0",
+          GITHUB_SHA: sha,
+          NPM_PACK_DIR: artifactDir,
+          OUTPUT_DIR: outputDir,
+          PATH: Deno.env.get("PATH") ?? "",
+        },
+      );
+      assertEquals(output.code, 0, decoder.decode(output.stderr));
+      const tarball = await Deno.readFile(`${outputDir}/veryfront-0.1.0.tgz`);
+      assertEquals(tarball, await Deno.readFile(`${artifactDir}/veryfront-0.1.0.tgz`));
+      const digest = new Uint8Array(await crypto.subtle.digest("SHA-512", tarball));
+      const integrity = `sha512-${btoa(String.fromCharCode(...digest))}`;
+      assertEquals(
+        JSON.parse(await Deno.readTextFile(`${outputDir}/veryfront-0.1.0.npm-provenance.json`)),
+        {
+          schema_version: 1,
+          package: { name: "veryfront", version: "0.1.0", integrity },
+          git_head: sha,
+          repository: "https://github.com/veryfront/veryfront-code",
+        },
+      );
+    });
+  });
+
+  for (
+    const [label, env, message] of [
+      ["a short commit", { GITHUB_SHA: "0123456" }, "full lowercase commit SHA"],
+      ["another version", { VERSION: "0.2.0" }, "Canonical artifact file"],
+    ] as const
+  ) {
+    it(`refuses release assets for ${label}`, async () => {
+      await withTempDir(async (stateDir) => {
+        const artifactDir = `${stateDir}/artifact`;
+        const outputDir = `${stateDir}/release`;
+        await writeCanonicalTarballArtifact(stateDir, artifactDir);
+        await Deno.mkdir(outputDir);
+        const output = await runBash(
+          [
+            "set -euo pipefail",
+            'source "$SCRIPT_PATH"',
+            "verify_npm_compatibility_artifact() { :; }",
+            'run_core_release_assets "$OUTPUT_DIR"',
+          ].join("\n"),
+          {
+            VERSION: "0.1.0",
+            GITHUB_SHA: sha,
+            NPM_PACK_DIR: artifactDir,
+            OUTPUT_DIR: outputDir,
+            PATH: Deno.env.get("PATH") ?? "",
+            ...env,
+          },
+        );
+        assertEquals(output.code === 0, false);
+        assertStringIncludes(decoder.decode(output.stderr), message);
+        assertEquals([...Deno.readDirSync(outputDir)], []);
+      });
+    });
+  }
+});

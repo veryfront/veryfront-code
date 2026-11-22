@@ -490,6 +490,19 @@ function parseRegistryConfiguration(): {
   if (authority === "" || authority.includes("@")) {
     fail("registry URL authority is invalid");
   }
+  // While npm refuses the core package, the release ships it as a tested
+  // tarball. The core then installs from that exact file; every other package
+  // still installs from the registry at the same exact version.
+  const coreTarball = Deno.env.get("VF_NPM_REGISTRY_CORE_TARBALL") ?? "";
+  if (
+    coreTarball !== "" &&
+    (!coreTarball.startsWith("/") ||
+      coreTarball.split("/").at(-1) !== `veryfront-${version}.tgz`)
+  ) {
+    fail(
+      "core tarball must be an absolute path to the exact veryfront version",
+    );
+  }
 
   const rootSpecs: string[] = [];
   const packageNames: string[] = [];
@@ -503,7 +516,9 @@ function parseRegistryConfiguration(): {
     ) {
       fail("registry package list contains an invalid package name");
     }
-    const spec = `${packageName}@${version}`;
+    const spec = packageName === "veryfront" && coreTarball !== ""
+      ? coreTarball
+      : `${packageName}@${version}`;
     packageNames.push(packageName);
     if (packageName === AUTH_PACKAGE) {
       authSpec = spec;
@@ -517,6 +532,11 @@ function parseRegistryConfiguration(): {
   if (!authSpec) {
     fail(`registry package list is missing ${AUTH_PACKAGE}`);
   }
+  if (coreTarball !== "" && !rootSpecs.includes(coreTarball)) {
+    fail(
+      "core tarball was given but the registry package list has no veryfront",
+    );
+  }
   return { registryUrl, rootSpecs, authSpec, packageNames, version };
 }
 
@@ -525,6 +545,11 @@ async function prepareArtifacts(workDir: string): Promise<InstallPlan> {
     smokeFailureStatus = 22;
     const { registryUrl, rootSpecs, authSpec, packageNames, version } =
       parseRegistryConfiguration();
+    for (const spec of rootSpecs) {
+      if (!spec.startsWith("/")) continue;
+      const stat = await Deno.stat(spec).catch(() => undefined);
+      if (!stat?.isFile) fail("core tarball is missing");
+    }
     smokeFailureStatus = 21;
     return {
       rootInstallSpecs: rootSpecs,

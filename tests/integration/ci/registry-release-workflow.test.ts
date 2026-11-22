@@ -81,7 +81,7 @@ async function runCurrentRcGuard(
     const outputFile = `${stateDir}/github-output`;
     const output = await new Deno.Command("bash", {
       args: ["-c", prelude + String(guard.run)],
-      env: { ...env, GITHUB_OUTPUT: outputFile },
+      env: { RC_TAG_PACKAGE: "veryfront", ...env, GITHUB_OUTPUT: outputFile },
       stdout: "piped",
       stderr: "piped",
     }).output();
@@ -963,7 +963,7 @@ printf '%064d  %s\n' 0 "$1"
     assertEquals(npmSteps.some((step) => step.id === "release-app-token"), false);
 
     const github = asRecord(jobs["github-prerelease"], "GitHub prerelease job");
-    assertEquals(github.needs, ["prerelease", "build-binaries"]);
+    assertEquals(github.needs, ["prerelease", "build-binaries", "tested-run"]);
     assertEquals(
       github.if,
       "${{ !cancelled() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && needs.prerelease.result == 'success' && needs.build-binaries.result == 'success' }}",
@@ -1015,7 +1015,7 @@ printf '%064d  %s\n' 0 "$1"
       assertStringIncludes(prepareAssets, asset);
     }
     const registry = asRecord(jobs["registry-validation-rc"], "registry job");
-    assertEquals(registry.needs, ["prerelease", "version-check"]);
+    assertEquals(registry.needs, ["prerelease", "version-check", "tested-run"]);
   });
 
   it("keeps publisher repository execution off release-App runners", async () => {
@@ -1364,6 +1364,8 @@ printf '%064d  %s\n' 0 "$1"
         STABLE_VERSION: "${{ needs.release.outputs.version }}",
         GITHUB_SHA: "${{ github.sha }}",
         IS_STABLE: "${{ needs.version-check.outputs.is_stable }}",
+        NPM_CORE_PUBLISH_SUSPENDED: "${{ vars.NPM_CORE_PUBLISH_SUSPENDED == 'true' }}",
+        NPM_PACK_DIR: "",
       },
     );
     for (
@@ -1658,6 +1660,10 @@ fi
           "--env",
           "IS_STABLE",
           "--env",
+          "NPM_CORE_PUBLISH_SUSPENDED",
+          "--env",
+          "NPM_PACK_DIR",
+          "--env",
           "HOME=/registry/home",
           "--env",
           "DENO_DIR=/registry/deno-cache",
@@ -1722,7 +1728,11 @@ fi
     const guard = namedStep(dispatch, "Check current RC tag");
     assertStringIncludes(
       String(guard.run),
-      "https://registry.npmjs.org/-/package/veryfront/dist-tags",
+      '"https://registry.npmjs.org/-/package/${RC_TAG_PACKAGE}/dist-tags"',
+    );
+    assertEquals(
+      asRecord(guard.env, "current RC tag environment").RC_TAG_PACKAGE,
+      "${{ vars.NPM_CORE_PUBLISH_SUSPENDED == 'true' && '@veryfront%2Fext-auth-jwt' || 'veryfront' }}",
     );
     const dispatchSteps = steps(dispatch, "dispatch release job");
     const token = namedStep(dispatch, "Create release GitHub App token");
@@ -1842,6 +1852,35 @@ fi
     });
   }
 
+  for (
+    const [rcTagPackage, expectedUrl] of [
+      ["veryfront", "https://registry.npmjs.org/-/package/veryfront/dist-tags"],
+      [
+        "@veryfront%2Fext-auth-jwt",
+        "https://registry.npmjs.org/-/package/@veryfront%2Fext-auth-jwt/dist-tags",
+      ],
+    ] as const
+  ) {
+    it(`reads the RC tag from ${rcTagPackage}`, async () => {
+      const jobs = await readJobs();
+      const dispatch = asRecord(jobs["quality-gate-registry"], "dispatch release job");
+      const guard = namedStep(dispatch, "Check current RC tag");
+      const { output, githubOutput } = await runCurrentRcGuard(
+        guard,
+        'curl() { printf "%s\\n" "${@: -1}" >&2; printf "%s\\n" "$CURRENT_TAGS"; }\n',
+        {
+          IS_STABLE: "false",
+          VERSION: "0.1.2-rc.201",
+          RC_TAG_PACKAGE: rcTagPackage,
+          CURRENT_TAGS: JSON.stringify({ rc: "0.1.2-rc.201" }),
+        },
+      );
+      assertEquals(output.code, 0, decoder.decode(output.stderr));
+      assertEquals(decoder.decode(output.stderr), `${expectedUrl}\n`);
+      assertStringIncludes(githubOutput, "dispatch=true");
+    });
+  }
+
   it("fails closed on registry transport errors and skips lookup for stable dispatch", async () => {
     const jobs = await readJobs();
     const dispatch = asRecord(jobs["quality-gate-registry"], "dispatch release job");
@@ -1912,8 +1951,33 @@ fi
     );
     assertEquals(
       asRecord(payloadStep.env, "dispatch payload environment"),
-      { VERSION: "${{ steps.version.outputs.version }}" },
+      {
+        VERSION: "${{ steps.version.outputs.version }}",
+        NPM_CORE_PUBLISH_SUSPENDED: "${{ vars.NPM_CORE_PUBLISH_SUSPENDED == 'true' }}",
+      },
     );
+    for (
+      const [suspended, expected] of [
+        ["false", '{"version":"0.1.2-rc.200"}'],
+        ["true", '{"version":"0.1.2-rc.200","npm_core_available":false}'],
+      ]
+    ) {
+      await withTempDir(async (stateDir) => {
+        const outputFile = `${stateDir}/github-output`;
+        const output = await new Deno.Command("bash", {
+          args: ["-c", String(payloadStep.run)],
+          env: {
+            VERSION: "0.1.2-rc.200",
+            NPM_CORE_PUBLISH_SUSPENDED: suspended,
+            GITHUB_OUTPUT: outputFile,
+          },
+          stdout: "piped",
+          stderr: "piped",
+        }).output();
+        assertEquals(output.code, 0, decoder.decode(output.stderr));
+        assertEquals(await Deno.readTextFile(outputFile), `payload=${expected}\n`);
+      });
+    }
     assertStringIncludes(
       String(payloadStep.run),
       'jq -cn --arg version "$VERSION"',
@@ -2068,10 +2132,10 @@ describe("parallel RC registry validation with folded stable dispatch", () => {
     const jobs = await readJobs();
     const registry = asRecord(jobs["registry-validation-rc"], "RC registry validator");
     assertEquals(registry.name, "registry validation (RC)");
-    assertEquals(registry.needs, ["prerelease", "version-check"]);
+    assertEquals(registry.needs, ["prerelease", "version-check", "tested-run"]);
     assertEquals(registry.environment, undefined);
     assertEquals(registry.concurrency, undefined);
-    assertEquals(registry.permissions, { contents: "read" });
+    assertEquals(registry.permissions, { actions: "read", contents: "read" });
     assertEquals(
       registry.if,
       "${{ always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && needs.version-check.result == 'success' && needs.version-check.outputs.is_stable == 'false' }}",
@@ -2193,7 +2257,7 @@ describe("bounded RC publication and deferred metadata verification", () => {
       jobs["registry-validation-rc"],
       "RC registry validator",
     );
-    assertEquals(registry.permissions, { contents: "read" });
+    assertEquals(registry.permissions, { actions: "read", contents: "read" });
     assertEquals(registry.environment, undefined);
     const setupMs = Number(
       namedStep(

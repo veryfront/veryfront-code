@@ -34,13 +34,38 @@ export interface PackageEntry {
   dependencies: string[];
 }
 
+export interface PublishOptions {
+  /** npm refuses the root package; publish extensions only, never the root. */
+  coreSuspended?: boolean;
+}
+
+/** Read NPM_CORE_PUBLISH_SUSPENDED strictly: unset, "true" or "false". */
+export function parseCoreSuspended(value: string | undefined): boolean {
+  if (value === undefined || value === "false") return false;
+  if (value === "true") return true;
+  throw new Error("NPM_CORE_PUBLISH_SUSPENDED must be true or false");
+}
+
 /** Publish independent extensions together; keep dependency barriers and root last. */
 export async function publishPackages(
   entries: PackageEntry[],
   publish: (entry: PackageEntry) => Promise<void>,
+  options: PublishOptions = {},
 ): Promise<void> {
   const names = new Set(entries.map((entry) => entry.name));
-  if (names.size !== entries.length || !names.has("veryfront")) {
+  if (names.size !== entries.length) {
+    throw new Error("RC publication requires unique packages");
+  }
+  if (options.coreSuspended) {
+    if (names.has("veryfront")) {
+      throw new Error(
+        "RC publication must not include the veryfront root while its npm publication is suspended",
+      );
+    }
+    if (names.size === 0) {
+      throw new Error("RC publication requires at least one package");
+    }
+  } else if (!names.has("veryfront")) {
     throw new Error(
       "RC publication requires unique packages and one veryfront root",
     );
@@ -78,6 +103,9 @@ export async function publishPackages(
 }
 
 if (import.meta.main) {
+  const coreSuspended = parseCoreSuspended(
+    Deno.env.get("NPM_CORE_PUBLISH_SUSPENDED"),
+  );
   const entries: PackageEntry[] = [];
   for (const directory of Deno.args) {
     const manifest = JSON.parse(
@@ -135,7 +163,7 @@ if (import.meta.main) {
           `RC publication failed for ${name} (status ${status.code})`,
         );
       }
-    });
+    }, { coreSuspended });
   } finally {
     await Deno.remove(budgetDirectory, { recursive: true });
   }

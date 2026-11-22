@@ -216,6 +216,139 @@ exit 86
     assertEquals(specs.some((spec) => spec.endsWith("@latest")), false);
   });
 
+  it("validates the core from the tested tarball while npm publication is suspended", async () => {
+    const version = "1.2.3-rc.45";
+    const output = await new Deno.Command("bash", {
+      args: [wrapperPath],
+      env: {
+        GITHUB_SHA: "0123456789abcdef0123456789abcdef01234567",
+        IS_STABLE: "false",
+        NPM_CORE_PUBLISH_SUSPENDED: "true",
+        RC_VERSION: version,
+        VF_NPM_SMOKE_DRY_RUN: "1",
+      },
+      stdout: "piped",
+      stderr: "piped",
+    }).output();
+
+    assertEquals(output.code, 0, decoder.decode(output.stderr));
+    const lines = decoder.decode(output.stdout).trim().split("\n");
+    assertEquals(lines.includes("REGISTRY_CORE_SOURCE=release-tarball"), true);
+    const specs = lines.filter((line) => line.startsWith("REGISTRY_PACKAGE_SPEC="))
+      .map((line) => line.slice("REGISTRY_PACKAGE_SPEC=".length)).sort();
+    assertEquals(
+      specs,
+      (await workspacePackageNames()).filter((name) => name !== "veryfront")
+        .map((name) => `${name}@${version}`).sort(),
+    );
+  });
+
+  for (
+    const [label, env] of [
+      ["a stable release", { IS_STABLE: "true", STABLE_VERSION: "1.2.3" }],
+      ["an invalid switch", { NPM_CORE_PUBLISH_SUSPENDED: "yes" }],
+      ["a missing tested artifact", { NPM_PACK_DIR: "relative/dir" }],
+    ] as const
+  ) {
+    it(`fails closed on ${label} while npm publication is suspended`, async () => {
+      const output = await new Deno.Command("bash", {
+        args: [wrapperPath],
+        env: {
+          GITHUB_SHA: "0123456789abcdef0123456789abcdef01234567",
+          IS_STABLE: "false",
+          NPM_CORE_PUBLISH_SUSPENDED: "true",
+          RC_VERSION: "1.2.3-rc.45",
+          PATH: Deno.env.get("PATH") ?? "",
+          ...env,
+        },
+        stdout: "piped",
+        stderr: "piped",
+      }).output();
+      assertEquals(output.code, 1);
+      assertStringIncludes(
+        decoder.decode(output.stderr),
+        "REGISTRY RELEASE FAIL [configuration]",
+      );
+    });
+  }
+
+  it("installs the core from the given tarball and extensions from the registry", async () => {
+    const tempDir = await makeTempDir({ prefix: "vf-registry-core-tarball-" });
+    const binDir = `${tempDir}/bin`;
+    const npmLog = `${tempDir}/npm.log`;
+    const version = "1.2.3-rc.45";
+    const coreTarball = `${tempDir}/artifact/veryfront-${version}.tgz`;
+    await Deno.mkdir(binDir);
+    await Deno.mkdir(`${tempDir}/artifact`);
+    await Deno.writeTextFile(coreTarball, "tested core");
+    await writeExecutable(`${binDir}/deno`, "#!/bin/bash\nexit 0\n");
+    await writeExecutable(
+      `${binDir}/npm`,
+      `#!/usr/bin/env bash
+case "\${1:-}" in
+  install)
+    printf 'args=%s\\n' "\$*" >>"\$VF_FAKE_NPM_LOG"
+    exit 86
+    ;;
+esac
+exit 0
+`,
+    );
+
+    try {
+      const output = await new Deno.Command(Deno.execPath(), {
+        args: ["run", "-A", installSmokePath],
+        env: {
+          PATH: `${binDir}:${Deno.env.get("PATH") ?? ""}`,
+          VF_FAKE_NPM_LOG: npmLog,
+          VF_NPM_REGISTRY_PACKAGES:
+            "veryfront\n@veryfront/ext-parser-babel\n@veryfront/ext-auth-jwt",
+          VF_NPM_REGISTRY_URL: "https://registry.example.test/npm/",
+          VF_NPM_REGISTRY_VERSION: version,
+          VF_NPM_REGISTRY_CORE_TARBALL: coreTarball,
+        },
+        stdout: "piped",
+        stderr: "piped",
+      }).output();
+
+      assertEquals(output.code, 20, decoder.decode(output.stderr));
+      const log = await Deno.readTextFile(npmLog);
+      assertStringIncludes(log, `${coreTarball} @veryfront/ext-parser-babel@${version}`);
+      assertEquals(log.includes(`veryfront@${version}`), false);
+    } finally {
+      await Deno.remove(tempDir, { recursive: true });
+    }
+  });
+
+  for (
+    const [label, tarball, packages] of [
+      ["a relative core tarball", "veryfront-1.2.3-rc.45.tgz", "veryfront"],
+      ["a core tarball for another version", "/tmp/veryfront-1.2.3-rc.44.tgz", "veryfront"],
+      [
+        "a core tarball without the core package",
+        "/tmp/veryfront-1.2.3-rc.45.tgz",
+        "@veryfront/ext-auth-jwt",
+      ],
+      ["a missing core tarball", "/nonexistent/veryfront-1.2.3-rc.45.tgz", "veryfront"],
+    ] as const
+  ) {
+    it(`rejects ${label} as configuration`, async () => {
+      const output = await new Deno.Command(Deno.execPath(), {
+        args: ["run", "-A", installSmokePath],
+        env: {
+          PATH: Deno.env.get("PATH") ?? "",
+          VF_NPM_REGISTRY_PACKAGES: packages,
+          VF_NPM_REGISTRY_URL: "https://registry.example.test/npm/",
+          VF_NPM_REGISTRY_VERSION: "1.2.3-rc.45",
+          VF_NPM_REGISTRY_CORE_TARBALL: tarball,
+        },
+        stdout: "piped",
+        stderr: "piped",
+      }).output();
+      assertEquals(output.code, 22, decoder.decode(output.stderr));
+    });
+  }
+
   it("passes the exact package list and registry URL to the install smoke", async () => {
     const tempDir = await makeTempDir({ prefix: "vf-registry-wrapper-" });
     const binDir = `${tempDir}/bin`;
