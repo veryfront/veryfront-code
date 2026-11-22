@@ -34,6 +34,9 @@ export interface PackageEntry {
   dependencies: string[];
 }
 
+/** Package whose rc tag the dispatch gate reads while veryfront is suspended. */
+export const SUSPENDED_RC_MARKER_PACKAGE = "@veryfront/ext-auth-jwt";
+
 export interface PublishOptions {
   /** npm refuses the root package; publish extensions only, never the root. */
   coreSuspended?: boolean;
@@ -56,14 +59,19 @@ export async function publishPackages(
   if (names.size !== entries.length) {
     throw new Error("RC publication requires unique packages");
   }
+  // The final package's rc tag marks a completed publication for the dispatch
+  // gate, so it publishes only after every other package succeeded.
+  const finalPackage = options.coreSuspended ? SUSPENDED_RC_MARKER_PACKAGE : "veryfront";
   if (options.coreSuspended) {
     if (names.has("veryfront")) {
       throw new Error(
         "RC publication must not include the veryfront root while its npm publication is suspended",
       );
     }
-    if (names.size === 0) {
-      throw new Error("RC publication requires at least one package");
+    if (!names.has(finalPackage)) {
+      throw new Error(
+        `RC publication requires ${finalPackage} as the completion marker while veryfront is suspended`,
+      );
     }
   } else if (!names.has("veryfront")) {
     throw new Error(
@@ -72,8 +80,8 @@ export async function publishPackages(
   }
   const remaining = entries.map((entry) => ({
     ...entry,
-    dependencies: entry.name === "veryfront"
-      ? [...names].filter((name) => name !== "veryfront")
+    dependencies: entry.name === finalPackage
+      ? [...names].filter((name) => name !== finalPackage)
       : entry.dependencies.filter((name) => names.has(name)),
   }));
   const planned = new Set<string>();

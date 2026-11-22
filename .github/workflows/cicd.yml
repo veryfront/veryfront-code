@@ -1598,6 +1598,9 @@ jobs:
     environment: production
     outputs:
       version: ${{ steps.version.outputs.version }}
+      # Later jobs use this mode, never the mutable repository variable, so one
+      # release cannot mix suspended and normal steps.
+      npm_core_suspended: ${{ steps.core-mode.outputs.suspended }}
     permissions:
       actions: read
       contents: read
@@ -1666,6 +1669,22 @@ jobs:
           NPM_CLI_VERSION: "11.12.1"
         run: npm install --global --ignore-scripts "npm@${NPM_CLI_VERSION}"
 
+      - name: Resolve npm core publication mode
+        id: core-mode
+        env:
+          # Owner-controlled repository variable: unset, "true" or "false".
+          NPM_CORE_PUBLISH_SUSPENDED: ${{ vars.NPM_CORE_PUBLISH_SUSPENDED }}
+        run: |
+          case "${NPM_CORE_PUBLISH_SUSPENDED}" in
+            "" | false) suspended=false ;;
+            true) suspended=true ;;
+            *)
+              echo "::error::NPM_CORE_PUBLISH_SUSPENDED must be unset, true or false." >&2
+              exit 1
+              ;;
+          esac
+          echo "suspended=${suspended}" >> "$GITHUB_OUTPUT"
+
       - name: Compute RC version
         id: version
         env:
@@ -1691,9 +1710,9 @@ jobs:
           NPM_PACK_DIR: ${{ github.workspace }}/dist/npm-compatibility
           NPM_GIT_HEAD_WAIT_TOTAL_SECONDS: "180"
           NPM_MAINTENANCE_RELEASE: ${{ github.event_name == 'workflow_dispatch' && inputs.maintenance_release_number != '' }}
-          # Owner-controlled repository variable. While npm refuses the core
-          # package, publish extensions only and ship the core as release assets.
-          NPM_CORE_PUBLISH_SUSPENDED: ${{ vars.NPM_CORE_PUBLISH_SUSPENDED == 'true' }}
+          # While npm refuses the core package, publish extensions only and
+          # ship the core as release assets.
+          NPM_CORE_PUBLISH_SUSPENDED: ${{ steps.core-mode.outputs.suspended }}
         run: |
           deno run --config=scripts/test.deno.json --frozen --allow-read --allow-write --allow-run=tar \
             scripts/ci/npm-compatibility-artifact.ts materialize dist/npm-compatibility npm
@@ -1751,7 +1770,7 @@ jobs:
           cp scripts/install.sh dist/public-release/
 
       - name: Download tested npm compatibility artifact for core release assets
-        if: ${{ vars.NPM_CORE_PUBLISH_SUSPENDED == 'true' }}
+        if: ${{ needs.prerelease.outputs.npm_core_suspended == 'true' }}
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: npm-compatibility-${{ github.sha }}
@@ -1760,7 +1779,7 @@ jobs:
           github-token: ${{ github.token }}
 
       - name: Prepare core release assets while npm publication is suspended
-        if: ${{ vars.NPM_CORE_PUBLISH_SUSPENDED == 'true' }}
+        if: ${{ needs.prerelease.outputs.npm_core_suspended == 'true' }}
         env:
           VERSION: ${{ needs.prerelease.outputs.version }}
           NPM_PACK_DIR: ${{ github.workspace }}/dist/npm-compatibility
@@ -1920,8 +1939,9 @@ jobs:
         env:
           VERSION: ${{ steps.version.outputs.version }}
           NPM_PACK_DIR: ${{ github.workspace }}/dist/npm-compatibility
-          # Stable publication fails closed while the core is suspended.
-          NPM_CORE_PUBLISH_SUSPENDED: ${{ vars.NPM_CORE_PUBLISH_SUSPENDED == 'true' }}
+          # Stable publication fails closed while the core is suspended or the
+          # raw switch is invalid; the publisher validates it strictly.
+          NPM_CORE_PUBLISH_SUSPENDED: ${{ vars.NPM_CORE_PUBLISH_SUSPENDED }}
         run: |
           deno run --config=scripts/test.deno.json --frozen --allow-read --allow-write --allow-run=tar \
             scripts/ci/npm-compatibility-artifact.ts materialize dist/npm-compatibility npm
@@ -2414,7 +2434,7 @@ jobs:
           }
           '
       - name: Download tested npm compatibility artifact for the suspended core
-        if: ${{ needs.prerelease.result == 'success' && vars.NPM_CORE_PUBLISH_SUSPENDED == 'true' }}
+        if: ${{ needs.prerelease.result == 'success' && needs.prerelease.outputs.npm_core_suspended == 'true' }}
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: npm-compatibility-${{ github.sha }}
@@ -2461,8 +2481,8 @@ jobs:
           STABLE_VERSION: ""
           GITHUB_SHA: ${{ github.sha }}
           IS_STABLE: ${{ needs.version-check.outputs.is_stable }}
-          NPM_CORE_PUBLISH_SUSPENDED: ${{ vars.NPM_CORE_PUBLISH_SUSPENDED == 'true' }}
-          NPM_PACK_DIR: ${{ vars.NPM_CORE_PUBLISH_SUSPENDED == 'true' && '/registry/workspace/dist/npm-compatibility' || '' }}
+          NPM_CORE_PUBLISH_SUSPENDED: ${{ needs.prerelease.outputs.npm_core_suspended == 'true' }}
+          NPM_PACK_DIR: ${{ needs.prerelease.outputs.npm_core_suspended == 'true' && '/registry/workspace/dist/npm-compatibility' || '' }}
         run: |
           set -euo pipefail
           container_name="veryfront-registry-validation-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
@@ -2605,8 +2625,9 @@ jobs:
           STABLE_VERSION: ${{ needs.release.outputs.version }}
           GITHUB_SHA: ${{ github.sha }}
           IS_STABLE: ${{ needs.version-check.outputs.is_stable }}
-          # Stable validation fails closed while npm refuses the core.
-          NPM_CORE_PUBLISH_SUSPENDED: ${{ vars.NPM_CORE_PUBLISH_SUSPENDED == 'true' }}
+          # Stable validation fails closed while npm refuses the core or the
+          # raw switch is invalid; the smoke validates it strictly.
+          NPM_CORE_PUBLISH_SUSPENDED: ${{ vars.NPM_CORE_PUBLISH_SUSPENDED }}
           NPM_PACK_DIR: ""
         run: |
           set -euo pipefail
@@ -2677,7 +2698,7 @@ jobs:
           VERSION: ${{ steps.version.outputs.version }}
           # While npm refuses the core, the auth extension's rc tag moves under
           # the same serialized publication and identifies superseded releases.
-          RC_TAG_PACKAGE: ${{ vars.NPM_CORE_PUBLISH_SUSPENDED == 'true' && '@veryfront%2Fext-auth-jwt' || 'veryfront' }}
+          RC_TAG_PACKAGE: ${{ needs.prerelease.outputs.npm_core_suspended == 'true' && '@veryfront%2Fext-auth-jwt' || 'veryfront' }}
         run: |
           set -euo pipefail
           if [ "$IS_STABLE" = true ]; then
@@ -2727,7 +2748,7 @@ jobs:
         id: payload
         env:
           VERSION: ${{ steps.version.outputs.version }}
-          NPM_CORE_PUBLISH_SUSPENDED: ${{ vars.NPM_CORE_PUBLISH_SUSPENDED == 'true' }}
+          NPM_CORE_PUBLISH_SUSPENDED: ${{ needs.prerelease.outputs.npm_core_suspended == 'true' }}
         run: |
           # Receivers take the core from the GitHub release when npm lacks it.
           if [ "$NPM_CORE_PUBLISH_SUSPENDED" = true ]; then

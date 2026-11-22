@@ -8,6 +8,7 @@ import {
   REQUEST_TIMEOUT_MS,
 } from "../../../scripts/ci/registry-release-integrity.ts";
 import { DEFAULT_SMOKE_BUDGET_MS } from "../../../scripts/test/npm-install-smoke.ts";
+import { SUSPENDED_RC_MARKER_PACKAGE } from "../../../scripts/ci/publish-rc-packages.ts";
 import { inlinePublicPoolJobs } from "../../../scripts/ci/public-pool-jobs.ts";
 
 type YamlRecord = Record<string, unknown>;
@@ -1364,7 +1365,7 @@ printf '%064d  %s\n' 0 "$1"
         STABLE_VERSION: "${{ needs.release.outputs.version }}",
         GITHUB_SHA: "${{ github.sha }}",
         IS_STABLE: "${{ needs.version-check.outputs.is_stable }}",
-        NPM_CORE_PUBLISH_SUSPENDED: "${{ vars.NPM_CORE_PUBLISH_SUSPENDED == 'true' }}",
+        NPM_CORE_PUBLISH_SUSPENDED: "${{ vars.NPM_CORE_PUBLISH_SUSPENDED }}",
         NPM_PACK_DIR: "",
       },
     );
@@ -1732,7 +1733,7 @@ fi
     );
     assertEquals(
       asRecord(guard.env, "current RC tag environment").RC_TAG_PACKAGE,
-      "${{ vars.NPM_CORE_PUBLISH_SUSPENDED == 'true' && '@veryfront%2Fext-auth-jwt' || 'veryfront' }}",
+      "${{ needs.prerelease.outputs.npm_core_suspended == 'true' && '@veryfront%2Fext-auth-jwt' || 'veryfront' }}",
     );
     const dispatchSteps = steps(dispatch, "dispatch release job");
     const token = namedStep(dispatch, "Create release GitHub App token");
@@ -1953,7 +1954,7 @@ fi
       asRecord(payloadStep.env, "dispatch payload environment"),
       {
         VERSION: "${{ steps.version.outputs.version }}",
-        NPM_CORE_PUBLISH_SUSPENDED: "${{ vars.NPM_CORE_PUBLISH_SUSPENDED == 'true' }}",
+        NPM_CORE_PUBLISH_SUSPENDED: "${{ needs.prerelease.outputs.npm_core_suspended == 'true' }}",
       },
     );
     for (
@@ -2553,4 +2554,68 @@ it("reports failed RC diagnostics as a formatted failure without a stack trace",
   assertStringIncludes(stderr, "REGISTRY RELEASE FAIL [configuration].");
   assertEquals(/^\s+at /m.test(stderr), false, stderr);
   assertEquals(stderr.includes("registry-release-integrity.ts"), false, stderr);
+});
+
+describe("npm core publication mode", () => {
+  it("validates the repository switch once and pins it for the whole RC release", async () => {
+    const jobs = await readJobs();
+    const prerelease = asRecord(jobs.prerelease, "npm prerelease job");
+    const mode = namedStep(prerelease, "Resolve npm core publication mode");
+    assertEquals(mode.id, "core-mode");
+    assertEquals(
+      asRecord(prerelease.outputs, "prerelease outputs").npm_core_suspended,
+      "${{ steps.core-mode.outputs.suspended }}",
+    );
+    const prereleaseSteps = steps(prerelease, "npm prerelease job");
+    const publish = namedStep(prerelease, "Publish tested RC npm artifact");
+    assert(prereleaseSteps.indexOf(mode) < prereleaseSteps.indexOf(publish));
+    assertEquals(
+      asRecord(publish.env, "publish environment").NPM_CORE_PUBLISH_SUSPENDED,
+      "${{ steps.core-mode.outputs.suspended }}",
+    );
+    for (
+      const [raw, code, expected] of [
+        ["", 0, "suspended=false\n"],
+        ["false", 0, "suspended=false\n"],
+        ["true", 0, "suspended=true\n"],
+        ["TRUE", 1, ""],
+        [" true", 1, ""],
+        ["1", 1, ""],
+      ] as const
+    ) {
+      await withTempDir(async (stateDir) => {
+        const outputFile = `${stateDir}/github-output`;
+        await Deno.writeTextFile(outputFile, "");
+        const output = await new Deno.Command("bash", {
+          args: ["-c", String(mode.run)],
+          env: { NPM_CORE_PUBLISH_SUSPENDED: raw, GITHUB_OUTPUT: outputFile },
+          stdout: "piped",
+          stderr: "piped",
+        }).output();
+        assertEquals(output.code, code, `switch ${JSON.stringify(raw)}`);
+        assertEquals(await Deno.readTextFile(outputFile), expected);
+      });
+    }
+    // Only the mode step and the stable path (validated strictly by the
+    // publisher and the smoke) may read the mutable repository variable.
+    const workflow = await Deno.readTextFile(
+      new URL("../../../.github/workflows/cicd.yml", import.meta.url),
+    );
+    assertEquals(
+      workflow.match(/vars\.NPM_CORE_PUBLISH_SUSPENDED/g)?.length,
+      3,
+    );
+  });
+
+  it("reads the dispatch rc tag from the package the publisher completes last", async () => {
+    const jobs = await readJobs();
+    const guard = namedStep(
+      asRecord(jobs["quality-gate-registry"], "dispatch release job"),
+      "Check current RC tag",
+    );
+    assertStringIncludes(
+      String(asRecord(guard.env, "guard environment").RC_TAG_PACKAGE),
+      `'${SUSPENDED_RC_MARKER_PACKAGE.replace("/", "%2F")}'`,
+    );
+  });
 });
