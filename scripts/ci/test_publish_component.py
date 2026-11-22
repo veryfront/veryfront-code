@@ -1,15 +1,23 @@
 import base64
 from copy import deepcopy
+import hashlib
 import importlib.util
+import io
+import json
 from pathlib import Path
+import tarfile
 import unittest
+from urllib.error import HTTPError
+from urllib.request import Request
 
 spec=importlib.util.spec_from_file_location('component_publisher',Path(__file__).with_name('publish-component.py'))
 publisher=importlib.util.module_from_spec(spec);spec.loader.exec_module(publisher)
 VERSION='0.1.1278'
 SOURCE='b'*40
 ENV={'GITHUB_ACTIONS':'true','GITHUB_REPOSITORY':'veryfront/veryfront-code','GITHUB_REF':'refs/heads/main',
-     'GITHUB_EVENT_NAME':'push','GITHUB_SHA':'a'*40,'GITHUB_RUN_ID':'101','GITHUB_RUN_ATTEMPT':'1'}
+     'GITHUB_EVENT_NAME':'push','GITHUB_SHA':'a'*40,'GITHUB_RUN_ID':'101','GITHUB_RUN_ATTEMPT':'1',
+     'NPM_CORE_PUBLISH_SUSPENDED':'false'}
+SUSPENDED={**ENV,'NPM_CORE_PUBLISH_SUSPENDED':'true'}
 
 class Facts:
     def __init__(self):
@@ -67,6 +75,172 @@ class CodeWitnessTests(unittest.TestCase):
         for key,value in [('id',True),('draft',True),('tag_name','v0.1.1279')]:
             facts=Facts();facts.release[key]=value
             with self.subTest(key=key),self.assertRaises(ValueError):facts.witness()
+
+def tarball(manifest,extra=()):
+    output=io.BytesIO()
+    with tarfile.open(fileobj=output,mode='w:gz') as archive:
+        for name,content in [('package/package.json',json.dumps(manifest).encode()),*extra]:
+            member=tarfile.TarInfo(name);member.size=len(content)
+            archive.addfile(member,io.BytesIO(content))
+    return output.getvalue()
+
+class SuspendedFacts(Facts):
+    """The core package exists only as release assets; the registry has no record."""
+    def __init__(self):
+        super().__init__()
+        self.manifest={'name':'veryfront','version':VERSION,'gitHead':SOURCE,
+                       'repository':{'type':'git','url':'git+https://github.com/veryfront/veryfront-code.git'}}
+        self.provenance={'schema_version':1,'package':{'name':'veryfront','version':VERSION,'integrity':None},
+                         'git_head':SOURCE,'repository':'https://github.com/veryfront/veryfront-code'}
+        self.extra=()
+        self.downloads=[]
+    def build(self):
+        self.tgz=tarball(self.manifest,self.extra)
+        if self.provenance['package']['integrity'] is None:
+            self.provenance['package']['integrity']='sha512-'+base64.b64encode(hashlib.sha512(self.tgz).digest()).decode()
+        self.record=json.dumps(self.provenance).encode()
+        self.blobs={701:self.tgz,702:self.record}
+        self.release['assets']+=[
+            {'id':701,'name':'veryfront-'+VERSION+'.tgz','size':len(self.tgz),'digest':'sha256:'+hashlib.sha256(self.tgz).hexdigest()},
+            {'id':702,'name':'veryfront-'+VERSION+'.npm-provenance.json','size':len(self.record),
+             'digest':'sha256:'+hashlib.sha256(self.record).hexdigest()}]
+        return self
+    def public(self,path):
+        if path.startswith('https://registry.npmjs.org/'):
+            self.calls.append(path)
+            raise HTTPError(path,404,'Not Found',{},None)
+        return super().public(path)
+    def asset(self,asset_id,size):
+        self.downloads.append(asset_id)
+        return self.blobs[asset_id]
+    def witness(self,env=None):
+        return publisher.witness(VERSION,env or SUSPENDED,self.public,self.source,self.asset)
+
+class SuspendedCoreWitnessTests(unittest.TestCase):
+    def test_release_provenance_and_tarball_supply_the_package_facts(self):
+        facts=SuspendedFacts().build();result=facts.witness()
+        self.assertEqual(result['release']['package_source_revision'],SOURCE)
+        self.assertEqual(result['release']['package'],
+                         {'name':'veryfront','version':VERSION,'integrity':facts.provenance['package']['integrity']})
+        self.assertEqual(result['release']['package_asset'],
+                         {'asset_id':701,'name':'veryfront-'+VERSION+'.tgz','size':len(facts.tgz),
+                          'digest':'sha256:'+hashlib.sha256(facts.tgz).hexdigest()})
+        self.assertEqual(set(result['release']['binaries']),{'linux/amd64','linux/arm64'})
+        self.assertEqual(sorted(facts.downloads),[701,702])
+        self.assertFalse(any('registry.npmjs.org' in call for call in facts.calls))
+        self.assertIn('repos/veryfront/veryfront-code/compare/'+SOURCE+'...'+ENV['GITHUB_SHA'],facts.calls)
+
+    def test_registry_receipt_is_unchanged_when_not_suspended(self):
+        result=Facts().witness()
+        self.assertEqual(set(result['release']),{'repository','release_id','version','package_source_revision','package','binaries'})
+
+    def test_missing_or_unknown_mode_is_refused_before_any_read(self):
+        for value in [None,'','yes','True']:
+            facts=SuspendedFacts().build();env={**SUSPENDED}
+            if value is None:del env['NPM_CORE_PUBLISH_SUSPENDED']
+            else:env['NPM_CORE_PUBLISH_SUSPENDED']=value
+            with self.subTest(value=value),self.assertRaises(ValueError):facts.witness(env)
+            self.assertEqual(facts.calls,[])
+
+    def test_tarball_that_differs_from_provenance_or_release_digest_is_refused(self):
+        def wrong_integrity(f):f.provenance['package']['integrity']='sha512-'+base64.b64encode(b'q'*64).decode()
+        def wrong_digest(f):f.release['assets'][-2]['digest']='sha256:'+'0'*64
+        def swapped_bytes(f):f.blobs[701]=f.tgz[:-1]+bytes([f.tgz[-1]^1])
+        def short_read(f):f.blobs[701]=f.tgz[:-1]
+        for mutate in (wrong_integrity,wrong_digest,swapped_bytes,short_read):
+            facts=SuspendedFacts()
+            if mutate is wrong_integrity:mutate(facts)
+            facts.build()
+            if mutate is not wrong_integrity:mutate(facts)
+            with self.subTest(case=mutate.__name__),self.assertRaises(ValueError):facts.witness()
+
+    def test_provenance_that_names_another_package_or_source_is_refused(self):
+        for key,value in [('git_head','main'),('repository','https://github.com/foreign/veryfront-code'),
+                          ('schema_version',2),('extra',True),('package',{'name':'veryfront','version':'0.1.1279','integrity':None})]:
+            facts=SuspendedFacts();facts.provenance[key]=value;facts.build()
+            with self.subTest(key=key),self.assertRaises(ValueError):facts.witness()
+
+    def test_packaged_manifest_must_match_provenance(self):
+        for key,value in [('gitHead','c'*40),('version','0.1.1279'),('name','other'),
+                          ('repository',{'url':'git+https://github.com/foreign/veryfront-code.git'})]:
+            facts=SuspendedFacts();facts.manifest[key]=value;facts.build()
+            with self.subTest(key=key),self.assertRaises(ValueError):facts.witness()
+        facts=SuspendedFacts();facts.extra=[('package/package.json',json.dumps(facts.manifest).encode())];facts.build()
+        with self.assertRaises(ValueError):facts.witness()
+
+    def test_missing_or_duplicate_package_assets_are_refused(self):
+        for mode in ['tarball','provenance','duplicate']:
+            facts=SuspendedFacts().build()
+            if mode=='tarball':facts.release['assets'].pop(-2)
+            elif mode=='provenance':facts.release['assets'].pop()
+            else:facts.release['assets'].append(deepcopy(facts.release['assets'][-1]))
+            with self.subTest(mode=mode),self.assertRaises(ValueError):facts.witness()
+            self.assertEqual(facts.downloads,[])
+
+    def test_ancestry_check_still_binds_the_provenance_source(self):
+        facts=SuspendedFacts().build();facts.ancestry={'status':'diverged','base_commit':{'sha':SOURCE}}
+        with self.assertRaises(ValueError):facts.witness()
+
+    def test_waits_for_the_release_in_suspended_mode(self):
+        facts=SuspendedFacts().build();attempts=[];elapsed=[0]
+        def public(url):
+            if '/releases/tags/' in url:
+                attempts.append(url)
+                if len(attempts)<2:raise HTTPError(url,404,'Not Found',{},None)
+            return facts.public(url)
+        def sleep(seconds):elapsed[0]+=seconds
+        result=publisher.witness_when_ready(VERSION,SUSPENDED,public,facts.source,
+            clock=lambda:elapsed[0],sleep=sleep,read_asset=facts.asset)
+        self.assertEqual(len(attempts),2)
+        self.assertEqual(result['release']['package_asset']['asset_id'],701)
+
+class AssetRouteTests(unittest.TestCase):
+    def test_asset_downloads_follow_only_one_redirect_to_the_asset_host(self):
+        handler=publisher.AssetRedirect()
+        self.assertEqual(handler.max_redirections,1)
+        origin=Request('https://api.github.com/repos/veryfront/veryfront/releases/assets/701')
+        allowed=handler.redirect_request(origin,None,302,'Found',{},'https://release-assets.githubusercontent.com/x?sig=1')
+        self.assertEqual(allowed.full_url,'https://release-assets.githubusercontent.com/x?sig=1')
+        self.assertIsNone(allowed.get_header('Authorization'))
+        for target in ['http://release-assets.githubusercontent.com/x','https://example.com/x',
+                       'https://release-assets.githubusercontent.com:8443/x','https://user@release-assets.githubusercontent.com/x']:
+            with self.subTest(target=target),self.assertRaises(ValueError):
+                handler.redirect_request(origin,None,302,'Found',{},target)
+        hop=Request('https://release-assets.githubusercontent.com/x')
+        with self.assertRaises(ValueError):
+            handler.redirect_request(hop,None,302,'Found',{},'https://release-assets.githubusercontent.com/y')
+
+    def test_asset_reader_accepts_a_direct_stream_or_the_asset_host_only(self):
+        route='https://api.github.com/repos/veryfront/veryfront/releases/assets/701'
+        class Response:
+            def __init__(self,final):self.status=200;self.final=final
+            def __enter__(self):return self
+            def __exit__(self,*_):return False
+            def geturl(self):return self.final
+            def read(self,limit):return b'x'*3
+        def opener_for(final):
+            class Opener:
+                def open(self,request,timeout):
+                    assert request.full_url==route and request.get_header('Accept')=='application/octet-stream'
+                    return Response(final)
+            return lambda *_:Opener()
+        original=publisher.build_opener
+        try:
+            for final in [route,'https://release-assets.githubusercontent.com/x?sig=1']:
+                publisher.build_opener=opener_for(final)
+                with self.subTest(final=final):self.assertEqual(publisher.public_asset(701,3),b'xxx')
+            for final in ['https://api.github.com/repos/foreign/x/releases/assets/701','https://example.com/x']:
+                publisher.build_opener=opener_for(final)
+                with self.subTest(final=final),self.assertRaises(ValueError):publisher.public_asset(701,3)
+            publisher.build_opener=opener_for(route)
+            with self.assertRaises(ValueError):publisher.public_asset(701,4)
+        finally:
+            publisher.build_opener=original
+
+    def test_asset_reader_refuses_unbounded_requests(self):
+        for asset_id,size in [(0,1),(True,1),(1,0),(1,publisher.TARBALL_LIMIT+1)]:
+            with self.subTest(asset_id=asset_id,size=size),self.assertRaises(ValueError):
+                publisher.public_asset(asset_id,size)
 
 class ReleaseReadinessTests(unittest.TestCase):
     def test_waits_for_publication_without_weakening_the_witness(self):
