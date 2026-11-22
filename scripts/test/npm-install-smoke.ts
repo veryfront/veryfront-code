@@ -540,19 +540,34 @@ function parseRegistryConfiguration(): {
   return { registryUrl, rootSpecs, authSpec, packageNames, version };
 }
 
+/** How the Deno load checks treat the consumer's node_modules. */
+let denoNodeModulesDir: "auto" | "manual" = "auto";
+
 async function prepareArtifacts(workDir: string): Promise<InstallPlan> {
   if (Deno.env.get("VF_NPM_REGISTRY_VERSION")) {
     smokeFailureStatus = 22;
     const { registryUrl, rootSpecs, authSpec, packageNames, version } =
       parseRegistryConfiguration();
-    for (const spec of rootSpecs) {
-      if (!spec.startsWith("/")) continue;
-      const stat = await Deno.stat(spec).catch(() => undefined);
+    const coreSpec = rootSpecs.find((spec) => spec.startsWith("/"));
+    let installSpecs = rootSpecs;
+    if (coreSpec) {
+      const stat = await Deno.stat(coreSpec).catch(() => undefined);
       if (!stat?.isFile) fail("core tarball is missing");
+      // The tested core installs from a local tarball and every extension
+      // still installs from the registry, as a consumer would while npm lacks
+      // the core. Deno must then use that npm-built node_modules (manual):
+      // its auto mode re-resolves package.json, links node_modules/veryfront
+      // to the .tgz file itself and fails with os error 20.
+      const name = coreSpec.split("/").at(-1)!;
+      await Deno.copyFile(coreSpec, `${workDir}/${name}`);
+      installSpecs = rootSpecs.map((spec) =>
+        spec === coreSpec ? `./${name}` : spec
+      );
+      denoNodeModulesDir = "manual";
     }
     smokeFailureStatus = 21;
     return {
-      rootInstallSpecs: rootSpecs,
+      rootInstallSpecs: installSpecs,
       authInstallSpecs: [authSpec],
       npmEnv: { NPM_CONFIG_REGISTRY: registryUrl },
       registryMode: true,
@@ -924,7 +939,7 @@ if (p.dependencies?.['@veryfront/ext-node-websocket-ws'] !== p.version) process.
   );
   const denoLoad = await run("deno", [
     "eval",
-    "--node-modules-dir=auto",
+    `--node-modules-dir=${denoNodeModulesDir}`,
     DENO_BUNDLER_SCRIPT,
   ], { cwd: workDir, timeoutMs: 120_000 });
   if (denoLoad.code !== 0) {
@@ -934,7 +949,7 @@ if (p.dependencies?.['@veryfront/ext-node-websocket-ws'] !== p.version) process.
   }
   const denoNotFound = await run("deno", [
     "eval",
-    "--node-modules-dir=auto",
+    `--node-modules-dir=${denoNodeModulesDir}`,
     DENO_NOT_FOUND_SCRIPT,
   ], { cwd: workDir, timeoutMs: 120_000 });
   if (denoNotFound.code !== 0) {
