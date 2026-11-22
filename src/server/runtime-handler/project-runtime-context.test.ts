@@ -402,6 +402,35 @@ describe("prepareProjectRequest", () => {
     });
   });
 
+  it("delegates exact signed capability probes to their signature-verifying handler", async () => {
+    for (
+      const [method, path, signature, trusted, allowed] of [
+        ["POST", "/api/control-plane/runtime/capabilities", "signed-envelope", true, true],
+        ["POST", "/api/control-plane/runtime/capabilities", "", true, false],
+        ["GET", "/api/control-plane/runtime/capabilities", "signed-envelope", true, false],
+        ["POST", "/api/control-plane/runtime/capabilities/extra", "signed-envelope", true, false],
+        ["POST", "/api/control-plane/agents/list", "signed-envelope", true, false],
+        ["POST", "/api/control-plane/runtime/capabilities", "signed-envelope", false, false],
+      ] as const
+    ) {
+      const req = new Request(`https://project.production.example.com${path}`, {
+        method,
+        headers: { "x-project-slug": "project", "X-Veryfront-Control-Plane-JWS": signature },
+      });
+      const prepared = await prepareProjectRequest({
+        req,
+        url: new URL(req.url),
+        isProxyMode: true,
+        trustProxy: () => Promise.resolve(trusted),
+      });
+      assertEquals(
+        prepared.proxyGuard === undefined,
+        allowed,
+        `${method} ${path}: signed=${!!signature}, trusted=${trusted}`,
+      );
+    }
+  });
+
   it("rejects every untrusted proxy identity, not only x-project-path", async () => {
     const forwardedOnly = new Request("http://localhost/page", {
       headers: {
