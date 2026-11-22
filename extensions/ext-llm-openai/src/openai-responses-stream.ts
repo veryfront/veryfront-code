@@ -812,13 +812,16 @@ export async function* streamOpenAIResponsesParts(
         message: "Provider declared a response stream failure",
         retryable: false,
       };
-      const failure = code === "server_error"
-        ? new ProviderOverloadedError({ ...options, retryable: true })
-        : code === "rate_limit_exceeded"
-        ? new ProviderRateLimitError({ ...options, retryable: true })
-        : code === "insufficient_quota"
-        ? new ProviderQuotaError(options)
-        : new ProviderRequestError(options);
+      let failure: Error;
+      if (code === "server_error") {
+        failure = new ProviderOverloadedError({ ...options, retryable: true });
+      } else if (code === "rate_limit_exceeded") {
+        failure = new ProviderRateLimitError({ ...options, retryable: true });
+      } else if (code === "insufficient_quota") {
+        failure = new ProviderQuotaError(options);
+      } else {
+        failure = new ProviderRequestError(options);
+      }
       recordProviderErrorDiagnostic(
         failure,
         readOwnDiagnosticField(error, "type"),
