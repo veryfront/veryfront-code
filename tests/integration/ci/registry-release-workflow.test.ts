@@ -1187,8 +1187,45 @@ printf '%064d  %s\n' 0 "$1"
         IS_STABLE: "${{ needs.version-check.outputs.is_stable }}",
         MAINTENANCE_RELEASE:
           "${{ github.event_name == 'workflow_dispatch' && inputs.maintenance_release_number != '' }}",
+        NPM_CORE_SUSPENDED: "${{ needs.prerelease.outputs.npm_core_suspended == 'true' }}",
       },
     );
+    const { suffix } = splitEmbeddedPublisher(String(publish.run));
+    for (
+      const [suspended, maintenance, expected] of [
+        ["false", "false", "npx veryfront@rc"],
+        ["false", "true", "npx veryfront@0.1.2-rc.7"],
+        [
+          "true",
+          "false",
+          "npx https://github.com/veryfront/veryfront/releases/download/v0.1.2-rc.7/veryfront-0.1.2-rc.7.tgz",
+        ],
+        [
+          "true",
+          "true",
+          "npx https://github.com/veryfront/veryfront/releases/download/v0.1.2-rc.7/veryfront-0.1.2-rc.7.tgz",
+        ],
+      ]
+    ) {
+      await withTempDir(async (stateDir) => {
+        const output = await new Deno.Command("bash", {
+          args: ["-c", 'publish_github_release() { printf "%s\\n" "$@"; }\n' + suffix],
+          cwd: stateDir,
+          env: {
+            IS_STABLE: "false",
+            VERSION: "0.1.2-rc.7",
+            MAINTENANCE_RELEASE: maintenance,
+            NPM_CORE_SUSPENDED: suspended,
+          },
+          stdout: "piped",
+          stderr: "piped",
+        }).output();
+        assertEquals(output.code, 0, decoder.decode(output.stderr));
+        const notes = decoder.decode(output.stdout);
+        assertStringIncludes(notes, expected);
+        if (suspended === "true") assertEquals(notes.includes("veryfront@"), false);
+      });
+    }
     assert(
       uploaderSteps.indexOf(download) < uploaderSteps.indexOf(token) &&
         uploaderSteps.indexOf(token) < uploaderSteps.indexOf(publish),

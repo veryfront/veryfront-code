@@ -2039,6 +2039,9 @@ jobs:
           VERSION: ${{ steps.version.outputs.version }}
           IS_STABLE: ${{ needs.version-check.outputs.is_stable }}
           MAINTENANCE_RELEASE: ${{ github.event_name == 'workflow_dispatch' && inputs.maintenance_release_number != '' }}
+          # npm has no new core while suspended, so the notes point at the
+          # tarball attached to this release instead of the npm rc tag.
+          NPM_CORE_SUSPENDED: ${{ needs.prerelease.outputs.npm_core_suspended == 'true' }}
           GH_TOKEN: ${{ steps.release-app-token.outputs.token }}
         run: |
           # Fixed workflow implementation, kept in parity with the tested helper.
@@ -2321,7 +2324,9 @@ jobs:
             mode=--latest
           else
             install_target="veryfront@rc"
-            if [[ "${MAINTENANCE_RELEASE}" == "true" ]]; then
+            if [[ "${NPM_CORE_SUSPENDED}" == "true" ]]; then
+              install_target="https://github.com/veryfront/veryfront/releases/download/v${VERSION}/veryfront-${VERSION}.tgz"
+            elif [[ "${MAINTENANCE_RELEASE}" == "true" ]]; then
               install_target="veryfront@${VERSION}"
             fi
             notes='```bash
