@@ -2652,7 +2652,7 @@ describe("npm core publication mode", () => {
     );
     assertStringIncludes(
       String(asRecord(guard.env, "guard environment").RC_TAG_PACKAGE),
-      `'${SUSPENDED_RC_MARKER_PACKAGE.replace("/", "%2F")}'`,
+      `'${SUSPENDED_RC_MARKER_PACKAGE.replaceAll("/", "%2F")}'`,
     );
   });
 });
