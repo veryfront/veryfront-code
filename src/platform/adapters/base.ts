@@ -43,7 +43,7 @@ export interface RuntimeAdapter {
   server: ServerAdapter;
 
   serve(
-    handler: (request: Request) => Promise<Response> | Response,
+    handler: (request: Request) => Promise<HttpHandlerResponse> | HttpHandlerResponse,
     options: ServeOptions,
   ): Promise<Server>;
 
@@ -139,6 +139,8 @@ export interface WebSocketUpgradeResponse {
   readonly headers: Headers;
   readonly body: null;
 }
+
+export type HttpHandlerResponse = Response | WebSocketUpgradeResponse;
 
 export interface WebSocketUpgrade {
   socket: WebSocketConnection;
@@ -241,7 +243,8 @@ export interface ServeOptions {
    * WebSocket upgrades. When absent, HTTP serving remains available and every
    * Node WebSocket upgrade fails closed.
    */
-  nodeWebSocketServerProvider?: Readonly<NodeWebSocketServerProvider>;
+  /** Deno: undefined preserves implicit WS support; null explicitly disables it. */
+  nodeWebSocketServerProvider?: Readonly<NodeWebSocketServerProvider> | null;
 }
 
 export interface Server {

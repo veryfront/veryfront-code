@@ -1,7 +1,10 @@
 {
   "name": "@veryfront/ext-node-websocket-ws",
   "version": "0.1.0",
-  "exports": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./portable": "./src/portable.ts"
+  },
   "veryfront": {
     "extension": true,
     "activation": "auto",
@@ -29,6 +32,8 @@
   },
   "tasks": {
     "check": "deno check src/index.ts src/*.test.ts",
-    "test": "deno test --allow-env=WS_NO_BUFFER_UTIL,WS_NO_UTF_8_VALIDATE --allow-read=deno.json src/"
+    "test": "deno test --allow-env=WS_NO_BUFFER_UTIL,WS_NO_UTF_8_VALIDATE --allow-read=deno.json src/",
+    "generate": "deno run --frozen -A scripts/prebundle.ts",
+    "generate:check": "deno run --frozen -A scripts/prebundle.ts --check"
   }
 }

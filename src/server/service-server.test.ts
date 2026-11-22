@@ -113,6 +113,8 @@ Deno.test("Deno service shutdown runs runtime stop when server shutdown rejects"
     removeSignalListener: typeof Deno.removeSignalListener;
   };
   const originalServe = denoRuntime.serve;
+  const originalVersion = Deno.version;
+  Object.defineProperty(Deno, "version", { value: { ...originalVersion, deno: "2.9.9" } });
   const originalAddSignalListener = denoRuntime.addSignalListener;
   const originalRemoveSignalListener = denoRuntime.removeSignalListener;
   const shutdownError = new Error("deno shutdown failed");
@@ -152,6 +154,7 @@ Deno.test("Deno service shutdown runs runtime stop when server shutdown rejects"
     assertEquals(events, ["runtime-shutdown", "server-shutdown", "runtime-stop"]);
   } finally {
     denoRuntime.serve = originalServe;
+    Object.defineProperty(Deno, "version", { value: originalVersion });
     denoRuntime.addSignalListener = originalAddSignalListener;
     denoRuntime.removeSignalListener = originalRemoveSignalListener;
   }
@@ -164,6 +167,8 @@ Deno.test("Deno service shutdown preserves undefined transport rejection", async
     removeSignalListener: typeof Deno.removeSignalListener;
   };
   const originalServe = denoRuntime.serve;
+  const originalVersion = Deno.version;
+  Object.defineProperty(Deno, "version", { value: { ...originalVersion, deno: "2.9.9" } });
   const originalAddSignalListener = denoRuntime.addSignalListener;
   const originalRemoveSignalListener = denoRuntime.removeSignalListener;
   const events: string[] = [];
@@ -207,6 +212,7 @@ Deno.test("Deno service shutdown preserves undefined transport rejection", async
     assertEquals(events, ["runtime-shutdown", "server-shutdown", "runtime-stop"]);
   } finally {
     denoRuntime.serve = originalServe;
+    Object.defineProperty(Deno, "version", { value: originalVersion });
     denoRuntime.addSignalListener = originalAddSignalListener;
     denoRuntime.removeSignalListener = originalRemoveSignalListener;
   }
@@ -478,6 +484,8 @@ it("Deno service shutdown reports the transport failure when runtime stop also f
     removeSignalListener: typeof Deno.removeSignalListener;
   };
   const originalServe = denoRuntime.serve;
+  const originalVersion = Deno.version;
+  Object.defineProperty(Deno, "version", { value: { ...originalVersion, deno: "2.9.9" } });
   const originalAddSignalListener = denoRuntime.addSignalListener;
   const originalRemoveSignalListener = denoRuntime.removeSignalListener;
   const transportError = new Error("deno shutdown failed");
@@ -527,6 +535,7 @@ it("Deno service shutdown reports the transport failure when runtime stop also f
     );
   } finally {
     denoRuntime.serve = originalServe;
+    Object.defineProperty(Deno, "version", { value: originalVersion });
     denoRuntime.addSignalListener = originalAddSignalListener;
     denoRuntime.removeSignalListener = originalRemoveSignalListener;
   }
@@ -576,6 +585,8 @@ it("Deno shutdown signal handler stops once and exits nonzero when stop fails", 
   using _time = new FakeTime();
   const denoRuntime = Deno as unknown as DenoSignalTestRuntime;
   const originalServe = denoRuntime.serve;
+  const originalVersion = Deno.version;
+  Object.defineProperty(Deno, "version", { value: { ...originalVersion, deno: "2.9.9" } });
   const originalAddSignalListener = denoRuntime.addSignalListener;
   const originalRemoveSignalListener = denoRuntime.removeSignalListener;
   const originalExit = denoRuntime.exit;
@@ -650,6 +661,7 @@ it("Deno shutdown signal handler stops once and exits nonzero when stop fails", 
     );
   } finally {
     denoRuntime.serve = originalServe;
+    Object.defineProperty(Deno, "version", { value: originalVersion });
     denoRuntime.addSignalListener = originalAddSignalListener;
     denoRuntime.removeSignalListener = originalRemoveSignalListener;
     denoRuntime.exit = originalExit;
@@ -660,6 +672,8 @@ it("Deno shutdown signal handler exits nonzero when graceful shutdown times out"
   using time = new FakeTime();
   const denoRuntime = Deno as unknown as DenoSignalTestRuntime;
   const originalServe = denoRuntime.serve;
+  const originalVersion = Deno.version;
+  Object.defineProperty(Deno, "version", { value: { ...originalVersion, deno: "2.9.9" } });
   const originalAddSignalListener = denoRuntime.addSignalListener;
   const originalRemoveSignalListener = denoRuntime.removeSignalListener;
   const originalExit = denoRuntime.exit;
@@ -722,6 +736,7 @@ it("Deno shutdown signal handler exits nonzero when graceful shutdown times out"
     releaseStop();
     await time.runMicrotasks();
     denoRuntime.serve = originalServe;
+    Object.defineProperty(Deno, "version", { value: originalVersion });
     denoRuntime.addSignalListener = originalAddSignalListener;
     denoRuntime.removeSignalListener = originalRemoveSignalListener;
     denoRuntime.exit = originalExit;

@@ -1,3 +1,5 @@
+import { upgradeDenoNodeWebSocket } from "../../adapters/runtime/deno/node-websocket.ts";
+import { hasNodeWebSocketUpgradeRequest } from "../../adapters/runtime/shared/http-upgrade-provenance.ts";
 import { isDeno } from "../runtime.ts";
 import type { WebSocketUpgradeOptions, WebSocketUpgradeResult } from "./types.ts";
 import { getNativeDeno } from "./native-response.ts";
@@ -16,6 +18,9 @@ export function upgradeWebSocket(
   request: Request,
   options?: WebSocketUpgradeOptions,
 ): WebSocketUpgradeResult {
+  if (hasNodeWebSocketUpgradeRequest(request) && isDeno) {
+    return upgradeDenoNodeWebSocket(request, options);
+  }
   if (!isDeno) {
     throw NOT_SUPPORTED.create({
       detail: "WebSocket upgrade on Node.js requires server-level handling. " +

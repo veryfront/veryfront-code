@@ -19,7 +19,7 @@ function createBootstrap(adapter: RuntimeAdapter): BootstrapResult {
 describe("production server shutdown admission", () => {
   it("rejects requests before invoking the public interceptor during drain", async () => {
     const adapter = createMockAdapter();
-    let servedHandler: ((request: Request) => Response | Promise<Response>) | undefined;
+    let servedHandler: Parameters<RuntimeAdapter["serve"]>[0] | undefined;
     adapter.serve = (handler, options) => {
       servedHandler = handler;
       options.onListen?.({

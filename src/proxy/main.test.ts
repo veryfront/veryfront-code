@@ -54,7 +54,10 @@ describe("proxy main request URL parsing", () => {
     // An absolute-form target with an empty Host header parses as a URL but
     // fails Host validation downstream, so the guard on the parse alone would
     // only move the crash (veryfront-issue-inbox#828).
-    const catchIndex = source.indexOf("proxyRequestDrainTracker.complete(requestId);");
+    // The router's catch, not the WebSocket upgrade's early completion.
+    const catchIndex = source.indexOf(
+      "} catch (error) {\n    proxyRequestDrainTracker.complete(requestId);",
+    );
     assertEquals(catchIndex >= 0, true);
     // While draining, error responses close their connection too.
     assertStringIncludes(

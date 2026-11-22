@@ -1,3 +1,7 @@
+import {
+  type HttpHandlerResponse,
+  isWebSocketUpgradeResponse,
+} from "#veryfront/platform/adapters/base.ts";
 /**
  * Veryfront Proxy Server (Split Mode)
  *
@@ -330,7 +334,7 @@ if (Object.keys(proxyHandler.localProjects).length > 0) {
  * Handle WebSocket upgrade requests.
  * Bridges browser WebSocket to server HMR WebSocket endpoint.
  */
-async function handleWebSocketUpgrade(req: Request, url: URL): Promise<Response> {
+async function handleWebSocketUpgrade(req: Request, url: URL): Promise<HttpHandlerResponse> {
   const authorization = await authorizeWebSocketRequest(
     req,
     url,
@@ -848,7 +852,7 @@ function describeRejectedHostHeader(host: string | null): string {
 /**
  * Main router.
  */
-async function router(req: Request): Promise<Response> {
+async function router(req: Request): Promise<HttpHandlerResponse> {
   let url: URL;
   try {
     url = new URL(req.url);
@@ -884,7 +888,7 @@ async function router(req: Request): Promise<Response> {
   proxyRequestDrainTracker.start(requestId, req.method, url.pathname);
 
   try {
-    let response: Response;
+    let response: HttpHandlerResponse;
     if (req.headers.get("upgrade")?.toLowerCase() === "websocket") {
       response = await handleWebSocketUpgrade(req, url);
     } else if (url.pathname === PROXY_ROUTING_INVALIDATION_PATH) {
@@ -906,6 +910,10 @@ async function router(req: Request): Promise<Response> {
       response = await forwardToServer(req, url);
     }
 
+    if (isWebSocketUpgradeResponse(response)) {
+      proxyRequestDrainTracker.complete(requestId);
+      return response;
+    }
     // Read after the await: shutdown may have started while this request ran.
     response = drainAdmission.closeIfDraining(req, response, admittedDuringDrain);
     return proxyRequestDrainTracker.completeOnResponseEnd(requestId, req, response);
@@ -1084,4 +1092,12 @@ proxyLogger.debug("Starting proxy server (split mode)", {
 });
 
 // Start the HTTP server
-await server.serve(router, { port: PORT, hostname: HOST });
+const { WsNodeWebSocketServerProvider } = await importFirstPartyExtensionModule<{
+  WsNodeWebSocketServerProvider:
+    import("#veryfront/extensions/websocket").NodeWebSocketServerProvider;
+}>("ext-node-websocket-ws", "@veryfront/ext-node-websocket-ws");
+await server.serve(router, {
+  port: PORT,
+  hostname: HOST,
+  nodeWebSocketServerProvider: WsNodeWebSocketServerProvider,
+});
