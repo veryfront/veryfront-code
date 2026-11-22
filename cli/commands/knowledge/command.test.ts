@@ -6234,6 +6234,47 @@ it("excludes dependency directories from OKF bundle walks", async () => {
   }
 });
 
+it("prunes only reserved output claims from local and remote OKF bundles", async () => {
+  const root = await makeTempDir({ prefix: "veryfront-okf-claims-" });
+  try {
+    const retained = [".catalog/topic.md", ".veryfront/authored.md"];
+    const reserved = ".veryfront/knowledge-output-claims/v1/claim.json";
+    for (const path of [...retained, reserved]) {
+      await Deno.mkdir(dirname(join(root, path)), { recursive: true });
+      await Deno.writeTextFile(join(root, path), "# Authored or internal\n");
+    }
+    const local = await collectKnowledgeSources(
+      { sources: [], path: root, all: true, recursive: true, okfBundle: true },
+      { client: createMockClient(), projectSlug: "my-project", downloadUploads: async () => [] },
+    );
+    assertEquals(
+      local.sources.map(({ localPath }) => localPath).sort(),
+      retained.map((path) => join(root, path)).sort(),
+    );
+    const calls: string[][] = [];
+    await collectKnowledgeSources(
+      { sources: [], path: "uploads/.bundle", all: true, recursive: true, okfBundle: true },
+      {
+        client: createMockClient({
+          get: () =>
+            Promise.resolve({
+              data: [...retained, reserved].map((path) => ({
+                type: "file",
+                path: `uploads/.bundle/${path}`,
+              })),
+              page_info: { next: null },
+            }),
+        }),
+        projectSlug: "my-project",
+        downloadUploads: createDownloadUploadsStub(calls),
+      },
+    );
+    assertEquals(calls.flat().sort(), retained.map((path) => `uploads/.bundle/${path}`).sort());
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
 it("prunes VCS metadata from local and remote OKF bundles", async () => {
   const root = await makeTempDir({ prefix: "veryfront-okf-vcs-" });
   const directories = [".git", ".hg", ".svn", ".bzr"];
