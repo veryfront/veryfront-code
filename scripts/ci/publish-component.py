@@ -3,23 +3,35 @@
 Publisher CI identity and the npm package's historical source revision are
 separate facts. Native asset checksums identify compiled materials; this receipt
 is not a compiled-build attestation or a staging qualification result.
+
+While npm publication of the core package is suspended, the package is read
+from the public release instead: its provenance record and tarball assets.
 """
 import base64
+import hashlib
+import io
 import json
 import os
 from pathlib import Path
 import re
 import subprocess
 import sys
+import tarfile
 import time
 from urllib.error import HTTPError
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 CORE=r'(?:0|[1-9][0-9]*)'
 PRE=r'(?:0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)'
 VERSION=rf'{CORE}\.{CORE}\.{CORE}(?:-{PRE}(?:\.{PRE})*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?'
 SHA=r'[a-f0-9]{40}'
+INTEGRITY=r'sha512-[A-Za-z0-9+/]{86}=='
+SOURCE_URL='git+https://github.com/veryfront/veryfront-code.git'
+# Release asset bytes are served only from this host, after one redirect.
+ASSET_HOST='release-assets.githubusercontent.com'
+PROVENANCE_LIMIT=64*1024
+TARBALL_LIMIT=256*1024*1024
 
 
 def require(value):
@@ -46,6 +58,28 @@ def public_json(url):
     return json.loads(raw,object_pairs_hook=unique)
 
 
+class AssetRedirect(HTTPRedirectHandler):
+    # The fixed asset route answers with exactly one redirect to the asset host.
+    max_redirections=1
+    def redirect_request(self,req,fp,code,msg,headers,newurl):
+        target=urlsplit(newurl)
+        require(urlsplit(req.full_url).hostname=='api.github.com' and target.scheme=='https'
+                and target.hostname==ASSET_HOST and target.port is None and not target.username and not target.password)
+        return Request(newurl,headers={'User-Agent':'platform-component-publication'})
+
+
+def public_asset(asset_id,size):
+    # Call sites pass only asset ids from the fixed public release listing.
+    require(type(asset_id) is int and asset_id>0 and type(size) is int and 0<size<=TARBALL_LIMIT)
+    url='https://api.github.com/repos/veryfront/veryfront/releases/assets/'+str(asset_id)
+    request=Request(url,headers={'Accept':'application/octet-stream','User-Agent':'platform-component-publication'})
+    with build_opener(AssetRedirect).open(request,timeout=120) as response:
+        require(response.status==200 and urlsplit(response.geturl()).hostname==ASSET_HOST)
+        raw=response.read(size+1)
+    require(len(raw)==size)
+    return raw
+
+
 def source_json(path):
     require(path.startswith('repos/veryfront/veryfront-code/'))
     projection = '{sha}' if '/commits/' in path else '{status,base_commit:{sha:.base_commit.sha}}'
@@ -54,18 +88,89 @@ def source_json(path):
     return json.loads(result.stdout,object_pairs_hook=unique)
 
 
-def witness(version,env,read_public=public_json,read_source=source_json):
+def public_release(version,read_public):
+    release=read_public('https://api.github.com/repos/veryfront/veryfront/releases/tags/v'+quote(version,safe=''))
+    require(type(release.get('id')) is int and release['id']>0 and release.get('draft') is False
+            and release.get('tag_name')=='v'+version)
+    assets=release.get('assets');require(type(assets) is list and len(assets)<=1000)
+    return release
+
+
+def release_asset(assets,name):
+    found=[asset for asset in assets if asset.get('name')==name]
+    require(len(found)==1)
+    asset=found[0]
+    require(type(asset.get('id')) is int and asset['id']>0 and type(asset.get('size')) is int and asset['size']>0
+            and type(asset.get('digest')) is str and re.fullmatch(r'sha256:[a-f0-9]{64}',asset['digest']))
+    return {'asset_id':asset['id'],'name':name,'digest':asset['digest'],'size':asset['size']}
+
+
+def asset_bytes(asset,limit,read_asset):
+    require(asset['size']<=limit)
+    raw=read_asset(asset['asset_id'],asset['size'])
+    require(type(raw) is bytes and len(raw)==asset['size']
+            and 'sha256:'+hashlib.sha256(raw).hexdigest()==asset['digest'])
+    return raw
+
+
+def packaged_manifest(tarball):
+    found=[]
+    with tarfile.open(fileobj=io.BytesIO(tarball),mode='r:gz') as archive:
+        for count,member in enumerate(archive,1):
+            require(count<=100000)
+            if member.name=='package/package.json':
+                require(member.isfile() and 0<member.size<=1024*1024)
+                found.append(archive.extractfile(member).read(member.size+1))
+    require(len(found)==1)
+    return json.loads(found[0],object_pairs_hook=unique)
+
+
+def registry_package(version,read_public):
+    package=read_public('https://registry.npmjs.org/veryfront/'+quote(version,safe=''))
+    require(package.get('name')=='veryfront' and package.get('version')==version
+            and package.get('repository',{}).get('url')==SOURCE_URL)
+    return package.get('gitHead'),package.get('dist',{}).get('integrity')
+
+
+def release_package(version,assets,read_asset):
+    # Same facts as the registry record, from the provenance the publishing run
+    # attached, bound to the tarball bytes and its packaged manifest.
+    provenance_asset=release_asset(assets,'veryfront-'+version+'.npm-provenance.json')
+    tarball_asset=release_asset(assets,'veryfront-'+version+'.tgz')
+    record=json.loads(asset_bytes(provenance_asset,PROVENANCE_LIMIT,read_asset),object_pairs_hook=unique)
+    require(type(record) is dict and set(record)=={'schema_version','package','git_head','repository'}
+            and type(record['schema_version']) is int and record['schema_version']==1
+            and record['repository']=='https://github.com/veryfront/veryfront-code')
+    package=record['package']
+    require(type(package) is dict and set(package)=={'name','version','integrity'}
+            and package['name']=='veryfront' and package['version']==version)
+    origin,integrity=record['git_head'],package['integrity']
+    require(type(origin) is str and re.fullmatch(SHA,origin) and type(integrity) is str and re.fullmatch(INTEGRITY,integrity))
+    tarball=asset_bytes(tarball_asset,TARBALL_LIMIT,read_asset)
+    require('sha512-'+base64.b64encode(hashlib.sha512(tarball).digest()).decode()==integrity)
+    manifest=packaged_manifest(tarball)
+    require(type(manifest) is dict and manifest.get('name')=='veryfront' and manifest.get('version')==version
+            and type(manifest.get('repository')) is dict and manifest['repository'].get('url')==SOURCE_URL
+            and manifest.get('gitHead')==origin)
+    return origin,integrity,tarball_asset
+
+
+def witness(version,env,read_public=public_json,read_source=source_json,read_asset=public_asset):
     require(type(version) is str and len(version)<=128 and re.fullmatch(VERSION,version))
     require(env.get('GITHUB_ACTIONS')=='true' and env.get('GITHUB_REPOSITORY')=='veryfront/veryfront-code'
             and env.get('GITHUB_REF')=='refs/heads/main' and env.get('GITHUB_EVENT_NAME') in ('push','workflow_dispatch'))
     sha=env.get('GITHUB_SHA','');require(re.fullmatch(SHA,sha))
     for key in ('GITHUB_RUN_ID','GITHUB_RUN_ATTEMPT'):require(re.fullmatch(r'[1-9][0-9]{0,19}',env.get(key,'')))
-    package=read_public('https://registry.npmjs.org/veryfront/'+quote(version,safe=''))
-    require(package.get('name')=='veryfront' and package.get('version')==version
-            and package.get('repository',{}).get('url')=='git+https://github.com/veryfront/veryfront-code.git')
-    integrity=package.get('dist',{}).get('integrity');origin=package.get('gitHead')
+    # The publishing run's own mode selects the package source; a registry miss
+    # never selects the release on its own.
+    suspended=env.get('NPM_CORE_PUBLISH_SUSPENDED');require(suspended in ('true','false'))
+    if suspended=='true':
+        release=public_release(version,read_public)
+        origin,integrity,package_asset=release_package(version,release['assets'],read_asset)
+    else:
+        origin,integrity=registry_package(version,read_public)
     require(type(origin) is str and re.fullmatch(SHA,origin)
-            and type(integrity) is str and re.fullmatch(r'sha512-[A-Za-z0-9+/]{86}==',integrity))
+            and type(integrity) is str and re.fullmatch(INTEGRITY,integrity))
     material=base64.b64decode(integrity[7:],validate=True)
     require(len(material)==64 and base64.b64encode(material).decode()==integrity[7:])
     commit=read_source('repos/veryfront/veryfront-code/commits/'+origin)
@@ -73,40 +178,34 @@ def witness(version,env,read_public=public_json,read_source=source_json):
     if origin!=sha:
         comparison=read_source('repos/veryfront/veryfront-code/compare/'+origin+'...'+sha)
         require(comparison.get('status')=='ahead' and comparison.get('base_commit',{}).get('sha')==origin)
-    release=read_public('https://api.github.com/repos/veryfront/veryfront/releases/tags/v'+quote(version,safe=''))
-    require(type(release.get('id')) is int and release['id']>0 and release.get('draft') is False
-            and release.get('tag_name')=='v'+version)
-    assets=release.get('assets');require(type(assets) is list and len(assets)<=1000)
+    if suspended=='false':release=public_release(version,read_public)
+    assets=release['assets']
     binaries={}
     for platform,architecture in [('linux/amd64','x64'),('linux/arm64','arm64')]:
         roles={}
         for role,prefix in [('renderer','veryfront'),('proxy','veryfront-proxy')]:
-            name=prefix+'-linux-'+architecture
-            found=[asset for asset in assets if asset.get('name')==name]
-            require(len(found)==1)
-            asset=found[0]
-            require(type(asset.get('id')) is int and asset['id']>0 and type(asset.get('size')) is int and asset['size']>0
-                    and type(asset.get('digest')) is str and re.fullmatch(r'sha256:[a-f0-9]{64}',asset['digest']))
-            roles[role]={'asset_id':asset['id'],'name':name,'digest':asset['digest'],'size':asset['size']}
+            roles[role]=release_asset(assets,prefix+'-linux-'+architecture)
         binaries[platform]=roles
+    code_release={'repository':'veryfront/veryfront','release_id':release['id'],'version':version,
+                  'package_source_revision':origin,
+                  'package':{'name':'veryfront','version':version,'integrity':integrity},'binaries':binaries}
+    if suspended=='true':code_release['package_asset']=package_asset
     return {'schema_version':1,'component':'code',
             'source':{'repository':'veryfront/veryfront-code','sha':sha,
                       'ci_run_id':int(env['GITHUB_RUN_ID']),'ci_run_attempt':int(env['GITHUB_RUN_ATTEMPT'])},
             'configuration':{'source_revision':sha},
-            'release':{'repository':'veryfront/veryfront','release_id':release['id'],'version':version,
-                       'package_source_revision':origin,
-                       'package':{'name':'veryfront','version':version,'integrity':integrity},'binaries':binaries}}
+            'release':code_release}
 
 
 def witness_when_ready(version,env,read_public=public_json,read_source=source_json,
-                       clock=time.monotonic,sleep=time.sleep):
+                       clock=time.monotonic,sleep=time.sleep,read_asset=public_asset):
     # An unchanged-version main run can overtake the run publishing that version.
     # Wait only for absent public material, never for invalid release facts.
     # The observed publication gap was ten minutes; bound this wait to fifteen.
     deadline=clock()+15*60
     while True:
         try:
-            return witness(version,env,read_public,read_source)
+            return witness(version,env,read_public,read_source,read_asset)
         except HTTPError as error:
             if error.code!=404:raise
             remaining=deadline-clock()
