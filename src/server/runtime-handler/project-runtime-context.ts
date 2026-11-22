@@ -2,6 +2,7 @@ import { getBaseLogger } from "#veryfront/utils";
 import {
   isConfigOptionalControlPlaneRunRequest,
   isControlPlaneRuntimeCapabilitiesRequest,
+  isSignedControlPlaneDispatch,
 } from "#veryfront/channels/control-plane.ts";
 import { getHostEnv } from "#veryfront/platform/compat/process.ts";
 import {
@@ -649,7 +650,13 @@ function createProxyGuard(
       error: "Missing project context",
       detail: "x-project-slug header is required in proxy mode",
     };
-  } else if (!token) {
+  } else if (
+    !token &&
+    // This exact host-owned endpoint verifies its signed envelope before any
+    // project configuration is loaded. A capability probe has no user token.
+    !(isControlPlaneRuntimeCapabilitiesRequest(req.method, new URL(req.url).pathname) &&
+      isSignedControlPlaneDispatch(req))
+  ) {
     body = {
       error: "Missing authentication context",
       detail: "x-token header is required in proxy mode",
