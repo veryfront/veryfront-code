@@ -120,6 +120,7 @@ function selectedProjectDirectory() {
     "no-input",
     "no-split",
     "no-ssg",
+    "no-sync",
     "no-tui",
     "okf-bundle",
     "open",

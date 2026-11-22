@@ -216,3 +216,33 @@ describe("commands/dev/handler", () => {
     });
   });
 });
+
+describe("dev --no-sync", () => {
+  function parseDevWithEnv(argv: string[], env: Record<string, string>) {
+    return parseDevArgs(parseCliArgs(argv), createInMemoryHostRuntime({ env }));
+  }
+
+  function noSync(argv: string[], env: Record<string, string> = {}): boolean | undefined {
+    const result = parseDevWithEnv(argv, env);
+    return result.success ? result.data.noSync : undefined;
+  }
+
+  it("syncs by default", () => {
+    assertEquals(noSync(["dev"]), false);
+  });
+
+  it("is enabled by the flag", () => {
+    assertEquals(noSync(["dev", "--no-sync"]), true);
+  });
+
+  it("is enabled by VERYFRONT_DEV_NO_SYNC for CI and scripted runs", () => {
+    assertEquals(noSync(["dev"], { VERYFRONT_DEV_NO_SYNC: "1" }), true);
+    assertEquals(noSync(["dev"], { VERYFRONT_DEV_NO_SYNC: "true" }), true);
+  });
+
+  it("stays off for a falsy or empty VERYFRONT_DEV_NO_SYNC", () => {
+    assertEquals(noSync(["dev"], { VERYFRONT_DEV_NO_SYNC: "0" }), false);
+    assertEquals(noSync(["dev"], { VERYFRONT_DEV_NO_SYNC: "false" }), false);
+    assertEquals(noSync(["dev"], { VERYFRONT_DEV_NO_SYNC: "" }), false);
+  });
+});

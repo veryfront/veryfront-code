@@ -24,6 +24,11 @@ export const devHelp: CommandHelp = {
       description: "Disable hot module replacement",
     },
     {
+      flag: "--no-sync",
+      description:
+        "Do not sync source to Cloud; start a linked project without the Cloud connection (also VERYFRONT_DEV_NO_SYNC=1)",
+    },
+    {
       flag: "--open",
       description: "Open browser automatically",
     },
@@ -36,6 +41,7 @@ export const devHelp: CommandHelp = {
     "veryfront dev --open",
     "veryfront dev --env preview",
     "veryfront dev --no-hmr",
+    "veryfront dev --no-sync",
   ],
   notes: [
     "Port selection priority (highest to lowest):",
@@ -46,5 +52,10 @@ export const devHelp: CommandHelp = {
     "",
     "When the requested port is taken, the server falls forward to the next",
     "free port. Open the URL the CLI prints to reach the running server.",
+    "",
+    "A project linked to Veryfront Cloud pushes its local source at startup and",
+    "stops when the push conflicts with remote changes. Use --no-sync to start",
+    "local-only instead: nothing is pushed, and connected agent runs and the",
+    "Studio link are unavailable for that session.",
   ],
 };

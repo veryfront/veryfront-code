@@ -18,6 +18,16 @@ export interface ConnectedDevTarget {
   environmentName: string;
 }
 
+/**
+ * Whether a linked project starts local-only. Proxy projects never take the
+ * Cloud connection, and `--no-sync` opts out of it: without the startup sync,
+ * connected admission would read declarations the local source no longer
+ * matches, so the opt-out skips the connection rather than only the push.
+ */
+export function connectedDevDisabled(options: { proxyMode: boolean; noSync: boolean }): boolean {
+  return options.proxyMode || options.noSync;
+}
+
 export async function prepareConnectedDev(
   projectSlug: string | undefined,
   environmentName: string,
@@ -26,9 +36,9 @@ export async function prepareConnectedDev(
     resolve(projectSlug: string, environmentName: string): Promise<ConnectedDevTarget>;
     sync(target: ConnectedDevTarget): Promise<void>;
   },
-  proxyMode = false,
+  disabled = false,
 ): Promise<ConnectedDevTarget | undefined> {
-  if (proxyMode || !projectSlug) return undefined;
+  if (disabled || !projectSlug) return undefined;
   if (!await dependencies.authenticate()) {
     throw new Error(
       "Veryfront Cloud login is required for this linked project. Run veryfront login, then npm run dev again.",

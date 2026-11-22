@@ -54,6 +54,7 @@ import { devReadinessLines, veryfrontServiceName } from "./readiness-output.ts";
 import {
   applyConnectedDevProjectSlug,
   connectedDevApiBaseUrl,
+  connectedDevDisabled,
   connectedDevStudioBaseUrl,
   type ConnectedDevTarget,
   createConnectedDevControlPlane,
@@ -89,6 +90,11 @@ export interface DevOptions {
   environment?: string;
   hmr?: boolean;
   open?: boolean;
+  /**
+   * Start a Cloud-linked project local-only: no startup source sync and no
+   * Cloud connection. Set by `--no-sync` or `VERYFRONT_DEV_NO_SYNC`.
+   */
+  noSync?: boolean;
   /** Demo mode: don't exit process on shutdown, resolve done promise instead */
   demoMode?: boolean;
   /**
@@ -301,6 +307,7 @@ export function devCommand(options: DevOptions): Promise<DevCommandResult> {
         open = false,
         demoMode = false,
         clearLocalCaches = false,
+        noSync = false,
       } = options;
 
       const displayOptions = captureDevDisplayOptions();
@@ -347,12 +354,18 @@ export function devCommand(options: DevOptions): Promise<DevCommandResult> {
         projectDir,
         config?.projectSlug ?? config?.fs?.veryfront?.projectSlug ?? env.projectSlug,
       );
-      if (!linkedProjectSlug && !isProxyMode && isTTY() && isInteractive()) {
+      const connectedDisabled = connectedDevDisabled({ proxyMode: isProxyMode, noSync });
+      if (!linkedProjectSlug && !connectedDisabled && isTTY() && isInteractive()) {
         await chooseCloudProject(projectDir);
         linkedProjectSlug = await resolveLinkedProjectSlug(projectDir);
       }
       let preflightIdentity: AuthIdentity | null = null;
       let runtimeAuth = await applyQualifiedRuntimeAuth(projectDir, linkedProjectSlug);
+      if (noSync && linkedProjectSlug && !isProxyMode) {
+        console.log(
+          "  Skipping source sync (--no-sync). Starting without the Veryfront Cloud connection.",
+        );
+      }
       const connectedTarget = await prepareConnectedDev(
         linkedProjectSlug,
         options.environment ?? "preview",
@@ -408,7 +421,7 @@ export function devCommand(options: DevOptions): Promise<DevCommandResult> {
             };
           },
         },
-        isProxyMode,
+        connectedDisabled,
       );
       const studioBase = connectedTarget
         ? connectedDevStudioBaseUrl(
