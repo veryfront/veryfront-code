@@ -1,3 +1,5 @@
+import { summarizeErrorCausesForLog } from "#veryfront/observability/telemetry-error.ts";
+import { createRuntimeProviderStreamFailure } from "#veryfront/runtime/provider-stream-error-provenance.ts";
 import { assert, assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { parseProviderError } from "#veryfront/chat/provider-errors.ts";
@@ -42,6 +44,38 @@ function data(payload: unknown): string {
 }
 
 describe("ext-llm-openai/openai-chat-stream", () => {
+  it("retains only allowlisted streamed rejection diagnostics through nested telemetry", async () => {
+    for (const known of [true, false]) {
+      const fields = {
+        type: known ? "invalid_request_error" : "private-provider-type",
+        code: known ? "invalid_tool_schema" : "private-provider-code",
+        param: known ? "tools[0].function.parameters" : "private-provider-param",
+        message: "private provider payload <TOKEN>",
+        extra: "private extra payload",
+      };
+      const error = await assertRejects(
+        () => collectParts(streamFromText(data({ error: fields }))),
+        ProviderRequestError,
+      );
+      const causes = summarizeErrorCausesForLog(createRuntimeProviderStreamFailure(error));
+      assert(causes !== undefined);
+      const providerCause = causes.find((cause) => cause.name === "ProviderRequestError");
+      assert(providerCause !== undefined);
+      assertEquals(providerCause.providerErrorType, known ? fields.type : undefined);
+      assertEquals(providerCause.providerErrorCode, known ? fields.code : undefined);
+      assertEquals(providerCause.providerErrorParam, known ? fields.param : undefined);
+      const serialized = JSON.stringify({ causes, error });
+      for (
+        const forbidden of ["private-provider", "private provider", "<TOKEN>", "private extra"]
+      ) {
+        assertEquals(serialized.includes(forbidden), false);
+      }
+      assert(error instanceof ProviderRequestError);
+      assertEquals(Object.hasOwn(error, "cause"), false);
+      assertEquals(parseProviderError(error).code, "EXTERNAL_SERVICE_ERROR");
+    }
+  });
+
   it("classifies an explicit streamed context error without treating it as malformed content", async () => {
     const error = await assertRejects(() =>
       collectParts(streamFromText(data({

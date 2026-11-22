@@ -8,6 +8,7 @@ import {
   readGatewayBillingMode,
   readGatewayUsageCosts,
   readRecord,
+  recordProviderErrorDiagnostic,
 } from "veryfront/provider/shared";
 import type { RuntimeUsage } from "veryfront/provider/shared";
 import {
@@ -328,7 +329,15 @@ export async function* streamOpenAICompatibleParts(
       if (!errorRecord || typeof errorMessage !== "string") {
         throw invalidOpenAIStream(context, "provider error event was malformed");
       }
-      throw streamedProviderError(context, readOwnDataField(errorRecord, "code"), errorMessage);
+      const code = readOwnDataField(errorRecord, "code");
+      const error = streamedProviderError(context, code, errorMessage);
+      recordProviderErrorDiagnostic(
+        error,
+        readOwnDataField(errorRecord, "type"),
+        code,
+        readOwnDataField(errorRecord, "param"),
+      );
+      throw error;
     }
     const usageRecord = readRecord(record.usage);
     usage = mergeOpenAIUsage(usage, record);

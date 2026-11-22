@@ -74,6 +74,43 @@ function data(payload: unknown): string {
 }
 
 describe("ext-llm-openai/openai-responses-stream", () => {
+  it("retains only allowlisted streamed rejection diagnostics through nested telemetry", async () => {
+    for (const known of [true, false]) {
+      const fields = {
+        type: known ? "invalid_request_error" : "private-provider-type",
+        code: known ? "invalid_tool_schema" : "private-provider-code",
+        param: known ? "tools[0].function.parameters" : "private-provider-param",
+        message: "private provider payload <TOKEN>",
+        extra: "private extra payload",
+      };
+      for (const event of [{ type: "error", error: fields }, { ...fields, type: "error" }]) {
+        const error = await assertRejects(
+          () => collectParts(streamFromText(data(event))),
+          ProviderRequestError,
+        );
+        const causes = summarizeErrorCausesForLog(createRuntimeProviderStreamFailure(error));
+        assert(causes !== undefined);
+        const providerCause = causes.find((cause) => cause.name === "ProviderRequestError");
+        assert(providerCause !== undefined);
+        assertEquals(
+          providerCause.providerErrorType,
+          known && Object.hasOwn(event, "error") ? fields.type : undefined,
+        );
+        assertEquals(providerCause.providerErrorCode, known ? fields.code : undefined);
+        assertEquals(providerCause.providerErrorParam, known ? fields.param : undefined);
+        const serialized = JSON.stringify({ causes, error });
+        for (
+          const forbidden of ["private-provider", "private provider", "<TOKEN>", "private extra"]
+        ) {
+          assertEquals(serialized.includes(forbidden), false);
+        }
+        assert(error instanceof ProviderRequestError);
+        assertEquals(Object.hasOwn(error, "cause"), false);
+        assertEquals(parseProviderError(error).code, "EXTERNAL_SERVICE_ERROR");
+      }
+    }
+  });
+
   it("ignores keepalive events a quiet reasoning span interleaves", async () => {
     // Azure OpenAI sends these mid-stream while a reasoning model is quiet for long spans.
     const keepalive = (sequence: number) =>
