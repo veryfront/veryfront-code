@@ -135,6 +135,8 @@ import {
 import { initializeSentryFromEnv } from "#veryfront/observability/sentry.ts";
 import { getTraceContext } from "./tracing.ts";
 import { createSplitForwardRequestInit } from "./split-forward-request.ts";
+import { startProxyHttpIsolation } from "./isolated-http.ts";
+import { createHostedHttpUnavailableResponse } from "#veryfront/server/isolated-http/hosted-http-ingress.ts";
 
 await initializeSentryFromEnv("veryfront-proxy");
 
@@ -203,6 +205,10 @@ const serverResolver = new ServerResolver(
   undefined,
   { requireAssignment: requireDedicatedRouting },
 );
+const proxyHttpIsolation = await startProxyHttpIsolation({
+  requireDedicatedRouting,
+  localProjects: config.localProjects ?? {},
+});
 
 const { hostname: HOST, port: PORT } = resolveProxyBinding();
 const WS_CONNECT_TIMEOUT_MS = 30_000;
@@ -566,12 +572,28 @@ function forwardToServer(req: Request, url: URL): Promise<Response> {
           ) {
             throw new DedicatedServerLookupUnavailable();
           }
+          let pinnedDedicatedUrl: string | null = null;
+          if (proxyHttpIsolation) {
+            const route = await proxyHttpIsolation.route(
+              req,
+              ctx,
+              () =>
+                profileProxyServerTimingPhase(
+                  proxyTiming,
+                  "proxy.resolve_server",
+                  () => serverResolver.resolve(ctx.environmentId),
+                ),
+            );
+            if (route.kind === "response") {
+              return withProxyTiming(removeStickyCookieFromPublicCacheableResponse(route.response));
+            }
+            if (route.kind === "assigned") pinnedDedicatedUrl = route.origin;
+          }
           const upstreamBodies = getReplayableRequestBodies(req, maxRetries);
           let lastError: Error | null = null;
           // Strict mode pins the first assigned endpoint for this request. A
           // connection failure may retry that same endpoint, never shared code.
           let skipDedicated = false;
-          let pinnedDedicatedUrl: string | null = null;
 
           for (let attempt = 0; attempt <= maxRetries; attempt++) {
             req.signal.throwIfAborted();
@@ -890,7 +912,12 @@ async function router(req: Request): Promise<HttpHandlerResponse> {
   try {
     let response: HttpHandlerResponse;
     if (req.headers.get("upgrade")?.toLowerCase() === "websocket") {
-      response = await handleWebSocketUpgrade(req, url);
+      response = proxyHttpIsolation
+        ? createHostedHttpUnavailableResponse(
+          req,
+          "WebSocket execution is not qualified under isolation",
+        )
+        : await handleWebSocketUpgrade(req, url);
     } else if (url.pathname === PROXY_ROUTING_INVALIDATION_PATH) {
       response = await handleProxyRoutingInvalidationRequest(req, {
         logger: proxyLogger,
@@ -984,6 +1011,7 @@ async function shutdown(signal: "SIGINT" | "SIGTERM"): Promise<void> {
     }
   };
 
+  let shutdownFailed = false;
   try {
     // New requests are admitted (closing their connections) until the grace
     // window ends, then receive the draining response. Keep this replica
@@ -1033,6 +1061,7 @@ async function shutdown(signal: "SIGINT" | "SIGTERM"): Promise<void> {
           }
         },
       },
+      { name: "isolated_http", run: () => proxyHttpIsolation?.shutdown() },
       { name: "renderer_router", run: () => rendererRouter?.close() },
       { name: "server_resolver", run: () => serverResolver.close() },
       { name: "proxy_handler", run: () => proxyHandler.close() },
@@ -1055,16 +1084,18 @@ async function shutdown(signal: "SIGINT" | "SIGTERM"): Promise<void> {
     if (cleanupFailures.length === 0) {
       proxyLogger.info("Closed connections");
     } else {
+      shutdownFailed = true;
       proxyLogger.warn("Proxy shutdown completed with cleanup failures", {
         failureCount: cleanupFailures.length,
       });
     }
   } catch (error) {
+    shutdownFailed = true;
     captureApplicationError(error, { boundary: "process.shutdown" });
     proxyLogger.error("Error while shutting down proxy", error);
     await flushApplicationErrors();
   } finally {
-    exit(0);
+    exit(shutdownFailed ? 1 : 0);
   }
 }
 

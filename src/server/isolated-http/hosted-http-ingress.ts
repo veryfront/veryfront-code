@@ -65,7 +65,7 @@ export function isHostedHttpApplicationRequest(request: Request): boolean {
 }
 
 /** Preview surfaces with no isolated route. Refused, never served by the host. */
-function isUnsupportedUnderIsolation(request: Request): boolean {
+export function isUnsupportedHostedHttpSurface(request: Request): boolean {
   const pathname = new URL(request.url).pathname;
   // The snippet handler owns these prefixes only for GET; other methods reach the application.
   return isWebSocketUpgrade(request) ||
@@ -73,7 +73,7 @@ function isUnsupportedUnderIsolation(request: Request): boolean {
       (pathname.startsWith("/@/") || pathname.startsWith("/@components/")));
 }
 
-function unavailable(
+export function createHostedHttpUnavailableResponse(
   request: Request,
   detail = "An authorized isolated application release is unavailable",
 ): Response {
@@ -107,20 +107,23 @@ export function createHostedHttpIngress(options: HostedHttpIngressOptions) {
     // Either signal naming preview refuses: a preview host cannot be relabelled
     // production by a header, and the reverse is refused too.
     if (
-      isUnsupportedUnderIsolation(request) || selection.mode === "preview" ||
+      isUnsupportedHostedHttpSurface(request) || selection.mode === "preview" ||
       selection.hostMode !== "production"
     ) {
-      return unavailable(request, "This surface is unsupported under isolation");
+      return createHostedHttpUnavailableResponse(
+        request,
+        "This surface is unsupported under isolation",
+      );
     }
     if (
       selection.proxyTrusted !== true || selection.mode !== "production" ||
       !selection.sourceToken || selection.sourceToken.length > 8192
-    ) return unavailable(request);
+    ) return createHostedHttpUnavailableResponse(request);
     const origin = getEffectiveRequestOrigin(request, undefined, true);
-    if (!origin) return unavailable(request);
+    if (!origin) return createHostedHttpUnavailableResponse(request);
     if (!await preparations.tryAcquire(0, { signal: request.signal })) {
       request.signal.throwIfAborted();
-      return unavailable(request);
+      return createHostedHttpUnavailableResponse(request);
     }
     try {
       request.signal.throwIfAborted();
@@ -145,14 +148,16 @@ export function createHostedHttpIngress(options: HostedHttpIngressOptions) {
           "environmentName",
         ] as const
       ) {
-        if (input.configuration?.[key] !== identity[key]) return unavailable(request);
+        if (input.configuration?.[key] !== identity[key]) {
+          return createHostedHttpUnavailableResponse(request);
+        }
       }
       if (
         input.installation.owner.scopeKind !== "project" ||
         input.installation.owner.projectId !== identity.projectId ||
         input.installation.source.releaseId !== identity.releaseId ||
         input.installation.environmentId !== identity.environmentId
-      ) return unavailable(request);
+      ) return createHostedHttpUnavailableResponse(request);
       const url = new URL(request.url);
       const publicOrigin = new URL(origin);
       url.protocol = publicOrigin.protocol;
@@ -173,7 +178,7 @@ export function createHostedHttpIngress(options: HostedHttpIngressOptions) {
       return await fetch(applicationRequest, input);
     } catch {
       request.signal.throwIfAborted();
-      return unavailable(request);
+      return createHostedHttpUnavailableResponse(request);
     } finally {
       // Cancellation notification does not release work still owned by resolve.
       preparations.release();

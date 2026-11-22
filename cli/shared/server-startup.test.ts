@@ -304,6 +304,57 @@ describe("startCliProductionServer hosted HTTP composition", () => {
     await assertRejects(() => starting, Error, "content processor failed");
   });
 
+  it("retains startup, listener and broker errors when retirement cannot be confirmed", async () => {
+    const events: string[] = [];
+    const composition = fakeComposition(events);
+    composition.shutdown = () => Promise.reject(new Error("broker retirement unconfirmed"));
+    const error = await assertRejects(
+      () =>
+        startCliProductionServer(baseOptions, {
+          ...hostedOn(composition),
+          ensureContentProcessor: () => Promise.reject(new Error("content processor failed")),
+          startServer: () => server(() => Promise.reject(new Error("listener retirement failed"))),
+        }),
+      AggregateError,
+      "retirement failed",
+    );
+    const messages = (value: unknown): string[] =>
+      value instanceof AggregateError
+        ? value.errors.flatMap(messages)
+        : [value instanceof Error ? value.message : String(value)];
+    assertEquals(
+      new Set(messages(error)),
+      new Set([
+        "content processor failed",
+        "listener retirement failed",
+        "broker retirement unconfirmed",
+      ]),
+    );
+  });
+
+  it("still owns listener retirement when broker shutdown throws synchronously", async () => {
+    const composition = fakeComposition([]);
+    composition.shutdown = () => {
+      throw new Error("broker stop failed");
+    };
+    const listener = Promise.withResolvers<void>();
+    const handle = await startCliProductionServer(baseOptions, {
+      ...hostedOn(composition),
+      startServer: () => server(() => listener.promise),
+    });
+    let finished = false;
+    const stopping = handle.stop();
+    void stopping.then(() => {
+      finished = true;
+    }, () => {
+      finished = true;
+    });
+    for (let turn = 0; turn < 5; turn++) await Promise.resolve();
+    assertEquals(finished, false);
+    listener.resolve();
+    await assertRejects(() => stopping, Error, "broker stop failed");
+  });
+
   it("stops the listener and the broker when shutdown arrives while content is still loading", async () => {
     const events: string[] = [];
     const controller = new AbortController();
