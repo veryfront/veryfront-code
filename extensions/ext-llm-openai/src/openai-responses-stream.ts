@@ -8,6 +8,7 @@ import {
   readGatewayBillingMode,
   readGatewayUsageCosts,
   readRecord,
+  recordProviderErrorDiagnostic,
   stringifyJsonValue,
 } from "veryfront/provider/shared";
 import type { RuntimeUsage } from "veryfront/provider/shared";
@@ -101,6 +102,16 @@ export const MAX_OPENAI_RESPONSES_STREAM_OUTPUT_ITEMS = 4_096;
 export const MAX_OPENAI_RESPONSES_STREAM_CONTENT_PARTS = 4_096;
 const MAX_OPENAI_STREAM_MESSAGE_DELTA_BATCH_BYTES = 64 * 1024;
 const MAX_OPENAI_STREAM_MESSAGE_DELTA_BATCH_FRAGMENTS = 256;
+const ObjectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+const ObjectHasOwn = Object.hasOwn;
+
+/** Read diagnostic fields without invoking inherited or accessor values. */
+function readOwnDiagnosticField(record: Record<string, unknown>, key: string): unknown {
+  const descriptor = ObjectGetOwnPropertyDescriptor(record, key);
+  return descriptor !== undefined && ObjectHasOwn(descriptor, "value")
+    ? descriptor.value
+    : undefined;
+}
 
 function invalidOpenAIResponsesStream(
   context: OpenAIResponsesStreamContext,
@@ -785,9 +796,10 @@ export async function* streamOpenAIResponsesParts(
       // The service also emits a nested error object after accepting HTTP 200.
       // An explicitly malformed nested envelope must not fall back to flat fields.
       const error = Object.hasOwn(record, "error") ? readRecord(record.error) : record;
+      const code = error ? readOwnDiagnosticField(error, "code") : undefined;
       if (
         !error ||
-        (error.code !== null && typeof error.code !== "string") ||
+        (code !== null && typeof code !== "string") ||
         typeof error.message !== "string"
       ) {
         throw invalidOpenAIResponsesStream(context, "provider error event was malformed");
@@ -800,14 +812,20 @@ export async function* streamOpenAIResponsesParts(
         message: "Provider declared a response stream failure",
         retryable: false,
       };
-      if (error.code === "server_error") {
-        throw new ProviderOverloadedError({ ...options, retryable: true });
-      }
-      if (error.code === "rate_limit_exceeded") {
-        throw new ProviderRateLimitError({ ...options, retryable: true });
-      }
-      if (error.code === "insufficient_quota") throw new ProviderQuotaError(options);
-      throw new ProviderRequestError(options);
+      const failure = code === "server_error"
+        ? new ProviderOverloadedError({ ...options, retryable: true })
+        : code === "rate_limit_exceeded"
+        ? new ProviderRateLimitError({ ...options, retryable: true })
+        : code === "insufficient_quota"
+        ? new ProviderQuotaError(options)
+        : new ProviderRequestError(options);
+      recordProviderErrorDiagnostic(
+        failure,
+        readOwnDiagnosticField(error, "type"),
+        code,
+        readOwnDiagnosticField(error, "param"),
+      );
+      throw failure;
     }
 
     if (type === "response.output_item.added") {

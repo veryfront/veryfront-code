@@ -64,6 +64,7 @@ export {
 } from "../runtime-loader/inline-file.ts";
 
 // Retry, error, HTTP, usage, and JSON boundary plumbing.
+export { recordProviderErrorDiagnostic } from "../runtime-loader/provider-error-diagnostic.ts";
 export {
   buildProviderError,
   createWarningCollector,
