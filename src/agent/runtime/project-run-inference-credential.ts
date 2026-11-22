@@ -32,7 +32,7 @@ const StringSlice = String.prototype.slice;
 const CATALOG_LOAD_MAX_WAIT_MS = 3_000;
 
 type ProjectRunInferenceScope = {
-  readonly credential: string;
+  readonly credential: string | (() => string);
   /** Where the credential may be sent, fixed from host configuration at entry. */
   readonly apiBaseUrl: string;
   active: boolean;
@@ -69,7 +69,7 @@ const AsyncLocalStorageGetStore = projectRunInferenceScopes.getStore;
  * already sent inside the scope may finish; it carries no further credential.
  */
 export async function runWithProjectRunInferenceCredential<T>(
-  credential: string,
+  credential: string | (() => string),
   fn: () => Promise<T>,
 ): Promise<T> {
   const scope: ProjectRunInferenceScope = {
@@ -106,7 +106,7 @@ export function createProjectRunInferenceModelResolver(): AgentModelRuntimeResol
     if (!active || !scope.active) {
       throw new TypeError("Project run inference credential is no longer active");
     }
-    return scope.credential;
+    return typeof scope.credential === "string" ? scope.credential : scope.credential();
   };
   const resolver: AgentModelRuntimeResolver = (modelId) => {
     if (!IntrinsicReflectApply(StringStartsWith, modelId, [VERYFRONT_CLOUD_MODEL_PREFIX])) {
@@ -115,7 +115,7 @@ export function createProjectRunInferenceModelResolver(): AgentModelRuntimeResol
 
     return createVeryfrontCloudInferenceModel(
       IntrinsicReflectApply(StringSlice, modelId, [VERYFRONT_CLOUD_MODEL_PREFIX.length]) as string,
-      readActiveCredential(),
+      typeof scope.credential === "string" ? readActiveCredential() : readActiveCredential,
       {
         apiBaseUrl: scope.apiBaseUrl,
         assertInferenceCredentialActive() {

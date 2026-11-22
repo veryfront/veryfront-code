@@ -41,6 +41,7 @@ import { shareRemoteMCPProtocolState } from "#veryfront/tool/remote-mcp.ts";
 import { disposeRemoteToolSources } from "#veryfront/tool/remote-tool-source-owner.ts";
 import { INGRESS_RUN_EVENT_TOKEN_HEADER } from "#veryfront/security/http/ingress-credentials.ts";
 import { createVeryfrontCloudInferenceModelResolver } from "./inference-credential.ts";
+import { runWithProjectRunInferenceCredential } from "../runtime/project-run-inference-credential.ts";
 import { computeHash } from "#veryfront/utils/hash-utils.ts";
 import type {
   BoundConversationAgentRunFinalizer,
@@ -740,6 +741,26 @@ export function hostedInheritedInvocationCredentialReader(
   };
 }
 
+function readInheritedInferenceCredential(
+  descriptor: HostedTerminalDescriptor | InheritedRunResult,
+): string {
+  const token = credentials.get(descriptor)?.inferenceToken;
+  if (!token) throw new Error("Inherited child inference authority is required");
+  return token;
+}
+
+/** Keep workflow agent calls bound to the admitted child's current lease. */
+export function runWithWorkflowChildInference<T>(
+  child: ConversationRunProjection | InheritedRunResult,
+  signal: AbortSignal | undefined,
+  execute: (signal?: AbortSignal) => Promise<T>,
+): Promise<T> {
+  return runWithProjectRunInferenceCredential(() => {
+    signal?.throwIfAborted();
+    return readInheritedInferenceCredential(child);
+  }, () => execute(signal));
+}
+
 /** Create inference transport only from this inherited child's private admission authority. */
 export function hostedInheritedInferenceModelResolver(
   descriptor: HostedTerminalDescriptor,
@@ -750,16 +771,13 @@ export function hostedInheritedInferenceModelResolver(
   if (!authority.inferenceToken || !authority.apiUrl) {
     throw new Error("Inherited child inference authority is required");
   }
-  const resolver = createVeryfrontCloudInferenceModelResolver(() => {
-    const current = credentials.get(descriptor);
-    if (!current?.inferenceToken) {
-      throw new Error("Inherited child inference authority is required");
-    }
-    return current.inferenceToken;
-  }, {
-    apiBaseUrl: authority.apiUrl,
-    assertParentActive: () => options.signal?.throwIfAborted(),
-  });
+  const resolver = createVeryfrontCloudInferenceModelResolver(
+    () => readInheritedInferenceCredential(descriptor),
+    {
+      apiBaseUrl: authority.apiUrl,
+      assertParentActive: () => options.signal?.throwIfAborted(),
+    },
+  );
   return options.projectModels
     ? (model: string) =>
       resolver(model.startsWith("veryfront-cloud/") ? model : `veryfront-cloud/${model}`)
