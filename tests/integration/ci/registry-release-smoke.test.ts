@@ -286,6 +286,13 @@ exit 86
       `${binDir}/npm`,
       `#!/usr/bin/env bash
 case "\${1:-}" in
+  pack)
+    printf 'pack=%s registry=%s\\n' "\$2" "\${NPM_CONFIG_REGISTRY:-}" >>"\$VF_FAKE_NPM_LOG"
+    name="\$(printf '%s' "\$2" | sed -e 's/^@//' -e 's#/#-#' -e 's/@/-/').tgz"
+    : >"\$PWD/\$name"
+    printf '[{"filename":"%s"}]\\n' "\$name"
+    exit 0
+    ;;
   install)
     printf 'args=%s\\n' "\$*" >>"\$VF_FAKE_NPM_LOG"
     exit 86
@@ -313,8 +320,19 @@ exit 0
 
       assertEquals(output.code, 20, decoder.decode(output.stderr));
       const log = await Deno.readTextFile(npmLog);
-      assertStringIncludes(log, `${coreTarball} @veryfront/ext-parser-babel@${version}`);
-      assertEquals(log.includes(`veryfront@${version}`), false);
+      // Deno needs one consistent local install: the tested core is copied
+      // into the project and each other root package is packed from the
+      // registry at the exact version; only the auth extension installs later.
+      assertStringIncludes(
+        log,
+        `pack=@veryfront/ext-parser-babel@${version} registry=https://registry.example.test/npm/`,
+      );
+      assertStringIncludes(
+        log,
+        `./veryfront-${version}.tgz ./veryfront-ext-parser-babel-${version}.tgz`,
+      );
+      assertEquals(log.includes(coreTarball), false);
+      assertEquals(log.includes(`pack=veryfront@`), false);
     } finally {
       await Deno.remove(tempDir, { recursive: true });
     }

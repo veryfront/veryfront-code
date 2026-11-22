@@ -545,14 +545,50 @@ async function prepareArtifacts(workDir: string): Promise<InstallPlan> {
     smokeFailureStatus = 22;
     const { registryUrl, rootSpecs, authSpec, packageNames, version } =
       parseRegistryConfiguration();
-    for (const spec of rootSpecs) {
-      if (!spec.startsWith("/")) continue;
-      const stat = await Deno.stat(spec).catch(() => undefined);
+    const coreSpec = rootSpecs.find((spec) => spec.startsWith("/"));
+    let installSpecs = rootSpecs;
+    if (coreSpec) {
+      const stat = await Deno.stat(coreSpec).catch(() => undefined);
       if (!stat?.isFile) fail("core tarball is missing");
+      // Deno cannot load a project whose package.json mixes a file: core
+      // tarball with registry extensions (os error 20), but loads one made
+      // only of local tarballs, as packed mode installs. So copy the core in
+      // and pack each other root package from the registry at its exact
+      // version, keeping the registry bytes under test.
+      smokeFailureStatus = 20;
+      installSpecs = [];
+      for (const spec of rootSpecs) {
+        if (spec === coreSpec) {
+          const name = coreSpec.split("/").at(-1)!;
+          await Deno.copyFile(coreSpec, `${workDir}/${name}`);
+          installSpecs.push(`./${name}`);
+          continue;
+        }
+        const packed = await runChecked("npm pack from registry", "npm", [
+          "pack",
+          spec,
+          "--ignore-scripts",
+          "--json",
+          "--pack-destination",
+          workDir,
+        ], {
+          cwd: workDir,
+          env: { NPM_CONFIG_REGISTRY: registryUrl },
+          timeoutMs: 300_000,
+        });
+        const entries = JSON.parse(packed.stdout);
+        const filename = Array.isArray(entries) && entries.length === 1
+          ? entries[0]?.filename
+          : undefined;
+        if (typeof filename !== "string" || filename.includes("/")) {
+          fail("npm pack returned an unexpected registry tarball name");
+        }
+        installSpecs.push(`./${filename}`);
+      }
     }
     smokeFailureStatus = 21;
     return {
-      rootInstallSpecs: rootSpecs,
+      rootInstallSpecs: installSpecs,
       authInstallSpecs: [authSpec],
       npmEnv: { NPM_CONFIG_REGISTRY: registryUrl },
       registryMode: true,
