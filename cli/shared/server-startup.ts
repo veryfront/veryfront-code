@@ -183,7 +183,11 @@ export async function startCliProductionServer(
       dependencies.ensureContentProcessor ?? ensureBuiltinContentProcessor,
     );
   } catch (error) {
-    await hostedHttp?.shutdown();
+    try {
+      await hostedHttp?.shutdown();
+    } catch (retirement) {
+      throw new AggregateError([error, retirement], "Server startup and HTTP retirement failed");
+    }
     throw error;
   }
 }
@@ -268,9 +272,16 @@ async function startCliProductionServerWithHostedHttp(
   } catch (error) {
     // Do not leave a listener running after a failed startup. Start broker
     // shutdown at the same time, so a hung listener stop cannot hold allocations.
-    const [stopped] = await Promise.allSettled([result.stop(), hostedHttp?.shutdown()]);
-    if (stopped.status === "rejected") {
-      throw new AggregateError([error, stopped.reason], "Server startup failed and did not stop");
+    const outcomes = await Promise.allSettled([
+      Promise.resolve().then(() => result.stop()),
+      Promise.resolve().then(() => hostedHttp?.shutdown()),
+    ]);
+    const failures = outcomes.filter((outcome) => outcome.status === "rejected");
+    if (failures.length) {
+      throw new AggregateError(
+        [error, ...failures.map((outcome) => outcome.reason)],
+        "Server startup retirement failed",
+      );
     }
     throw error;
   }
@@ -288,7 +299,7 @@ async function startCliProductionServerWithHostedHttp(
           }
           await result.stop();
         })(),
-        hostedHttp?.shutdown(),
+        Promise.resolve().then(() => hostedHttp?.shutdown()),
       ]);
       for (const outcome of outcomes) {
         if (outcome.status === "rejected") throw outcome.reason;

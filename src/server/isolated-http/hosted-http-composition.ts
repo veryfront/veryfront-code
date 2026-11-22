@@ -606,6 +606,7 @@ export async function createHostedHttpComposition(
             release,
             pending,
           });
+          throw new Error("Hosted HTTP retirement unconfirmed");
         }
       });
       return stopped;

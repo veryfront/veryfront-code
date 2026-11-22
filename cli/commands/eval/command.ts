@@ -9,7 +9,7 @@ import { runWithEvalEnvironmentContext } from "../../../src/agent/runtime/eval-e
 import { resolveEvalCaseEnvironmentContext } from "../../../src/eval/validation.ts";
 import { MAX_TIMER_DELAY_MS, normalizeTimerDurationMs } from "../../../src/utils/timer.ts";
 import type { Agent, AgentResponse } from "veryfront/agent";
-import type { VeryfrontConfig } from "veryfront/config";
+import { getEnvironmentConfig, type VeryfrontConfig } from "veryfront/config";
 import {
   isErroredToolExecutionResult,
   type Tool,
@@ -84,7 +84,6 @@ import {
 } from "#cli/outbound-fetch";
 import { runWithProviderRequestObserver } from "../../../src/provider/runtime-loader/provider-request-observer.ts";
 import { createEvalProgressReporter, type EvalProgressReporter } from "./progress.ts";
-import { getEnvironmentConfig } from "#veryfront/config/environment-config.ts";
 
 export interface EvalOptions extends EvalArgs {
   projectDir?: string;

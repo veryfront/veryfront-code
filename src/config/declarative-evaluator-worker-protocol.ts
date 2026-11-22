@@ -9,6 +9,15 @@
  */
 
 import {
+  createDeclarativeConfigWorkerInfrastructureError,
+  isDeclarativeConfigWorkerInfrastructureReason as isWorkerReason,
+} from "./declarative-config-error.ts";
+export {
+  createDeclarativeConfigWorkerInfrastructureError,
+  type DeclarativeConfigWorkerInfrastructureReason,
+} from "./declarative-config-error.ts";
+
+import {
   DECLARATIVE_CONFIG_FILE_NAME,
   DECLARATIVE_CONFIG_POLICY_VERSION,
   type DeclarativeConfigErrorCode,
@@ -69,15 +78,6 @@ export interface DeclarativeConfigWorkerErrorResponse {
 export type DeclarativeConfigWorkerResponse =
   | DeclarativeConfigWorkerSuccessResponse
   | DeclarativeConfigWorkerErrorResponse;
-
-/** Infrastructure failures that can be created outside the evaluator. */
-export type DeclarativeConfigWorkerInfrastructureReason =
-  | "worker-aborted"
-  | "worker-overloaded"
-  | "worker-protocol"
-  | "worker-memory-limit-unavailable"
-  | "worker-timeout"
-  | "worker-unavailable";
 
 type CapturedRecord = Readonly<Record<string, unknown>>;
 
@@ -345,17 +345,6 @@ function isErrorPhase(value: unknown): value is DeclarativeConfigErrorPhase {
 
 function isErrorReason(value: unknown): value is DeclarativeConfigErrorReason {
   return isKnownEnumValue(value, ERROR_REASON_TABLE);
-}
-
-function isWorkerReason(
-  value: DeclarativeConfigErrorReason,
-): value is DeclarativeConfigWorkerInfrastructureReason {
-  return value === "worker-aborted" ||
-    value === "worker-overloaded" ||
-    value === "worker-protocol" ||
-    value === "worker-memory-limit-unavailable" ||
-    value === "worker-timeout" ||
-    value === "worker-unavailable";
 }
 
 function isOneOf(
@@ -659,29 +648,6 @@ function captureEvaluationError(
     capturedLocation,
     retryable,
   );
-}
-
-/**
- * Build a typed failure for worker lifecycle and protocol errors.
- *
- * The caller owns the retry policy because aborts and host availability have
- * different retry semantics.
- */
-export function createDeclarativeConfigWorkerInfrastructureError(
-  reason: DeclarativeConfigWorkerInfrastructureReason,
-): DeclarativeConfigEvaluationError {
-  if (!isWorkerReason(reason)) {
-    throw new TypeError("Invalid declarative configuration worker failure");
-  }
-  const retryable = reason !== "worker-aborted" &&
-    reason !== "worker-protocol";
-  return new DeclarativeConfigEvaluationError({
-    code: "evaluator-unavailable",
-    phase: "worker",
-    reason,
-    location: null,
-    retryable,
-  });
 }
 
 /**

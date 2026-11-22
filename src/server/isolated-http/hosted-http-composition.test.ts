@@ -247,7 +247,6 @@ describe("hosted HTTP host composition", () => {
     for (
       const result of [
         { release: "released" as const, pending: 0 },
-        { release: "reaper-required" as const, pending: 1 },
       ]
     ) {
       const broker = fakeBroker(result);
@@ -260,6 +259,28 @@ describe("hosted HTTP host composition", () => {
       });
       await Promise.all([composition.shutdown(), composition.shutdown()]);
       await composition.shutdown();
+      assertEquals(broker.shutdowns, 1);
+    }
+  });
+
+  it("requires confirmed allocation retirement before reporting a successful shutdown", async () => {
+    for (
+      const result of [
+        { release: "reaper-required" as const, pending: 0 },
+        { release: "released" as const, pending: 1 },
+        { release: "reaper-required" as const, pending: 1 },
+      ]
+    ) {
+      const broker = fakeBroker(result);
+      const composition = await createHostedHttpComposition(config, {
+        runtime: nodeRuntime,
+        isOverrideEnabled: () => false,
+        readFile: defaultFiles().readFile,
+        createAllocatorClient: () => allocator,
+        createBroker: () => broker.broker,
+      });
+      await assertRejects(() => composition.shutdown(), Error, "retirement unconfirmed");
+      await assertRejects(() => composition.shutdown(), Error, "retirement unconfirmed");
       assertEquals(broker.shutdowns, 1);
     }
   });
