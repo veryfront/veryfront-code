@@ -276,27 +276,35 @@ exit 86
     const tempDir = await makeTempDir({ prefix: "vf-registry-core-tarball-" });
     const binDir = `${tempDir}/bin`;
     const npmLog = `${tempDir}/npm.log`;
+    const denoLog = `${tempDir}/deno.log`;
     const version = "1.2.3-rc.45";
     const coreTarball = `${tempDir}/artifact/veryfront-${version}.tgz`;
     await Deno.mkdir(binDir);
     await Deno.mkdir(`${tempDir}/artifact`);
     await Deno.writeTextFile(coreTarball, "tested core");
-    await writeExecutable(`${binDir}/deno`, "#!/bin/bash\nexit 0\n");
+    await writeExecutable(
+      `${binDir}/deno`,
+      '#!/bin/bash\nprintf "%s\\n" "$*" >>"$VF_FAKE_DENO_LOG"\nexit 0\n',
+    );
     await writeExecutable(
       `${binDir}/npm`,
       `#!/usr/bin/env bash
 case "\${1:-}" in
-  pack)
-    printf 'pack=%s registry=%s\\n' "\$2" "\${NPM_CONFIG_REGISTRY:-}" >>"\$VF_FAKE_NPM_LOG"
-    name="\$(printf '%s' "\$2" | sed -e 's/^@//' -e 's#/#-#' -e 's/@/-/').tgz"
-    : >"\$PWD/\$name"
-    printf '[{"filename":"%s"}]\\n' "\$name"
-    exit 0
-    ;;
+  init | pkg) exit 0 ;;
   install)
     printf 'args=%s\\n' "\$*" >>"\$VF_FAKE_NPM_LOG"
-    exit 86
+    mkdir -p node_modules/jose
+    exit 0
     ;;
+esac
+exit 0
+`,
+    );
+    await writeExecutable(
+      `${binDir}/node`,
+      `#!/usr/bin/env bash
+case "\$*" in
+  *"--version"*) printf '%s\\n' "Veryfront CLI test" ;;
 esac
 exit 0
 `,
@@ -308,6 +316,7 @@ exit 0
         env: {
           PATH: `${binDir}:${Deno.env.get("PATH") ?? ""}`,
           VF_FAKE_NPM_LOG: npmLog,
+          VF_FAKE_DENO_LOG: denoLog,
           VF_NPM_REGISTRY_PACKAGES:
             "veryfront\n@veryfront/ext-parser-babel\n@veryfront/ext-auth-jwt",
           VF_NPM_REGISTRY_URL: "https://registry.example.test/npm/",
@@ -318,21 +327,21 @@ exit 0
         stderr: "piped",
       }).output();
 
-      assertEquals(output.code, 20, decoder.decode(output.stderr));
+      const stderr = decoder.decode(output.stderr);
       const log = await Deno.readTextFile(npmLog);
-      // Deno needs one consistent local install: the tested core is copied
-      // into the project and each other root package is packed from the
-      // registry at the exact version; only the auth extension installs later.
+      // The tested core is copied into the consumer; extensions stay on the
+      // registry at the exact version, as a consumer installs them.
       assertStringIncludes(
         log,
-        `pack=@veryfront/ext-parser-babel@${version} registry=https://registry.example.test/npm/`,
-      );
-      assertStringIncludes(
-        log,
-        `./veryfront-${version}.tgz ./veryfront-ext-parser-babel-${version}.tgz`,
+        `./veryfront-${version}.tgz @veryfront/ext-parser-babel@${version}`,
+        stderr,
       );
       assertEquals(log.includes(coreTarball), false);
-      assertEquals(log.includes(`pack=veryfront@`), false);
+      // Deno must load the npm-built tree: auto mode links the core to the
+      // .tgz file and fails with os error 20.
+      const deno = await Deno.readTextFile(denoLog);
+      assertStringIncludes(deno, "eval --node-modules-dir=manual", stderr);
+      assertEquals(deno.includes("--node-modules-dir=auto"), false);
     } finally {
       await Deno.remove(tempDir, { recursive: true });
     }
