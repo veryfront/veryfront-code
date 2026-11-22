@@ -6,6 +6,8 @@
 - `agentFinalization` records [API #6952](https://github.com/veryfront/veryfront-api/pull/6952), which retains optional completed output and adds authoritative runtime `final_text`, including an empty filtered answer. Explicit null output remains valid; owner finalization cannot supply `final_text`.
 - `toolApproval` records [API #7291](https://github.com/veryfront/veryfront-api/pull/7291), which adds `kind`, `delivery`, `responder_rules` and `tool_call` to input requests so a tool approval is an ordinary form request.
 
+- `providerOptionsCapture` records the API source for the complete bounded JSON provider options record in exact model call requests, plus the matching canonical control resource hash.
+
 Each revision records its exact source commit and OpenAPI hash. The newer released base remains intact.
 
 `runs-api.generated.ts` is generated from the resulting OpenAPI document with the API's `renderRunsTargetArtifacts(document)` generator (openapi-typescript 7.13.0).
@@ -21,6 +23,8 @@ The generator verifies the source hash before applying the event definitions. Re
 For the finalization revision, copy only `FinalizeRunRequest`'s completed `output` description and optionality plus the optional `final_text` property from the source recorded in `agentFinalization`. Regenerate the TypeScript artifact against this checkout's document with the same API generator. Do not replace the document with the API branch's older base.
 
 For the tool approval revision, copy only the `CreateInputRequestRequest` and `InputRequest` properties and examples that the source recorded in `toolApproval` adds, with its three new component schemas.
+
+For the provider options revision, copy only the nested model call request `providerOptions` properties from the OpenAPI source recorded in `providerOptionsCapture`. Regenerate against this maintained document and retain the three affected model call context component type blocks. Copy the canonical control resource from the recorded canonical source path and verify its hash.
 
 Regenerate the SDK fixtures and verify the pin:
 

@@ -1,3 +1,4 @@
+import { snapshotModelCallRequestProviderOptions } from "#veryfront/runtime/model-call-context-request.ts";
 import { snapshotProviderJsonValue } from "#veryfront/provider/runtime-loader/json-snapshot.ts";
 import { DURABLE_RUN_EVENT_PERSISTENCE_FAILED, VeryfrontError } from "../../errors/index.ts";
 import { everyPrivateArray, somePrivateArray } from "#veryfront/security/private-array.ts";
@@ -112,6 +113,7 @@ function isRequest(value: unknown): boolean {
       "frequencyPenalty",
       "reasoning",
       "responseFormat",
+      "providerOptions",
     ])
   ) return false;
   for (
@@ -138,6 +140,15 @@ function isRequest(value: unknown): boolean {
     (!ArrayIsArray(stops) || !everyPrivateArray(stops, (item) => typeof item === "string"))
   ) {
     return false;
+  }
+  const providerOptions = ownPropertyDescriptor(value, "providerOptions");
+  if (providerOptions !== undefined) {
+    if (!("value" in providerOptions) || providerOptions.enumerable !== true) return false;
+    try {
+      snapshotModelCallRequestProviderOptions(providerOptions.value);
+    } catch {
+      return false;
+    }
   }
   if (!isRequestReasoning(ownDataValue(value, "reasoning"))) return false;
   return isRequestResponseFormat(ownDataValue(value, "responseFormat"));

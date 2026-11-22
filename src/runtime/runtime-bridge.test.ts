@@ -1,3 +1,12 @@
+import { privateJsonStringify } from "#veryfront/security/private-json.ts";
+import { useServedCatalogForTests } from "#veryfront/provider/veryfront-cloud/catalog-client.test-helpers.ts";
+import {
+  resolveVeryfrontCloudModelThinking,
+  resolveVeryfrontCloudThinkingProviderOptions,
+} from "#veryfront/provider/veryfront-cloud/model-catalog.ts";
+import { observeFetchRequestInit, withMockFetch } from "#veryfront/testing/mock-fetch.ts";
+import { createOpenAIModelRuntime } from "../../extensions/ext-llm-openai/src/openai-provider.ts";
+import { createAnthropicModelRuntime } from "../../extensions/ext-llm-anthropic/src/anthropic-provider.ts";
 import { normalizeConversationRunEvent } from "../agent/conversation/run-event-normalization.ts";
 import { buildAnthropicMessagesRequest } from "../../extensions/ext-llm-anthropic/src/anthropic-request-builder.ts";
 import "#veryfront/schemas/_test-setup.ts";
@@ -1370,12 +1379,16 @@ describe("runtime-bridge", () => {
     assertEquals(recorded.request?.responseFormat, expectedResponseFormat);
   });
 
-  it("refuses exact capture when material provider controls are not represented", async () => {
+  it("persists every exact provider options bucket before dispatch", async () => {
     const projectId = "11111111-1111-4111-8111-111111111111";
     const canonicalRunId = "22222222-2222-4222-8222-222222222222";
     let dispatches = 0;
     const sink: AgentRunEventSink = (event) => {
       assertModelCallContextEvent(event);
+      assertEquals(event.request?.providerOptions, {
+        "veryfront-cloud": { extra: true },
+        other: { nested: [null, 1] },
+      });
       return {
         eventId: "9007199254740993",
         projectId,
@@ -1400,21 +1413,13 @@ describe("runtime-bridge", () => {
       ),
     );
 
-    await assertRejects(
-      async () =>
-        await runWithMandatoryRunEventSink(
-          sink,
-          async () =>
-            await generateText({
-              model,
-              messages: [{ role: "user", content: "Hello" }],
-              providerOptions: { "veryfront-cloud": { extra: true } },
-            }),
-        ),
-      DurableRunEventPersistenceError,
-      "Exact model call capture does not support these provider controls: providerOptions",
-    );
-    assertEquals(dispatches, 0);
+    await runWithMandatoryRunEventSink(sink, async () =>
+      await generateText({
+        model,
+        messages: [{ role: "user", content: "Hello" }],
+        providerOptions: { "veryfront-cloud": { extra: true }, other: { nested: [null, 1] } },
+      }));
+    assertEquals(dispatches, 1);
   });
 
   it("captures supported system cache controls unchanged before provider dispatch", async () => {
@@ -4038,4 +4043,398 @@ it("exact managed capture retains parallel tool control before provider dispatch
     );
     assertEquals(dispatches, 1);
   }
+});
+
+it("preserves durable neutral serialization with and without exact native options", async () => {
+  for (const nativeOptions of [false, true]) {
+    for (const mode of ["generate", "stream"] as const) {
+      for (const scenario of ["optional-filename", "optional-output", "date-output"] as const) {
+        let writes = 0;
+        let dispatches = 0;
+        const sink: AgentRunEventSink = (event) => {
+          assert(event.type === "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED");
+          const serialized = privateJsonStringify(normalizeConversationRunEvent({ ...event }));
+          assertEquals(serialized.includes('"filename"'), false);
+          assertEquals(serialized.includes('"optional"'), false);
+          if (scenario === "date-output") assert(serialized.includes("2026-01-01T00:00:00.000Z"));
+          writes++;
+          return {
+            eventId: "1",
+            projectId: "11111111-1111-4111-8111-111111111111",
+            runId: "22222222-2222-4222-8222-222222222222",
+            modelCallId: event.modelCallId ?? "",
+          };
+        };
+        bindTestRuntimeObservationWriter({
+          sink,
+          projectId: "11111111-1111-4111-8111-111111111111",
+          runId: "22222222-2222-4222-8222-222222222222",
+          canonicalRunId: "22222222-2222-4222-8222-222222222222",
+        });
+        const model: ModelRuntime = {
+          provider: "veryfront-cloud",
+          modelProvider: "openai",
+          modelId: "gpt-4o",
+          doGenerate() {
+            dispatches++;
+            return Promise.resolve({ content: [] });
+          },
+          doStream() {
+            dispatches++;
+            return Promise.resolve({
+              stream: new ReadableStream({
+                start(controller) {
+                  controller.close();
+                },
+              }),
+            });
+          },
+        };
+        registerVeryfrontCloudModelFacts(
+          model,
+          () => ({
+            provider: "openai",
+            surface: "openai",
+            native: true,
+            transportPlan: { transport: "chat-completions", pinned: true },
+          }),
+        );
+        const messages:
+          import("#veryfront/agent/runtime/text-generation-runtime-message-types.ts").TextGenerationRuntimeMessage[] =
+            scenario === "optional-filename"
+              ? [{
+                role: "user",
+                content: [{
+                  type: "image",
+                  mediaType: "image/png",
+                  url: "https://example.test/image.png",
+                  filename: undefined,
+                }],
+              }]
+              : [{
+                role: "tool",
+                content: [{
+                  type: "tool-result",
+                  toolCallId: "tool-1",
+                  toolName: "lookup",
+                  output: {
+                    type: "json",
+                    value: scenario === "optional-output"
+                      ? { optional: undefined, found: true }
+                      : { date: new Date("2026-01-01T00:00:00Z") },
+                  },
+                }],
+              }];
+        await runWithMandatoryRunEventSink(sink, async () => {
+          const options = {
+            model,
+            messages,
+            ...(nativeOptions ? { providerOptions: { arbitrary: { value: true } } } : {}),
+          };
+          if (mode === "generate") await generateText(options);
+          else {for await (const _ of streamText(options).textStream) {
+              /* Drain the provider stream. */
+            }}
+        });
+        assertEquals(writes, 1);
+        assertEquals(dispatches, 1);
+      }
+    }
+  }
+});
+
+it("rejects exact direct contexts above the aggregate node budget before persistence", async () => {
+  let writes = 0;
+  let dispatches = 0;
+  const sink: AgentRunEventSink = () => {
+    writes++;
+  };
+  bindTestRuntimeObservationWriter({
+    sink,
+    projectId: "11111111-1111-4111-8111-111111111111",
+    runId: "22222222-2222-4222-8222-222222222222",
+    canonicalRunId: "22222222-2222-4222-8222-222222222222",
+  });
+  const model: ModelRuntime = {
+    provider: "veryfront-cloud",
+    modelProvider: "openai",
+    modelId: "gpt-4o",
+    openAITransport: "chat-completions",
+    doGenerate: () => {
+      dispatches++;
+      return Promise.resolve({ content: [] });
+    },
+    doStream: () => {
+      throw new Error("unused");
+    },
+  };
+  registerVeryfrontCloudModelFacts(
+    model,
+    () => ({
+      provider: "openai",
+      surface: "openai",
+      native: true,
+      transportPlan: { transport: "chat-completions", pinned: true },
+    }),
+  );
+  await assertRejects(async () =>
+    runWithMandatoryRunEventSink(sink, () =>
+      generateText({
+        model,
+        messages: [{ role: "user", content: "Synthetic" }],
+        providerOptions: {
+          openai: {
+            response_format: {
+              type: "json_schema",
+              json_schema: {
+                name: "result",
+                schema: {
+                  type: "number",
+                  examples: Array.from({ length: 52_000 }, (_, index) => index),
+                },
+              },
+            },
+          },
+        },
+      }))
+  );
+  assertEquals(writes, 0);
+  assertEquals(dispatches, 0);
+});
+
+it("preserves native response schema order through direct exact capture and dispatch", async () => {
+  const bodies: unknown[] = [];
+  for (const capture of [false, true]) {
+    const properties = { reasoning: { type: "string" }, answer: { type: "string" } };
+    const providerOptions = {
+      openai: {
+        response_format: {
+          type: "json_schema",
+          json_schema: {
+            name: "result",
+            schema: { type: "object", properties },
+          },
+        },
+      },
+    };
+    const expected = structuredClone(providerOptions);
+    const sink: AgentRunEventSink = async (event) => {
+      if (event.type !== "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED") return;
+      assertEquals(event.request?.providerOptions, expected);
+      await Promise.resolve();
+      Reflect.deleteProperty(properties, "reasoning");
+      Reflect.set(event.request?.providerOptions ?? {}, "openai", {});
+      return {
+        eventId: "1",
+        projectId: "11111111-1111-4111-8111-111111111111",
+        runId: "22222222-2222-4222-8222-222222222222",
+        modelCallId: event.modelCallId ?? "",
+      };
+    };
+    if (capture) {
+      bindTestRuntimeObservationWriter({
+        sink,
+        projectId: "11111111-1111-4111-8111-111111111111",
+        runId: "22222222-2222-4222-8222-222222222222",
+        canonicalRunId: "22222222-2222-4222-8222-222222222222",
+      });
+    }
+    await withMockFetch((_url, init) => {
+      const body = JSON.parse(String(observeFetchRequestInit(init).body));
+      assertEquals(Object.keys(body.response_format.json_schema.schema.properties), [
+        "reasoning",
+        "answer",
+      ]);
+      bodies.push(body.response_format);
+      return Promise.resolve(
+        Response.json({
+          choices: [{ message: { role: "assistant", content: "done" }, finish_reason: "stop" }],
+          usage: {},
+        }),
+      );
+    }, async () => {
+      const model = createOpenAIModelRuntime({
+        name: "veryfront-cloud",
+        apiKey: "test-key",
+        baseURL: "https://provider.example.test/v1",
+      }, "gpt-4o");
+      registerVeryfrontCloudModelFacts(
+        model,
+        () => ({
+          provider: "openai",
+          surface: "openai",
+          native: true,
+          transportPlan: { transport: "chat-completions", pinned: true },
+        }),
+      );
+      const dispatch = () =>
+        generateText({
+          model,
+          messages: [{ role: "user", content: "Synthetic" }],
+          providerOptions,
+        });
+      if (capture) await runWithMandatoryRunEventSink(sink, dispatch);
+      else await dispatch();
+    });
+  }
+  assertEquals(bodies[0], bodies[1]);
+});
+
+it("captures immutable native Anthropic options before the real HTTP builder dispatches", async () => {
+  using _catalog = useServedCatalogForTests();
+  for (const modelId of ["anthropic/claude-haiku-4-5-20251001", "anthropic/claude-opus-4-8"]) {
+    const derived = resolveVeryfrontCloudThinkingProviderOptions(
+      modelId,
+      resolveVeryfrontCloudModelThinking(modelId),
+    );
+    assert(derived);
+    const native = derived.anthropic;
+    assert(native && typeof native === "object" && "thinking" in native);
+    const thinking = native.thinking;
+    assert(thinking && typeof thinking === "object" && "type" in thinking);
+    const projectId = "11111111-1111-4111-8111-111111111111";
+    const canonicalRunId = "22222222-2222-4222-8222-222222222222";
+    const providerOptions = { ...derived, unused: { nested: ["original", null] } };
+    const expected = structuredClone(providerOptions);
+    const thinkingBefore = structuredClone(thinking);
+    const order: string[] = [];
+    let recorded: AgentRunModelCallContextEvent | undefined;
+    let observed: AgentRunModelCallContextEvent | undefined;
+    const sink: AgentRunEventSink = async (event) => {
+      if (event.type !== "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED") return;
+      recorded = event;
+      order.push("persist");
+      await Promise.resolve();
+      providerOptions.unused.nested[0] = "mutated";
+      thinking.type = "disabled";
+      // The sink owns its event copy; changing it cannot change provider dispatch.
+      if (event.request?.providerOptions) {
+        assertEquals(event.request.providerOptions, expected);
+        Reflect.set(event.request.providerOptions, "anthropic", { thinking: { type: "disabled" } });
+      }
+      return {
+        eventId: "1",
+        projectId,
+        runId: canonicalRunId,
+        modelCallId: event.modelCallId ?? "",
+      };
+    };
+    bindTestRuntimeObservationWriter({ sink, runId: canonicalRunId, canonicalRunId, projectId });
+    await withMockFetch((_url, init) => {
+      order.push("dispatch");
+      assertEquals(typeof observeFetchRequestInit(init).body, "string");
+      const body = JSON.parse(String(observeFetchRequestInit(init).body));
+      assertEquals(body.thinking, thinkingBefore);
+      if ("temperature" in native) assertEquals(body.temperature, native.temperature);
+      if ("output_config" in native) assertEquals(body.output_config, native.output_config);
+      assertEquals(body.max_tokens, recorded?.request?.maxOutputTokens);
+      assertEquals(body.max_tokens, modelId.includes("haiku") ? 64000 : 128000);
+      return Promise.resolve(
+        Response.json({
+          content: [{ type: "text", text: "done" }],
+          stop_reason: "end_turn",
+          usage: {},
+        }),
+      );
+    }, async () => {
+      const model = createAnthropicModelRuntime({
+        name: "veryfront-cloud",
+        apiKey: "test-key",
+        baseURL: "https://provider.example.test/v1",
+      }, modelId.slice("anthropic/".length));
+      registerVeryfrontCloudModelFacts(
+        model,
+        () => ({
+          provider: "anthropic",
+          surface: "anthropic",
+          native: true,
+          transportPlan: { transport: "chat-completions", pinned: true },
+        }),
+      );
+
+      const dispatch = model.doGenerate.bind(model);
+      model.doGenerate = (options) => {
+        assert(options && typeof options === "object" && "providerOptions" in options);
+        assertEquals(options.providerOptions, expected);
+        assert(Object.isFrozen(options.providerOptions));
+        return dispatch(options);
+      };
+      await runWithRunEventSink(
+        (event) => {
+          if (event.type === "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED") observed = event;
+        },
+        () =>
+          runWithMandatoryRunEventSink(sink, () =>
+            generateText({
+              model,
+              messages: [{ role: "user", content: "Synthetic" }],
+              providerOptions,
+            })),
+      );
+    });
+    assert(recorded);
+    assertEquals(observed?.request?.providerOptions, undefined);
+    assertEquals(order, ["persist", "dispatch"]);
+  }
+});
+
+it("rejects malformed exact provider JSON and persistence failures before provider dispatch", async () => {
+  const projectId = "11111111-1111-4111-8111-111111111111";
+  const canonicalRunId = "22222222-2222-4222-8222-222222222222";
+  let dispatches = 0;
+  let writes = 0;
+  let getterReads = 0;
+  const getter = Object.defineProperty({}, "hidden", {
+    enumerable: true,
+    get() {
+      getterReads++;
+      return {};
+    },
+  });
+  const cycle: Record<string, unknown> = {};
+  cycle.self = cycle;
+  const sink: AgentRunEventSink = () => {
+    writes++;
+    throw new Error("persistence failed");
+  };
+  bindTestRuntimeObservationWriter({ sink, runId: canonicalRunId, canonicalRunId, projectId });
+  const model = registerVeryfrontCloudTestModel(
+    createGenerateModel("veryfront-cloud", "veryfront-cloud/openai/gpt-test", async () => {
+      dispatches++;
+      return { content: [], usage: {}, finishReason: "stop" };
+    }),
+  );
+  for (
+    const providerOptions of [
+      getter,
+      { unused: null },
+      { unused: [] },
+      { unused: { bad: undefined } },
+      { unused: { bad: Infinity } },
+      { unused: cycle },
+      { unused: { bad: () => 1 } },
+      { unused: { bad: "x".repeat(8 * 1024 * 1024) } },
+      { unused: { ["é".repeat(8192) + "x"]: true } },
+    ]
+  ) {
+    await assertRejects(async () =>
+      await runWithMandatoryRunEventSink(
+        sink,
+        () => generateText({ model, messages: [], providerOptions }),
+      )
+    );
+  }
+  assertEquals(writes, 0);
+  assertEquals(getterReads, 0);
+  await assertRejects(
+    async () =>
+      await runWithMandatoryRunEventSink(
+        sink,
+        () => generateText({ model, messages: [], providerOptions: { unused: { valid: true } } }),
+      ),
+    Error,
+    "persistence failed",
+  );
+  assertEquals(writes, 1);
+  assertEquals(dispatches, 0);
 });

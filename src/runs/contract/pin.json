@@ -4,8 +4,8 @@
   "archiveSha256": "1c6b884892bc1ccc93f50323ba00863f94f386c1e5a96296a41302559604e865",
   "generatedBy": "veryfront-api: pnpm contracts:runs:generate -- --out <dir> (the kit's runs-api.types.ts)",
   "files": {
-    "runs-api.generated.ts": "0be910152d190467ec6c19092abaf08327ef46206a95c8dc00c442aeecf26f23",
-    "openapi.target.json": "59c7c4f51612b3eb9f29b98f19cb5f5636eff8c8bb67c2dc6698c56522116f6a",
+    "runs-api.generated.ts": "5b685d2eaea47c862cf78557fa937ea939831b22280d9ae02eb3db0b9d51c67b",
+    "openapi.target.json": "d0c914eab00b686151b2a10537ee249d803cc3c615c87986497f832841e6b08b",
     "runs-fixtures.generated.ts": "dfd2779263b1c11e273b57e0d3c0ca46cc1d0fc9ae0df4488ddd7cbf543f9af2"
   },
   "fixturesGeneratedBy": "deno task contracts:runs:fixtures",
@@ -33,5 +33,15 @@
     "sourceSha256": "2219881d7248feca13b589dfcb26ef2ae187f3715c61f87e72b0e626391b2ae1",
     "change": "Input requests carry kind, delivery, responder_rules and tool_call, so a tool approval is an ordinary form request.",
     "generatedBy": "the source's CreateInputRequestRequest, InputRequest and their new component schemas and examples, applied to this maintained 0.8.9 document; type blocks from the source's renderRunsTargetArtifacts output"
+  },
+  "providerOptionsCapture": {
+    "repository": "veryfront/veryfront-api",
+    "commit": "288ace7b123036d924bd2091e5e79c6c1dd2f2f8",
+    "path": "src/api/contracts/execution/pinned/openapi.target.json",
+    "sourceSha256": "2aa389acb39a8a44eedce32735d12db11e14d779fd3cfe3aca524ae4bc174895",
+    "canonicalSourcePath": "src/usecases/runs/contract/canonical-v1-resources/control-payload-schemas.json",
+    "canonicalSourceSha256": "38ab404d0ced2aeb2c3b327a18bcd3c025420f352abe944b2eece0c09062567b",
+    "change": "Exact model call requests optionally retain every provider options JSON object bucket, bounded by depth 64, 65536 nodes, 8388608 serialized UTF-8 bytes and 16384 UTF-8 bytes per key.",
+    "generatedBy": "providerOptions properties applied to this maintained OpenAPI document; three affected component type blocks from veryfront-api renderRunsTargetArtifacts output; deno task contracts:runs:fixtures"
   }
 }

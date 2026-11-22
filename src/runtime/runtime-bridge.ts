@@ -1,3 +1,5 @@
+import { privateJsonParse, privateJsonStringify } from "#veryfront/security/private-json.ts";
+import { snapshotBoundedJsonValue } from "#veryfront/schemas/json-value.ts";
 import { privateTextToLowerCase } from "#veryfront/security/private-text.ts";
 import { testPrivateRegExp } from "#veryfront/security/private-regexp.ts";
 import { readVeryfrontCloudModelFacts } from "#veryfront/provider/veryfront-cloud/model-catalog.ts";
@@ -873,7 +875,6 @@ function assertExactModelCallCaptureControlsSupported(
     [
       "toolChoice",
       "headers",
-      "providerOptions",
       "includeRawChunks",
     ] as const,
     (field) => {
@@ -953,7 +954,6 @@ async function emitModelCallContextEvent(
 > {
   const sinks = getActiveRunEventSinks();
   if (!sinks.mandatory && !sinks.public) return undefined;
-  const request = buildModelCallContextRequest(model, directOptions);
   const writerBinding = getRuntimeObservationWriterBinding(sinks.mandatory);
   const writerScope = writerBinding?.scope;
   const captureEnabled = writerBinding !== undefined &&
@@ -962,6 +962,7 @@ async function emitModelCallContextEvent(
     writerBinding.assertActive();
     assertExactModelCallCaptureControlsSupported(directOptions);
   }
+  const request = buildModelCallContextRequest(model, directOptions, captureEnabled);
   const modelCallId = captureEnabled ? randomUUID() : undefined;
 
   const event: AgentRunModelCallContextEvent = {
@@ -995,8 +996,13 @@ async function emitModelCallContextEvent(
     | { ok: true; event: AgentRunModelCallContextEvent }
     | { ok: false; error: unknown } => {
     try {
+      const { request: _privateRequest, ...publicEvent } = event;
+      const publicRequest = includeExactMetadata
+        ? undefined
+        : buildModelCallContextRequest(model, directOptions);
       const observedEvent = includeExactMetadata ? event : {
-        ...event,
+        ...publicEvent,
+        ...(publicRequest ? { request: publicRequest } : {}),
         messages: snapshotModelCallContextMessages(
           sanitizeModelCallContextMessages(directOptions.prompt),
         ),
@@ -1024,6 +1030,18 @@ async function emitModelCallContextEvent(
     );
   }
   const mandatoryEvent = mandatoryClone?.ok ? mandatoryClone.event : undefined;
+  if (
+    captureEnabled && mandatoryEvent?.request?.providerOptions !== undefined &&
+    !snapshotBoundedJsonValue(
+      privateJsonParse(privateJsonStringify(mandatoryEvent, null, undefined, 10 * 1024 * 1024)),
+      10 * 1024 * 1024,
+      10 * 1024 * 1024,
+    ).success
+  ) {
+    throw new DurableRunEventPersistenceError(
+      "Exact model call context exceeds its JSON envelope limits",
+    );
+  }
   const publicClone = sinks.public && sinks.public !== sinks.mandatory
     ? cloneEvent(false)
     : undefined;
@@ -1669,7 +1687,9 @@ function snapshotDirectModelOptions(
   options: DirectModelOptions,
 ): DirectModelOptions {
   try {
-    return snapshotModelCallProviderOptions(model, options);
+    const binding = getRuntimeObservationWriterBinding(getActiveRunEventSinks().mandatory);
+    const exactCapture = binding !== undefined && readVeryfrontCloudModelFacts(model) !== undefined;
+    return snapshotModelCallProviderOptions(model, options, exactCapture);
   } catch (error) {
     if (!getActiveRunEventSinks().mandatory) throw error;
     recordErrorCount({ slug: "model-call-context-clone-failed", failure_class: "unknown" });

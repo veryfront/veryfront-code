@@ -39,7 +39,7 @@ async function withSkippedCaptureControlIteration(
     ...descriptor,
     value: function (this: unknown[]) {
       // Yield nothing for the exact-capture control list; delegate everything else.
-      if (this.length === 5 && this[2] === "providerOptions") {
+      if (this.length === 3 && this[1] === "headers") {
         return Reflect.apply(originalIterator, [], []);
       }
       return Reflect.apply(originalIterator, this, []);
@@ -190,11 +190,11 @@ describe("runtime-bridge exact capture control intrinsic boundaries", () => {
               await generateText({
                 model,
                 messages: [{ role: "user", content: "Hello" }],
-                providerOptions: { "veryfront-cloud": { extra: true } },
+                headers: { "x-test-control": "value" },
               }),
           ),
         DurableRunEventPersistenceError,
-        "Exact model call capture does not support these provider controls: providerOptions",
+        "Exact model call capture does not support these provider controls: headers",
       );
     });
     assertEquals(dispatches, 0);

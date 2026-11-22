@@ -6,6 +6,8 @@ import {
 import { DurableRunEventPersistenceError } from "../conversation/private-run-event.ts";
 import type { ExecutorModelDispatch } from "./executor-model-bridge.ts";
 
+const numberIsSafeInteger = Number.isSafeInteger;
+
 // First-party builders shallow-merge these request-body fields. Hosted calls
 // supply their persisted content and controls through the neutral contract.
 const PERSISTED_REQUEST_FIELDS = new Set([
@@ -65,6 +67,29 @@ function refuseOverride(): never {
   );
 }
 
+function isDerivedAnthropicThinkingTemperature(
+  call: ExecutorModelDispatch,
+  provider: ReturnType<typeof resolveModelCallProvider>,
+  name: string,
+  field: string,
+  value: unknown,
+): boolean {
+  if (provider !== "anthropic" || name !== "anthropic" || field !== "temperature" || value !== 1) {
+    return false;
+  }
+  if (call.options.temperature !== undefined && call.options.temperature !== value) return false;
+  const bucket = call.options.providerOptions?.anthropic;
+  if (!isRecord(bucket) || !isRecord(bucket.thinking)) return false;
+  const thinking = bucket.thinking;
+  if (
+    thinking.type !== "enabled" || !numberIsSafeInteger(thinking.budget_tokens) ||
+    typeof thinking.budget_tokens !== "number" || thinking.budget_tokens < 1024
+  ) return false;
+  // Hosted model defaults use this fixed sampling value for budget thinking.
+  // Native options and neutral audit controls must describe the same value.
+  return buildModelCallContextRequest(call.model, call.options)?.temperature === value;
+}
+
 function assertPersistedProviderField(
   call: ExecutorModelDispatch,
   provider: ReturnType<typeof resolveModelCallProvider>,
@@ -73,7 +98,10 @@ function assertPersistedProviderField(
   value: unknown,
 ): void {
   const normalized = field.replace(/[-_]/g, "").toLowerCase();
-  if (PERSISTED_REQUEST_FIELDS.has(normalized)) refuseOverride();
+  if (PERSISTED_REQUEST_FIELDS.has(normalized)) {
+    if (isDerivedAnthropicThinkingTemperature(call, provider, name, field, value)) return;
+    refuseOverride();
+  }
   if (normalized === "generationconfig") {
     if (provider !== "google") refuseOverride();
     assertGoogleGenerationConfig(value, call.options);

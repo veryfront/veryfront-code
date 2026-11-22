@@ -1,3 +1,6 @@
+import { observeFetchRequestInit, withMockFetch } from "#veryfront/testing/mock-fetch.ts";
+import { createOpenAIModelRuntime } from "../../../extensions/ext-llm-openai/src/openai-provider.ts";
+import { createAnthropicModelRuntime } from "../../../extensions/ext-llm-anthropic/src/anthropic-provider.ts";
 import "#veryfront/schemas/_test-setup.ts";
 import { assert, assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
@@ -900,6 +903,7 @@ describe("hosted executor model dispatch", () => {
           frequencyPenalty: 0.1,
           reasoning: { enabled: false },
           responseFormat: options.responseFormat,
+          providerOptions: options.providerOptions,
         },
       });
       persisted.resolve();
@@ -914,11 +918,13 @@ describe("hosted executor model dispatch", () => {
     }
   });
 
-  it("persists effective Anthropic reasoning precedence without raw provider options", async () => {
+  it("persists effective Anthropic reasoning alongside exact native provider options", async () => {
     const cases = [
       {
         reasoning: { enabled: false },
-        providerOptions: { anthropic: { thinking: { type: "enabled", budget_tokens: 2048 } } },
+        providerOptions: {
+          anthropic: { temperature: 1, thinking: { type: "enabled", budget_tokens: 2048 } },
+        },
         expected: { enabled: true, budgetTokens: 2048 },
         expectedMaxOutputTokens: 4096,
       },
@@ -975,8 +981,238 @@ describe("hosted executor model dispatch", () => {
           assertEquals(event?.request, {
             maxOutputTokens: testCase.expectedMaxOutputTokens,
             reasoning: testCase.expected,
+            providerOptions: testCase.providerOptions,
+            ...("temperature" in testCase.providerOptions.anthropic ? { temperature: 1 } : {}),
           });
           assert(event && !("providerOptions" in event));
+        } finally {
+          await channels.close();
+        }
+      }
+    }
+  });
+
+  it("admits exact contexts above the legacy byte cap while preserving the aggregate node cap", async () => {
+    for (const tooManyNodes of [false, true]) {
+      let writes = 0;
+      let dispatches = 0;
+      const schema: Record<string, string | number[]> = tooManyNodes
+        ? { type: "number", examples: Array.from({ length: 52_000 }, (_, index) => index) }
+        : { type: "string", description: "x".repeat(30 * 1024) };
+      const options = {
+        prompt: [{
+          role: "user",
+          content: Array.from({ length: 4 }, () => ({
+            type: "text",
+            text: tooManyNodes ? "small" : "x".repeat(1024 * 1024 - 8192),
+          })),
+        }],
+        providerOptions: {
+          openai: {
+            response_format: {
+              type: "json_schema",
+              json_schema: {
+                name: "result",
+                schema,
+              },
+            },
+          },
+        },
+      };
+      const broker = createHostedExecutorModelBroker({
+        grant: grant(),
+        allowedModelIds,
+        scope: scope(),
+        resolveModelRuntime: () =>
+          model(() => {
+            dispatches++;
+          }),
+        runEventSink: () => {
+          writes++;
+        },
+      });
+      const operation = broker.get("model.generate");
+      assert(operation?.mode === "unary");
+      const dispatch = async () =>
+        operation.handle({ modelId, options }, {
+          binding,
+          signal: new AbortController().signal,
+          deadline: Date.now() + 10000,
+        });
+      if (tooManyNodes) await assertRejects(dispatch);
+      else await dispatch();
+      assertEquals(writes, tooManyNodes ? 0 : 1);
+      assertEquals(dispatches, tooManyNodes ? 0 : 1);
+    }
+  });
+
+  it("preserves native schema order with and without exact capture through the HTTP builder", async () => {
+    const bodies: unknown[] = [];
+    for (const capture of [false, true]) {
+      const properties = { reasoning: { type: "string" }, answer: { type: "string" } };
+      const providerOptions = {
+        openai: {
+          response_format: {
+            type: "json_schema",
+            json_schema: { name: "result", schema: { type: "object", properties } },
+          },
+        },
+      };
+      const expected = structuredClone(providerOptions);
+      await withMockFetch((_url, init) => {
+        const body = JSON.parse(String(observeFetchRequestInit(init).body));
+        bodies.push(body.response_format);
+        assertEquals(Object.keys(body.response_format.json_schema.schema.properties), [
+          "reasoning",
+          "answer",
+        ]);
+        return Promise.resolve(
+          Response.json({
+            choices: [{ message: { role: "assistant", content: "done" }, finish_reason: "stop" }],
+            usage: {},
+          }),
+        );
+      }, async () => {
+        const native = createOpenAIModelRuntime({
+          name: "veryfront-cloud",
+          apiKey: "test-key",
+          baseURL: "https://provider.example.test/v1",
+        }, "gpt-4o");
+        const broker = createHostedBroker({
+          projectId: "11111111-1111-4111-8111-111111111111",
+          grant: grant(),
+          allowedModelIds,
+          scope: scope(),
+          resolveModelRuntime: () => native,
+          ...(capture
+            ? {
+              modelCallCaptureReceipts: true as const,
+              runEventSink: async (event: AgentRunEvent) => {
+                assertModelCallContextEvent(event);
+                assertEquals(event.request?.providerOptions, expected);
+                await Promise.resolve();
+                Reflect.deleteProperty(properties, "reasoning");
+                Reflect.set(event.request?.providerOptions ?? {}, "openai", {});
+                return receiptFor(event.modelCallId);
+              },
+            }
+            : { runEventSink: () => {} }),
+        });
+        const operation = broker.get("model.generate");
+        assert(operation?.mode === "unary");
+        await operation.handle({
+          modelId,
+          options: {
+            prompt: [{ role: "user", content: [{ type: "text", text: "Synthetic prompt" }] }],
+            providerOptions,
+          },
+        }, {
+          binding,
+          signal: new AbortController().signal,
+          deadline: Date.now() + 10000,
+        });
+      });
+    }
+    assertEquals(bodies[0], bodies[1]);
+  });
+
+  it("persists native budget defaults before the hosted Anthropic HTTP builder dispatches", async () => {
+    const providerOptions = {
+      anthropic: { temperature: 1, thinking: { type: "enabled", budget_tokens: 1024 } },
+      arbitrary: { nested: [null, true, "value"] },
+    };
+    let event: AgentRunModelCallContextEvent | undefined;
+    let calls = 0;
+    await withMockFetch((_url, init) => {
+      calls++;
+      assert(event);
+      const body = JSON.parse(String(observeFetchRequestInit(init).body));
+      assertEquals(event.request?.providerOptions, providerOptions);
+      assertEquals(event.request?.temperature, 1);
+      assertEquals(event.request?.reasoning, { enabled: true, budgetTokens: 1024 });
+      assertEquals(body.temperature, 1);
+      assertEquals(body.thinking, providerOptions.anthropic.thinking);
+      assertEquals(body.max_tokens, 4096);
+      return Promise.resolve(
+        Response.json({
+          content: [{ type: "text", text: "done" }],
+          stop_reason: "end_turn",
+          usage: {},
+        }),
+      );
+    }, async () => {
+      const native = createAnthropicModelRuntime({
+        name: "veryfront-cloud",
+        apiKey: "test-key",
+        baseURL: "https://provider.example.test/v1",
+      }, "claude-haiku-4-5");
+      const channels = pair(createHostedExecutorModelBroker({
+        grant: grant(),
+        allowedModelIds,
+        scope: scope(),
+        resolveModelRuntime: () => native,
+        runEventSink: (value) => {
+          assertModelCallContextEvent(value);
+          event = value;
+        },
+      }));
+      try {
+        await (await proxy(channels)).doGenerate({ prompt, providerOptions });
+      } finally {
+        await channels.close();
+      }
+    });
+    assertEquals(calls, 1);
+  });
+
+  it("rejects conflicting or non-derived native Anthropic temperatures before persistence", async () => {
+    for (const mode of ["generate", "stream"] as const) {
+      for (
+        const controls of [
+          {
+            temperature: 0.5,
+            nativeTemperature: 1,
+            thinking: { type: "enabled", budget_tokens: 2048 },
+          },
+          {
+            temperature: undefined,
+            nativeTemperature: 0.5,
+            thinking: { type: "enabled", budget_tokens: 2048 },
+          },
+          { temperature: undefined, nativeTemperature: 1, thinking: { type: "adaptive" } },
+        ]
+      ) {
+        let events = 0;
+        let dispatches = 0;
+        const channels = pair(createHostedExecutorModelBroker({
+          grant: grant(),
+          allowedModelIds,
+          scope: scope(),
+          runEventSink: () => {
+            events++;
+          },
+          resolveModelRuntime: () => ({
+            ...model(() => {
+              dispatches++;
+            }),
+            modelProvider: "anthropic",
+            modelId: "claude-synthetic",
+          }),
+        }));
+        try {
+          const runtime = await proxy(channels);
+          const options = {
+            prompt,
+            ...(controls.temperature === undefined ? {} : { temperature: controls.temperature }),
+            providerOptions: {
+              anthropic: { temperature: controls.nativeTemperature, thinking: controls.thinking },
+            },
+          };
+          if (mode === "generate") {
+            await assertRejects(async () => await runtime.doGenerate(options));
+          } else await assertRejects(async () => await runtime.doStream(options));
+          assertEquals(events, 0);
+          assertEquals(dispatches, 0);
         } finally {
           await channels.close();
         }

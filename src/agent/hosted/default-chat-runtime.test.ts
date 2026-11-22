@@ -3021,3 +3021,60 @@ it("forwards the caller's alias through hosted runtime scoping, so a gated tool 
   }]);
   assertEquals(asked, ["payments_transfer"]);
 });
+
+it("derives native Anthropic budget and adaptive controls for hosted chat dispatch", async () => {
+  using _catalog = useServedCatalogForTests();
+  for (
+    const [modelId, expected] of [
+      ["anthropic/claude-haiku-4-5-20251001", {
+        anthropic: { temperature: 1, thinking: { type: "enabled", budget_tokens: 1024 } },
+      }],
+      ["anthropic/claude-opus-4-8", {
+        anthropic: {
+          thinking: { type: "adaptive", display: "summarized" },
+          output_config: { effort: "high" },
+        },
+      }],
+    ] as const
+  ) {
+    clearModelProviders();
+    let captured: unknown;
+    registerModelProvider("anthropic", () => ({
+      provider: "anthropic",
+      modelId,
+      doGenerate: () => Promise.reject(new Error("unused")),
+      doStream(options) {
+        if (options && typeof options === "object" && "providerOptions" in options) {
+          captured = options.providerOptions;
+        }
+        return Promise.resolve({ stream: createTextStream() });
+      },
+    }));
+    try {
+      const runtime = await createDefaultHostedChatRuntime({
+        sourceIntegrationPolicy: denyAllSourceIntegrationPolicy,
+        options: {
+          projectId: "project-test",
+          authToken: "test-token",
+          instructions: "Synthetic",
+          model: modelId,
+          allowedTools: [],
+        },
+        config: { apiUrl: "https://api.example.com", apiMcpUrl: "https://api.example.com/mcp" },
+        buildLocalTools: () => ({}),
+        createRemoteToolSource: emptyRemoteSource,
+        preloadLatestConversationUserText: false,
+      });
+      await withMockFetch(() => Promise.resolve(Response.json({ tools: [] })), async () => {
+        const result = await runtime.agent.stream({
+          messages: [],
+          abortSignal: new AbortController().signal,
+        });
+        for await (const _chunk of result.toUIMessageStream()) { /* Drain provider dispatch. */ }
+      });
+      assertEquals(captured, expected);
+    } finally {
+      clearModelProviders();
+    }
+  }
+});

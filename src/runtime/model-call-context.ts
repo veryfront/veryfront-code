@@ -67,8 +67,26 @@ export type ModelCallResponseFormat =
     strict?: boolean;
   };
 
-/** Provider-neutral generation controls that materially affect one model call. */
+/** Data-only JSON value retained by exact model call capture. */
+export type ModelCallRequestProviderOptionValue =
+  | null
+  | boolean
+  | number
+  | string
+  | readonly ModelCallRequestProviderOptionValue[]
+  | { readonly [key: string]: ModelCallRequestProviderOptionValue };
+
+/** Complete native provider buckets retained by exact model call capture. */
+export type ModelCallRequestProviderOptions = Readonly<
+  Record<string, {
+    readonly [key: string]: ModelCallRequestProviderOptionValue;
+  }>
+>;
+
+/** Generation controls that materially affect one model call. */
 export interface ModelCallRequest {
+  /** Exact native JSON options, including buckets not selected by the provider. */
+  providerOptions?: ModelCallRequestProviderOptions;
   maxOutputTokens?: number;
   temperature?: number;
   parallelToolCalls?: boolean;

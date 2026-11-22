@@ -94,3 +94,38 @@ describe("canonical producer source refinements", () => {
     );
   });
 });
+
+it("retains complete native provider buckets through canonical model input decoding", async () => {
+  const base = requested({});
+  const providerOptions = {
+    anthropic: { thinking: { type: "adaptive" }, output_config: { effort: "high" } },
+    arbitrary: { nested: [null, true, 2, "text"], ["é".repeat(8192)]: "x".repeat(6 * 1024 * 1024) },
+  };
+  const member = {
+    ...base,
+    event: {
+      ...base.event,
+      type: "com.veryfront.model-call.input.captured",
+      dataschema: "urn:veryfront:events:1:data:model-call.input.captured:diagnostic",
+      data: {
+        type: "com.veryfront.model-call.input.captured",
+        messages: [],
+        request: { providerOptions, parallelToolCalls: false },
+      },
+    },
+  };
+  assertEquals<unknown>(await parseRunReadMemberV1(member), member);
+  for (const bad of [null, [], 1, { ["é".repeat(8192) + "x"]: true }]) {
+    await assertRejects(
+      () =>
+        parseRunReadMemberV1({
+          ...member,
+          event: {
+            ...member.event,
+            data: { ...member.event.data, request: { providerOptions: { ignored: bad } } },
+          },
+        }),
+      TypeError,
+    );
+  }
+});

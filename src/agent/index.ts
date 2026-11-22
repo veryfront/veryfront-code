@@ -109,6 +109,8 @@ export type {
   AgentRunEventSink,
   AgentRunModelCallContextEvent,
   ModelCallMessage,
+  ModelCallRequestProviderOptions,
+  ModelCallRequestProviderOptionValue,
   ModelCallTool,
 } from "../runtime/model-call-context.ts";
 
