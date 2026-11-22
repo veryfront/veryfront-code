@@ -32532,6 +32532,14 @@
                       }
                     },
                     "additionalProperties": false
+                  },
+                  "providerOptions": {
+                    "type": "object",
+                    "description": "Full native provider options as data-only JSON objects keyed by provider or alias. Maximum depth 64, 65536 JSON nodes, 8388608 UTF-8 JSON bytes and 16384 UTF-8 bytes per key.",
+                    "additionalProperties": {
+                      "type": "object",
+                      "additionalProperties": {}
+                    }
                   }
                 },
                 "additionalProperties": false
@@ -32961,6 +32969,14 @@
                       }
                     },
                     "additionalProperties": false
+                  },
+                  "providerOptions": {
+                    "type": "object",
+                    "description": "Full native provider options as data-only JSON objects keyed by provider or alias. Maximum depth 64, 65536 JSON nodes, 8388608 UTF-8 JSON bytes and 16384 UTF-8 bytes per key.",
+                    "additionalProperties": {
+                      "type": "object",
+                      "additionalProperties": {}
+                    }
                   }
                 },
                 "additionalProperties": false
@@ -35304,6 +35320,14 @@
                       }
                     },
                     "additionalProperties": false
+                  },
+                  "providerOptions": {
+                    "type": "object",
+                    "description": "Full native provider options as data-only JSON objects keyed by provider or alias. Maximum depth 64, 65536 JSON nodes, 8388608 UTF-8 JSON bytes and 16384 UTF-8 bytes per key.",
+                    "additionalProperties": {
+                      "type": "object",
+                      "additionalProperties": {}
+                    }
                   }
                 },
                 "additionalProperties": false
@@ -37018,6 +37042,14 @@
                       }
                     },
                     "additionalProperties": false
+                  },
+                  "providerOptions": {
+                    "type": "object",
+                    "description": "Full native provider options as data-only JSON objects keyed by provider or alias. Maximum depth 64, 65536 JSON nodes, 8388608 UTF-8 JSON bytes and 16384 UTF-8 bytes per key.",
+                    "additionalProperties": {
+                      "type": "object",
+                      "additionalProperties": {}
+                    }
                   }
                 },
                 "additionalProperties": false

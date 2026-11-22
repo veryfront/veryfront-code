@@ -1,3 +1,5 @@
+import { encodePrivateText } from "#veryfront/security/private-text.ts";
+import { privateByteLength } from "#veryfront/security/private-bytes.ts";
 import type {
   ModelRuntimeCallOptions,
   RuntimeMetadata,
@@ -9,7 +11,11 @@ import {
   routesOpenAIDocumentInputToResponses,
   unwrapToolInputSchema,
 } from "#veryfront/provider/shared/index.ts";
-import { snapshotProviderJsonValue } from "#veryfront/provider/runtime-loader/json-snapshot.ts";
+import {
+  type JsonSnapshotValue,
+  snapshotJsonValue,
+  snapshotProviderJsonValue,
+} from "#veryfront/provider/runtime-loader/json-snapshot.ts";
 import {
   isOpenAIReasoningModel,
   rejectsOpenAISamplingParams,
@@ -39,6 +45,7 @@ import {
 import type {
   ModelCallMessage,
   ModelCallRequest,
+  ModelCallRequestProviderOptions,
   ModelCallResponseFormat,
   ModelCallTool,
 } from "./model-call-context.ts";
@@ -1312,9 +1319,46 @@ function snapshotNeutralReasoning(reasoning: RuntimeReasoningOption): RuntimeRea
   return output;
 }
 
+const MODEL_CALL_PROVIDER_OPTIONS_MAX_KEY_BYTES = 16 * 1024;
+
+function assertProviderOptionKeyLengths(value: JsonSnapshotValue): void {
+  if (value === null || typeof value !== "object") return;
+  if (ArrayIsArray(value)) {
+    forEachPrivateArray(value, assertProviderOptionKeyLengths);
+    return;
+  }
+  const record = value as Readonly<Record<string, JsonSnapshotValue>>;
+  forEachPrivateArray(objectKeys(record), (key) => {
+    if (privateByteLength(encodePrivateText(key)) > MODEL_CALL_PROVIDER_OPTIONS_MAX_KEY_BYTES) {
+      throw new TypeError("Model call provider option keys must not exceed 16384 UTF-8 bytes");
+    }
+    assertProviderOptionKeyLengths(record[key]!);
+  });
+}
+
+/** Snapshot the complete data-only JSON record before exact capture can await persistence. */
+export function snapshotModelCallRequestProviderOptions(
+  value: unknown,
+): ModelCallRequestProviderOptions {
+  // Exact audit data must never use the edge structured-clone accessor fallback.
+  const snapshot = snapshotJsonValue(value, { sortObjectKeys: false });
+  assertProviderOptionKeyLengths(snapshot);
+  if (snapshot === null || typeof snapshot !== "object" || ArrayIsArray(snapshot)) {
+    throw new TypeError("Model call provider options must be a JSON object");
+  }
+  forEachPrivateArray(objectKeys(snapshot as Record<string, unknown>), (name) => {
+    const bucket = (snapshot as Record<string, unknown>)[name];
+    if (bucket === null || typeof bucket !== "object" || ArrayIsArray(bucket)) {
+      throw new TypeError("Model call provider option buckets must be JSON objects");
+    }
+  });
+  return snapshot as ModelCallRequestProviderOptions;
+}
+
 export function snapshotModelCallProviderOptions<TOptions extends ModelRuntimeCallOptions>(
   model: ModelCallRuntimeMetadata,
   options: TOptions,
+  exactCapture = false,
 ): TOptions {
   const responseFormat = snapshotResponseFormat(options.responseFormat);
   const hasResponseFormat = options.responseFormat !== undefined;
@@ -1333,6 +1377,12 @@ export function snapshotModelCallProviderOptions<TOptions extends ModelRuntimeCa
       ? {}
       : { reasoning: snapshotNeutralReasoning(options.reasoning) }),
   };
+  if (exactCapture && options.providerOptions !== undefined) {
+    return {
+      ...neutralOptions,
+      providerOptions: snapshotModelCallRequestProviderOptions(options.providerOptions),
+    } as TOptions;
+  }
   if (!usesOpenAIBuilder(model) && protocol !== "google" && protocol !== "anthropic") {
     return neutralOptions;
   }
@@ -1388,9 +1438,17 @@ export function snapshotModelCallProviderOptions<TOptions extends ModelRuntimeCa
 export function buildModelCallContextRequest(
   model: ModelCallRuntimeMetadata,
   options: ModelCallRequestSource,
+  exactCapture = false,
 ): ModelCallRequest | undefined {
   const reasoning = resolvePersistedReasoning(model, options);
-  return buildModelCallRequest(resolvePersistedControls(model, options), reasoning);
+  const request = buildModelCallRequest(resolvePersistedControls(model, options), reasoning);
+  if (exactCapture && options.providerOptions !== undefined) {
+    return {
+      ...request,
+      providerOptions: options.providerOptions as ModelCallRequestProviderOptions,
+    };
+  }
+  return request;
 }
 
 function resolveOpenAIParallelToolCalls(

@@ -228,6 +228,24 @@ Replay fails when the stored evidence cannot verify the retained request or
 edited messages. Bounded replay may omit older turns; this path does not guarantee
 complete two-turn replay from the full durable history.
 
+## Exact model input capture
+
+When your trusted hosted runtime enables exact model call capture, the private input event retains
+`request.providerOptions` as the full record of native provider JSON objects. The record includes
+provider and alias buckets that the selected provider does not use. Provider-neutral reasoning stays
+alongside those options.
+
+Veryfront takes an immutable snapshot before it awaits persistence and dispatches that snapshot only
+after persistence acknowledges the call. Each record supports depth 64, 65,536 JSON values, and
+8,388,608 encoded UTF-8 JSON bytes. Each provider name and nested JSON key supports up to 16,384 UTF-8
+bytes. The complete private context, including messages, tools, neutral controls, and native
+options, must fit 10,485,760 UTF-8 JSON bytes, 100,000 values, and depth 128. The canonical event
+envelope must also fit those bounds; persistence rejects a context whose additional event metadata
+exceeds them. Accessors, cycles,
+non-JSON values, and non-object provider buckets fail before dispatch. Execution preserves object
+property order, including native output-schema properties. Canonical storage and readback retain JSON
+values semantically and may reorder object keys; this capture is not an ordered wire-request replay. Public observations and legacy capture omit native request options.
+
 ## Typed Runs contract SDK
 
 `veryfront/runs/target` publishes the typed SDK for the Runs target contract that

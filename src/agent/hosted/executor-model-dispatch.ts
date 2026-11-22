@@ -24,7 +24,11 @@ import type { ExecutorOperation, ExecutorOperationContext } from "../executor/ch
 import { type ExecutorBinding, getExecutorBindingSchema } from "../executor/protocol.ts";
 import type { AgentModelRuntimeResolver } from "../runtime/model-transport.ts";
 import { createExecutorModelBroker, type ExecutorModelDispatch } from "./executor-model-bridge.ts";
-import { executorModelJson, parseExecutorModelData } from "./executor-model-schema.ts";
+import {
+  executorModelContextJson,
+  executorModelJson,
+  parseExecutorModelData,
+} from "./executor-model-schema.ts";
 import { assertPersistedModelOptions } from "./executor-model-dispatch-options.ts";
 import { createExecutorModelAdmission, type ExecutorModelGrant } from "./executor-model-grant.ts";
 import { executorModelFailure } from "./executor-model-errors.ts";
@@ -206,7 +210,7 @@ export function createHostedExecutorModelBroker(
       );
     }
     return ReflectApply(ObjectFreeze, Object, [receipt]) as AgentRunModelCallCaptureReceipt;
-  });
+  }, captureEnabled);
 }
 
 /**
@@ -232,6 +236,7 @@ function createScopedHostedModelBroker(
     request: ExecutorModelDispatch,
     context: ExecutorOperationContext,
   ) => Promise<AgentRunModelCallCaptureReceipt | undefined>,
+  captureEnabled = false,
 ): ReadonlyMap<string, ExecutorOperation> {
   const binding = parseExecutorModelData(getExecutorBindingSchema(), input.scope.binding);
   const lifetime = input.scope.signal;
@@ -261,7 +266,7 @@ function createScopedHostedModelBroker(
       assertScope(context);
       const snapshot = {
         ...request,
-        options: snapshotModelCallProviderOptions(request.model, request.options),
+        options: snapshotModelCallProviderOptions(request.model, request.options, captureEnabled),
       };
       return admission.normalize(snapshot);
     },
@@ -359,7 +364,7 @@ async function acknowledgePersistence<T>(
 /**
  * Match the existing durable projection: neutral messages/tools/controls and
  * validated system cache metadata. Exact capture retains assistant replay
- * metadata; legacy observations and other provider options remain excluded. The request uses the existing ModelCallRequest
+ * metadata and complete native provider options; legacy observations omit them. The request uses the ModelCallRequest
  * subset; toolChoice and userId are not durable event fields.
  * Provider-result assistant content cannot be represented by that contract and
  * refuses hosted dispatch. The broker's local call sequence is not a new
@@ -371,7 +376,7 @@ function createContextEvent(
 ): AgentRunModelCallContextEvent {
   const options = call.options;
   const modelProvider = resolveModelCallProvider(call.model);
-  const request = buildModelCallContextRequest(call.model, options);
+  const request = buildModelCallContextRequest(call.model, options, captureEnabled);
   const event: AgentRunModelCallContextEvent = {
     type: "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED",
     ...(captureEnabled ? { modelCallId: call.identity.modelCallId } : {}),
@@ -385,7 +390,11 @@ function createContextEvent(
     ...(request ? { request } : {}),
   };
   const snapshot = cloneStructured(event);
-  if (!isPrivateConversationRunEvent(executorModelJson(snapshot))) {
+  if (
+    !isPrivateConversationRunEvent(
+      captureEnabled ? executorModelContextJson(snapshot) : executorModelJson(snapshot),
+    )
+  ) {
     throw new DurableRunEventPersistenceError("Hosted model context cannot be persisted");
   }
   return snapshot;

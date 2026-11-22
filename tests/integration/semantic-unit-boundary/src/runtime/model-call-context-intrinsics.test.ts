@@ -316,7 +316,7 @@ describe("model-call context timing intrinsic boundaries", () => {
               }),
           ),
         DurableRunEventPersistenceError,
-        "Exact model call capture does not support these provider controls: headers, providerOptions",
+        "Exact model call capture does not support these provider controls: headers",
       );
     } finally {
       Object.defineProperty(Array.prototype, Symbol.iterator, {

@@ -12,6 +12,7 @@ import {
 import {
   buildModelCallContextRequest,
   snapshotModelCallProviderOptions,
+  snapshotModelCallRequestProviderOptions,
 } from "#veryfront/runtime/model-call-context-request.ts";
 import { registerVeryfrontCloudModelFacts } from "#veryfront/provider/veryfront-cloud/model-catalog.ts";
 import { buildOpenAIChatRequest } from "../../extensions/ext-llm-openai/src/openai-chat-request-builder.ts";
@@ -2582,5 +2583,88 @@ it("omits parallel tool control where native adapters ignore it", () => {
     buildModelCallContextRequest({ provider: "google", modelId: "gemini-test" }, options)
       ?.parallelToolCalls,
     undefined,
+  );
+});
+
+describe("exact request provider options", () => {
+  it("owns and freezes every provider bucket including unselected data", () => {
+    const source = { anthropic: { thinking: { type: "adaptive" } }, other: { nested: [1, null] } };
+    const snapshot = snapshotModelCallRequestProviderOptions(source);
+    source.other.nested[0] = 2;
+    assertEquals(snapshot.other, { nested: [1, null] });
+    assert(Object.isFrozen(snapshot));
+    assert(Object.isFrozen(snapshot.other));
+  });
+
+  it("preserves native structured-output property order", () => {
+    const snapshot = snapshotModelCallRequestProviderOptions({
+      openai: {
+        response_format: {
+          json_schema: {
+            schema: {
+              properties: { reasoning: { type: "string" }, answer: { type: "string" } },
+            },
+          },
+        },
+      },
+    });
+    const serialized = JSON.stringify(snapshot);
+    assert(serialized.indexOf('"reasoning"') < serialized.indexOf('"answer"'));
+  });
+
+  it("rejects malformed ignored buckets without evaluating getters", () => {
+    let reads = 0;
+    const getter = Object.defineProperty({}, "ignored", {
+      enumerable: true,
+      get() {
+        reads++;
+        return {};
+      },
+    });
+    const cycle: Record<string, unknown> = {};
+    cycle.self = cycle;
+    for (
+      const value of [
+        getter,
+        { ignored: null },
+        { ignored: [] },
+        { ignored: 1 },
+        { ignored: { value: undefined } },
+        { ignored: { value: Infinity } },
+        { ignored: cycle },
+        { ignored: { value: new Date() } },
+      ]
+    ) {
+      assertThrows(() => snapshotModelCallRequestProviderOptions(value), TypeError);
+    }
+    assertEquals(reads, 0);
+  });
+});
+
+it("bounds the entire exact provider record by depth, nodes, and encoded bytes", () => {
+  let deep: unknown = {};
+  for (let index = 0; index < 64; index++) deep = { nested: deep };
+  for (
+    const source of [
+      { ignored: deep },
+      { ignored: { values: Array(65_536).fill(null) } },
+      { ignored: { value: "x".repeat(8 * 1024 * 1024) } },
+    ]
+  ) assertThrows(() => snapshotModelCallRequestProviderOptions(source), TypeError);
+  assertEquals(
+    snapshotModelCallRequestProviderOptions({ arbitrary: { values: [null, true, 2, "text", {}] } }),
+    { arbitrary: { values: [null, true, 2, "text", {}] } },
+  );
+});
+
+it("accepts 16KiB UTF-8 provider option keys and rejects larger keys", () => {
+  const key = "é".repeat(8192);
+  assertEquals(snapshotModelCallRequestProviderOptions({ [key]: { [key]: true } }), {
+    [key]: { [key]: true },
+  });
+  assertThrows(() => snapshotModelCallRequestProviderOptions({ [key + "x"]: {} }), TypeError);
+  assertThrows(
+    () => snapshotModelCallRequestProviderOptions({ ignored: { [key + "x"]: true } }),
+    TypeError,
   );
 });

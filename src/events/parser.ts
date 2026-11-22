@@ -1,3 +1,7 @@
+import {
+  CANONICAL_V1_MAX_MEMBER_BYTES,
+  CANONICAL_V1_MAX_STRING_BYTES,
+} from "./canonical-v1/limits.ts";
 import { isCloudEventsString, isTraceState } from "./string-validation.ts";
 import type {
   JsonSchema,
@@ -15,6 +19,20 @@ const LOCAL_REF_REPLACEMENT_PREFIX = "#/$defs/";
 
 let compiledEventValidator: JsonSchemaValidationFunction<EventRecord> | undefined;
 let compiledEventValidatorVersion = -1;
+let compiledModelInputValidator: JsonSchemaValidationFunction<EventRecord> | undefined;
+const MODEL_INPUT_CAPTURED = "com.veryfront.model-call.input.captured";
+const ownPropertyDescriptor = Object.getOwnPropertyDescriptor;
+
+function isModelInputEvent(input: unknown): boolean {
+  if (input === null || typeof input !== "object") return false;
+  try {
+    const descriptor = ownPropertyDescriptor(input, "type");
+    return descriptor !== undefined && "value" in descriptor &&
+      descriptor.value === MODEL_INPUT_CAPTURED;
+  } catch {
+    return false;
+  }
+}
 
 export interface EventParser {
   safeParseEvent(input: unknown): EventParseResult;
@@ -121,23 +139,46 @@ function patchStrictRequiredBranches(
 
 function compileEventValidator(
   schemaValidator: SchemaValidator,
+  modelInputOnly = false,
 ): JsonSchemaValidationFunction<EventRecord> {
   if (!schemaValidator.compileJsonSchema) {
     throw new TypeError(
       "veryfront/events requires a SchemaValidator implementation with compileJsonSchema support",
     );
   }
-  return schemaValidator.compileJsonSchema<EventRecord>(targetEnvelopeSchemaForRuntime());
+  const schema = targetEnvelopeSchemaForRuntime();
+  if (modelInputOnly) {
+    if (!isPlainRecord(schema) || !isPlainRecord(schema.properties)) {
+      throw new TypeError("Invalid model input event schema");
+    }
+    // The larger instance budget is available only to this exact event type.
+    schema.properties.type = { const: MODEL_INPUT_CAPTURED };
+  }
+  return schemaValidator.compileJsonSchema<EventRecord>(
+    schema,
+    modelInputOnly
+      ? {
+        instanceLimits: {
+          maxSerializedBytes: CANONICAL_V1_MAX_MEMBER_BYTES,
+          maxStringBytes: CANONICAL_V1_MAX_STRING_BYTES,
+        },
+      }
+      : undefined,
+  );
 }
 
-function getEventValidator(): JsonSchemaValidationFunction<EventRecord> {
-  const validatorVersion = getEventSchemaValidatorVersion();
-  if (compiledEventValidator && compiledEventValidatorVersion === validatorVersion) {
-    return compiledEventValidator;
+function getEventValidator(input: unknown): JsonSchemaValidationFunction<EventRecord> {
+  const version = getEventSchemaValidatorVersion();
+  if (compiledEventValidatorVersion !== version) {
+    compiledEventValidator = undefined;
+    compiledModelInputValidator = undefined;
+    compiledEventValidatorVersion = version;
   }
-  compiledEventValidator = compileEventValidator(assertEventSchemaValidator());
-  compiledEventValidatorVersion = validatorVersion;
-  return compiledEventValidator;
+  const adapter = assertEventSchemaValidator();
+  if (isModelInputEvent(input)) {
+    return compiledModelInputValidator ??= compileEventValidator(adapter, true);
+  }
+  return compiledEventValidator ??= compileEventValidator(adapter);
 }
 
 function semanticIssue(message: string, instancePath: string): EventParseIssue {
@@ -256,18 +297,21 @@ function parseEventResult(result: EventParseResult): EventRecord {
 
 export function createEventParser(schemaValidator: SchemaValidator): EventParser {
   const validator = compileEventValidator(schemaValidator);
+  const modelInputValidator = compileEventValidator(schemaValidator, true);
+  const validatorFor = (input: unknown) =>
+    isModelInputEvent(input) ? modelInputValidator : validator;
   return {
     safeParseEvent(input: unknown): EventParseResult {
-      return safeParseEventWithValidator(validator, input);
+      return safeParseEventWithValidator(validatorFor(input), input);
     },
     parseEvent(input: unknown): EventRecord {
-      return parseEventResult(safeParseEventWithValidator(validator, input));
+      return parseEventResult(safeParseEventWithValidator(validatorFor(input), input));
     },
   };
 }
 
 export function safeParseEvent(input: unknown): EventParseResult {
-  return safeParseEventWithValidator(getEventValidator(), input);
+  return safeParseEventWithValidator(getEventValidator(input), input);
 }
 
 export function parseEvent(input: unknown): EventRecord {

@@ -1,3 +1,5 @@
+import { createZodAdapter } from "../../extensions/ext-schema-zod/src/adapter.ts";
+import { createEventParser } from "./parser.ts";
 import "#veryfront/schemas/_test-setup.ts";
 import "./test-setup.ts";
 import { assert, assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
@@ -243,4 +245,33 @@ describe("events/parser", () => {
     assert(error instanceof TypeError);
     assert(error.message.startsWith("Invalid Agent Events Protocol event"));
   });
+});
+
+it("accepts large model input snapshots without changing other pilot event budgets", () => {
+  const example = targetExamples().find((value) =>
+    value.eventType === "com.veryfront.model-call.input.captured"
+  );
+  assert(example);
+  const key = "é".repeat(8192);
+  const input = {
+    messages: [],
+    parameters: { providerOptions: { arbitrary: { [key]: "x".repeat(6 * 1024 * 1024) } } },
+  };
+  const event = {
+    ...eventFor(example),
+    data: { model: { provider: "example", name: "model-a" }, input },
+  };
+  const parser = createEventParser(createZodAdapter());
+  assertEquals<unknown>(parseEvent(event), event);
+  assertEquals<unknown>(parser.parseEvent(event), event);
+  const ordinaryExample = targetExamples().find((value) =>
+    value.eventType === "com.veryfront.message.text.delta.emitted"
+  );
+  assert(ordinaryExample);
+  const ordinary = {
+    ...eventFor(ordinaryExample),
+    data: { ...ordinaryExample.data, delta: "x".repeat(2 * 1024 * 1024) },
+  };
+  assertEquals(safeParseEvent(ordinary).success, false);
+  assertEquals(parser.safeParseEvent(ordinary).success, false);
 });

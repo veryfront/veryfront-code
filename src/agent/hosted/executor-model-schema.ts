@@ -325,6 +325,19 @@ export function executorModelIds(ids: ReadonlySet<string>): Set<string> {
  * The final shared snapshot enforces string, key, and serialized byte limits.
  */
 export function executorModelJson(value: unknown): JsonValue {
+  return executorModelJsonWithByteLimits(value);
+}
+
+/** Exact private contexts use the trusted API event budget; RPC data retains its defaults. */
+export function executorModelContextJson(value: unknown): JsonValue {
+  return executorModelJsonWithByteLimits(value, 10 * 1024 * 1024, 10 * 1024 * 1024);
+}
+
+function executorModelJsonWithByteLimits(
+  value: unknown,
+  maxStringBytes?: number,
+  maxSerializedBytes?: number,
+): JsonValue {
   let nodes = 0;
   const ancestors = createPrivateSet<object>();
   function copyProperties(
@@ -380,7 +393,7 @@ export function executorModelJson(value: unknown): JsonValue {
     ancestors.delete(input);
     return output;
   }
-  const snapshot = snapshotBoundedJsonValue(copy(value, 0));
+  const snapshot = snapshotBoundedJsonValue(copy(value, 0), maxStringBytes, maxSerializedBytes);
   if (!snapshot.success) throw new TypeError("Invalid managed model data");
   return snapshot.value;
 }

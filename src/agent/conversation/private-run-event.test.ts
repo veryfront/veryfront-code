@@ -324,3 +324,29 @@ it("private model request validates parallel tool control strictly", () => {
     false,
   );
 });
+
+it("validates complete native provider records as bounded JSON objects", () => {
+  const event = {
+    type: "AGENT_RUN_MODEL_CALL_CONTEXT_RECORDED",
+    messages: [],
+    request: { providerOptions: { arbitrary: { nested: [null, true, 2, "value"] } } },
+  };
+  assertEquals(isPrivateConversationRunEvent(event), true);
+  for (
+    const providerOptions of [{ arbitrary: [] }, { arbitrary: null }, {
+      arbitrary: { bad: undefined },
+    }, { arbitrary: { bad: NaN } }]
+  ) {
+    assertEquals(isPrivateConversationRunEvent({ ...event, request: { providerOptions } }), false);
+  }
+  let reads = 0;
+  const request = Object.defineProperty({}, "providerOptions", {
+    enumerable: true,
+    get() {
+      reads++;
+      return {};
+    },
+  });
+  assertEquals(isPrivateConversationRunEvent({ ...event, request }), false);
+  assertEquals(reads, 0);
+});

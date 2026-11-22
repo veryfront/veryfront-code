@@ -1776,6 +1776,16 @@
             }
           },
           "additionalProperties": false
+        },
+        "providerOptions": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonObject"
+          },
+          "description": "Full native provider or alias options as bounded data-only JSON. Root depth 0, maximum depth 64, 65536 nodes, 8388608 UTF-8 JSON bytes and 16384 UTF-8 bytes per key."
+        },
+        "parallelToolCalls": {
+          "type": "boolean"
         }
       },
       "additionalProperties": false
@@ -3322,6 +3332,13 @@
             }
           },
           "additionalProperties": false
+        },
+        "providerOptions": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/JsonObject"
+          },
+          "description": "Full native provider or alias options as bounded data-only JSON. Root depth 0, maximum depth 64, 65536 nodes, 8388608 UTF-8 JSON bytes and 16384 UTF-8 bytes per key."
         }
       },
       "additionalProperties": false,

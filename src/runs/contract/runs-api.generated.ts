@@ -851,6 +851,12 @@ export interface components {
                 parallelToolCalls?: boolean;
                 /** Format: double */
                 presencePenalty?: number;
+                /** @description Full native provider options as data-only JSON objects keyed by provider or alias. Maximum depth 64, 65536 JSON nodes, 8388608 UTF-8 JSON bytes and 16384 UTF-8 bytes per key. */
+                providerOptions?: {
+                    [key: string]: {
+                        [key: string]: unknown;
+                    };
+                };
                 reasoning?: {
                     /** Format: int64 */
                     budgetTokens?: number;
@@ -970,6 +976,12 @@ export interface components {
                 parallelToolCalls?: boolean;
                 /** Format: double */
                 presencePenalty?: number;
+                /** @description Full native provider options as data-only JSON objects keyed by provider or alias. Maximum depth 64, 65536 JSON nodes, 8388608 UTF-8 JSON bytes and 16384 UTF-8 bytes per key. */
+                providerOptions?: {
+                    [key: string]: {
+                        [key: string]: unknown;
+                    };
+                };
                 reasoning?: {
                     /** Format: int64 */
                     budgetTokens?: number;
@@ -1080,6 +1092,12 @@ export interface components {
                 parallelToolCalls?: boolean;
                 /** Format: double */
                 presencePenalty?: number;
+                /** @description Full native provider options as data-only JSON objects keyed by provider or alias. Maximum depth 64, 65536 JSON nodes, 8388608 UTF-8 JSON bytes and 16384 UTF-8 bytes per key. */
+                providerOptions?: {
+                    [key: string]: {
+                        [key: string]: unknown;
+                    };
+                };
                 reasoning?: {
                     /** Format: int64 */
                     budgetTokens?: number;
@@ -1191,6 +1209,12 @@ export interface components {
                 parallelToolCalls?: boolean;
                 /** Format: double */
                 presencePenalty?: number;
+                /** @description Full native provider options as data-only JSON objects keyed by provider or alias. Maximum depth 64, 65536 JSON nodes, 8388608 UTF-8 JSON bytes and 16384 UTF-8 bytes per key. */
+                providerOptions?: {
+                    [key: string]: {
+                        [key: string]: unknown;
+                    };
+                };
                 reasoning?: {
                     /** Format: int64 */
                     budgetTokens?: number;
