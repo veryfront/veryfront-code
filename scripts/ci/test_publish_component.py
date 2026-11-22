@@ -210,6 +210,33 @@ class AssetRouteTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             handler.redirect_request(hop,None,302,'Found',{},'https://release-assets.githubusercontent.com/y')
 
+    def test_asset_reader_accepts_a_direct_stream_or_the_asset_host_only(self):
+        route='https://api.github.com/repos/veryfront/veryfront/releases/assets/701'
+        class Response:
+            def __init__(self,final):self.status=200;self.final=final
+            def __enter__(self):return self
+            def __exit__(self,*_):return False
+            def geturl(self):return self.final
+            def read(self,limit):return b'x'*3
+        def opener_for(final):
+            class Opener:
+                def open(self,request,timeout):
+                    assert request.full_url==route and request.get_header('Accept')=='application/octet-stream'
+                    return Response(final)
+            return lambda *_:Opener()
+        original=publisher.build_opener
+        try:
+            for final in [route,'https://release-assets.githubusercontent.com/x?sig=1']:
+                publisher.build_opener=opener_for(final)
+                with self.subTest(final=final):self.assertEqual(publisher.public_asset(701,3),b'xxx')
+            for final in ['https://api.github.com/repos/foreign/x/releases/assets/701','https://example.com/x']:
+                publisher.build_opener=opener_for(final)
+                with self.subTest(final=final),self.assertRaises(ValueError):publisher.public_asset(701,3)
+            publisher.build_opener=opener_for(route)
+            with self.assertRaises(ValueError):publisher.public_asset(701,4)
+        finally:
+            publisher.build_opener=original
+
     def test_asset_reader_refuses_unbounded_requests(self):
         for asset_id,size in [(0,1),(True,1),(1,0),(1,publisher.TARBALL_LIMIT+1)]:
             with self.subTest(asset_id=asset_id,size=size),self.assertRaises(ValueError):

@@ -74,7 +74,9 @@ def public_asset(asset_id,size):
     url='https://api.github.com/repos/veryfront/veryfront/releases/assets/'+str(asset_id)
     request=Request(url,headers={'Accept':'application/octet-stream','User-Agent':'platform-component-publication'})
     with build_opener(AssetRedirect).open(request,timeout=120) as response:
-        require(response.status==200 and urlsplit(response.geturl()).hostname==ASSET_HOST)
+        # GitHub either streams the asset from the fixed route or redirects once.
+        final=response.geturl()
+        require(response.status==200 and (final==url or urlsplit(final).hostname==ASSET_HOST))
         raw=response.read(size+1)
     require(len(raw)==size)
     return raw
