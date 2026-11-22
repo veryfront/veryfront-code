@@ -105,7 +105,8 @@ export class DenoNodeWebSocket extends EventTarget implements WebSocket {
     throw new TypeError("Invalid WebSocket transport state");
   }
   get bufferedAmount(): number {
-    return this.readyState === this.OPEN
+    const state = this.readyState;
+    return state === this.OPEN || state === this.CLOSING
       ? this.pendingSendBytes + this.inner._getBufferedAmount()
       : 0;
   }

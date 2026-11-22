@@ -62,6 +62,38 @@ Deno.test("Deno facade counts every queued payload and transfers ownership witho
   assertEquals(socket.bufferedAmount, 0);
 });
 
+Deno.test("Deno facade preserves owned bytes through queued close and transport drain", async () => {
+  class ClosingTransport extends ControlledTransport {
+    override close(): void {
+      this.readyState = 2;
+    }
+    completeClose(): void {
+      super.close();
+    }
+  }
+  const transport = new ClosingTransport();
+  transport.amount = 3;
+  const socket = new DenoNodeWebSocket(transport);
+  const { blob, conversion } = heldBlob();
+  socket.send(blob);
+  socket.send("queued");
+  assertEquals(socket.bufferedAmount, 11);
+  socket.close();
+  assertEquals(socket.readyState, socket.CLOSING);
+  assertEquals(socket.bufferedAmount, 11);
+  conversion.resolve(new Uint8Array([1, 2]).buffer);
+  await conversion.promise;
+  await Promise.resolve();
+  assertEquals(transport.sent.length, 2);
+  assertEquals(transport.readyState, socket.CLOSING);
+  assertEquals(socket.bufferedAmount, 11);
+  transport.amount = 0;
+  assertEquals(socket.bufferedAmount, 0);
+  transport.completeClose();
+  assertEquals(socket.readyState, socket.CLOSED);
+  assertEquals(socket.bufferedAmount, 0);
+});
+
 for (const failure of ["conversion", "send", "close"] as const) {
   Deno.test(`Deno facade releases queued byte accounting on ${failure}`, async () => {
     const transport = new ControlledTransport();
