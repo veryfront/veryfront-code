@@ -183,6 +183,19 @@ Use `--path ... --all` only when you want everything under that uploads prefix
 or local directory. For an exact file list, pass the file paths as positional
 arguments instead.
 
+For local output, re-ingesting a source reuses its existing generated document,
+even when its title changes. Other programs must not change the output directory
+during ingestion. Compatible CLI writers coordinate through output reservations;
+start a new ingestion run after external changes.
+
+On Linux and macOS, the CLI can recover an abandoned reservation only when it
+can prove that its owner process has exited on the same host and boot. A
+reservation never expires merely because it is old. Older reservations and
+reservations from an unverifiable host or platform remain busy. Before inspecting
+or manually recovering reservation metadata, stop all writers sharing that
+output directory. If you cannot establish that every writer has stopped, leave
+the reservation in place.
+
 ## What the JSON output looks like
 
 With `--json`, the command returns a machine-readable run result with

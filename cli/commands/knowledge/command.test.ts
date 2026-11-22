@@ -5431,10 +5431,10 @@ describe("runKnowledgeParser", () => {
   it("preserves generated documents titled Index or Log through OKF bundle parsing", async () => {
     const tempDir = await makeTempDir({ prefix: "veryfront-knowledge-parser-reserved-" });
     const outputDir = join(tempDir, "knowledge-output");
-    const filePath = join(tempDir, "notes.md");
 
     try {
       for (const title of ["Index", "Log"]) {
+        const filePath = join(tempDir, `${title.toLowerCase()}.md`);
         await Deno.writeTextFile(filePath, `# ${title}\n\nText.`);
         const generated = await runKnowledgeParser({ filePath, outputDir });
         assertEquals(generated.title, title);

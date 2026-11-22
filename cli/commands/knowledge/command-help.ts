@@ -48,7 +48,8 @@ export const knowledgeHelp: CommandHelp = {
     "veryfront knowledge ingest --path uploads/ga4 --all --okf-bundle --branch feature/docs --json",
   ],
   notes: [
-    "Other programs must not change the output directory during ingestion. Start a new ingestion run after external changes.",
+    "Other programs must not change the output directory during ingestion; compatible CLI writers coordinate through reservations. Start a new run after external changes.",
+    "Unverifiable output reservations stay busy. Stop all writers before inspecting or manually recovering reservation metadata; reservations do not expire by age.",
     "Primary subcommand: ingest",
     "`uploads/...` means a remote project upload; use `./uploads/...` or `/workspace/uploads/...` to force a local file",
     "`ingest` orchestrates upload resolution, parsing, and project file writes",

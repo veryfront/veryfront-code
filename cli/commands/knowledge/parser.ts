@@ -1,4 +1,11 @@
 import { lstat as inspectLink } from "node:fs/promises";
+import { type SourceOutputIndex, withKnowledgeSourceClaim } from "./source-output-index.ts";
+import {
+  acquireKnowledgeOutputClaim,
+  readKnowledgeClaimOwner,
+  readProvenKnowledgeOutputStage,
+} from "./output-claim.ts";
+import { publishKnowledgeOutput } from "./output-publication.ts";
 import { basename, dirname, extname, join, normalize } from "veryfront/platform/path";
 import { importFirstPartyExtensionModule } from "veryfront/extensions/first-party-import";
 import type {
@@ -1127,6 +1134,8 @@ interface KnowledgeDirectoryAllocation {
   titles: Map<string, KnowledgeTitleAllocation>;
   tail: Promise<void>;
   listing?: Map<string, Map<string, Deno.DirEntry>>;
+  sourceOwners?: Map<string, string | undefined>;
+  sourceCandidates?: Map<string, Set<string>>;
 }
 
 /** Invocation-local observations only; never share this across ingestion runs. */
@@ -1155,80 +1164,189 @@ export class KnowledgeAllocationSession {
       state: KnowledgeTitleAllocation,
       siblings: () => Promise<Deno.DirEntry[]>,
       recordWrite: (candidate: string, owner: string) => void,
+      selectedSlug: string,
+      cachedOwner: (candidate: string) => { owner: string | undefined } | undefined,
+      publishedCandidate?: string,
     ) => Promise<T>,
+    identity?: {
+      owners: string[][];
+      hints?: () => Promise<Array<{ owner: string; candidate: string }>>;
+      readOwner: (candidate: string) => Promise<string | undefined>;
+    },
+    guard?: (write: () => Promise<T>) => Promise<T>,
   ): Promise<T> {
-    return await this.enqueue(outputDir, (directory) => {
-      let state = directory.titles.get(slug);
-      if (!state) {
-        state = {
-          observed: new Map(),
-          sources: new Map(),
-          candidates: new Map(),
-          next: 1,
-          owners: new Map(),
-          discoveryComplete: false,
-        };
-        directory.titles.set(slug, state);
-      }
-      return write(state, async () => {
-        if (directory.listing) return [...(directory.listing.get(slug)?.values() ?? [])];
-        const families = new Map<string, Map<string, Deno.DirEntry>>();
-        let entries: Deno.DirEntry[];
-        try {
-          entries = await Array.fromAsync(Deno.readDir(outputDir));
-        } catch (error) {
-          if (!(error instanceof Deno.errors.NotFound)) throw error;
-          entries = [];
-        }
-        for (const entry of entries) {
-          if (!entry.name.endsWith(".md")) continue;
-          const stem = entry.name.slice(0, -3);
-          const names = [stem];
-          const suffix = /^(.*)-([1-9]\d*)$/.exec(stem);
-          if (suffix && suffix[1] !== undefined && Number(suffix[2]) >= 2) names.push(suffix[1]);
-          for (const name of names) {
-            const entries = families.get(name) ?? new Map<string, Deno.DirEntry>();
-            entries.set(entry.name, entry);
-            families.set(name, entries);
+    return await this.enqueue(outputDir, async (directory) => {
+      const allocate = async () => {
+        const loadListing = async () => {
+          if (directory.listing) return directory.listing;
+          const families = new Map<string, Map<string, Deno.DirEntry>>();
+          let entries: Deno.DirEntry[];
+          try {
+            entries = await Array.fromAsync(Deno.readDir(outputDir));
+          } catch (error) {
+            if (!(error instanceof Deno.errors.NotFound)) throw error;
+            entries = [];
           }
-        }
-        directory.listing = families;
-        return [...(families.get(slug)?.values() ?? [])];
-      }, (candidate, owner) => {
-        const families: Array<{ name: string; attempt: number }> = [{
-          name: candidate,
-          attempt: 1,
-        }];
-        const suffix = /^(.*)-([1-9]\d*)$/.exec(candidate);
-        if (
-          suffix?.[1] !== undefined && Number.isSafeInteger(Number(suffix[2])) &&
-          Number(suffix[2]) >= 2
-        ) {
-          families.push({ name: suffix[1], attempt: Number(suffix[2]) });
-        }
-        const entry: Deno.DirEntry = {
-          name: `${candidate}.md`,
-          isFile: true,
-          isDirectory: false,
-          isSymlink: false,
-        };
-        for (const family of families) {
-          if (directory.listing) {
-            const entries = directory.listing.get(family.name) ?? new Map<string, Deno.DirEntry>();
-            entries.set(entry.name, entry);
-            directory.listing.set(family.name, entries);
+          for (const entry of entries) {
+            if (!entry.name.endsWith(".md")) continue;
+            const stem = entry.name.slice(0, -3);
+            const names = [stem];
+            const suffix = /^(.*)-([1-9]\d*)$/.exec(stem);
+            if (
+              suffix && suffix[1] !== undefined && Number.isSafeInteger(Number(suffix[2])) &&
+              Number(suffix[2]) >= 2
+            ) names.push(suffix[1]);
+            for (const name of names) {
+              const family = families.get(name) ?? new Map<string, Deno.DirEntry>();
+              family.set(entry.name, entry);
+              families.set(name, family);
+            }
           }
-          const affected = directory.titles.get(family.name);
-          if (affected) {
-            observeKnowledgeCandidate(
-              affected,
-              family.attempt,
-              owner,
-              affected.observed.has(family.attempt),
+          directory.listing = families;
+          return families;
+        };
+        const recordCandidate = (candidate: string, owner: string) => {
+          const prior = directory.sourceOwners?.get(candidate);
+          if (prior !== undefined && prior !== owner) {
+            directory.sourceCandidates?.get(prior)?.delete(candidate);
+          }
+          directory.sourceOwners?.set(candidate, owner);
+          if (directory.sourceCandidates) {
+            const candidates = directory.sourceCandidates.get(owner) ?? new Set<string>();
+            candidates.add(candidate);
+            directory.sourceCandidates.set(owner, candidates);
+          }
+          const families: Array<{ name: string; attempt: number }> = [{
+            name: candidate,
+            attempt: 1,
+          }];
+          const suffix = /^(.*)-([1-9]\d*)$/.exec(candidate);
+          if (
+            suffix?.[1] !== undefined && Number.isSafeInteger(Number(suffix[2])) &&
+            Number(suffix[2]) >= 2
+          ) {
+            families.push({ name: suffix[1], attempt: Number(suffix[2]) });
+          }
+          const entry: Deno.DirEntry = {
+            name: `${candidate}.md`,
+            isFile: true,
+            isDirectory: false,
+            isSymlink: false,
+          };
+          for (const family of families) {
+            if (directory.listing) {
+              const entries = directory.listing.get(family.name) ??
+                new Map<string, Deno.DirEntry>();
+              entries.set(entry.name, entry);
+              directory.listing.set(family.name, entries);
+            }
+            const affected = directory.titles.get(family.name);
+            if (affected) {
+              observeKnowledgeCandidate(
+                affected,
+                family.attempt,
+                owner,
+                affected.observed.has(family.attempt),
+              );
+            }
+          }
+        };
+        let publishedCandidate: string | undefined;
+        if (identity && identity.owners.length) {
+          if (!directory.sourceOwners) {
+            const owners = new Map<string, string | undefined>();
+            const names = new Map<string, Deno.DirEntry>();
+            for (const family of (await loadListing()).values()) {
+              for (const [name, entry] of family) names.set(name, entry);
+            }
+            for (const [name, entry] of names) {
+              if (entry.isFile && !entry.isSymlink) {
+                owners.set(name.slice(0, -3), await identity.readOwner(name.slice(0, -3)));
+              }
+            }
+            directory.sourceOwners = owners;
+            directory.sourceCandidates = new Map();
+            for (const [name, owner] of owners) {
+              if (owner === undefined) continue;
+              const candidates = directory.sourceCandidates.get(owner) ?? new Set<string>();
+              candidates.add(name);
+              directory.sourceCandidates.set(owner, candidates);
+            }
+          }
+          const published = new Map<string, string>();
+          for (const hint of await identity.hints?.() ?? []) {
+            if (await identity.readOwner(hint.candidate) === hint.owner) {
+              recordCandidate(hint.candidate, hint.owner);
+              published.set(hint.owner, hint.candidate);
+            }
+          }
+          ownerSelection: for (const group of identity.owners) {
+            const matches = [
+              ...new Set(
+                group.flatMap((owner) => [...(directory.sourceCandidates?.get(owner) ?? [])]),
+              ),
+            ];
+            if (!matches.length) continue;
+            const attempt = (name: string) => {
+              if (name === slug) return 1;
+              const tail = name.startsWith(slug + "-") ? name.slice(slug.length + 1) : "";
+              return /^[1-9]\d*$/.test(tail) && Number.isSafeInteger(Number(tail)) &&
+                  Number(tail) >= 2
+                ? Number(tail)
+                : Infinity;
+            };
+            const preferred = new Set(group.flatMap((owner) => {
+              const candidate = published.get(owner);
+              return candidate === undefined ? [] : [candidate];
+            }));
+            matches.sort((a, b) =>
+              Number(preferred.has(b)) - Number(preferred.has(a)) ||
+              attempt(a) - attempt(b) || a.localeCompare(b)
             );
+            for (const candidate of matches) {
+              const current = await identity.readOwner(candidate);
+              if (current === undefined || !group.includes(current)) {
+                const prior = directory.sourceOwners.get(candidate);
+                if (prior !== undefined) directory.sourceCandidates?.get(prior)?.delete(candidate);
+                directory.sourceOwners.set(candidate, current);
+                if (current !== undefined) {
+                  const candidates = directory.sourceCandidates?.get(current) ?? new Set<string>();
+                  candidates.add(candidate);
+                  directory.sourceCandidates?.set(current, candidates);
+                }
+                continue;
+              }
+              if (!Number.isFinite(attempt(candidate))) slug = candidate;
+              if (preferred.has(candidate)) publishedCandidate = candidate;
+              break ownerSelection;
+            }
           }
         }
-      });
+        let state = directory.titles.get(slug);
+        if (!state) {
+          state = {
+            observed: new Map(),
+            sources: new Map(),
+            candidates: new Map(),
+            next: 1,
+            owners: new Map(),
+            discoveryComplete: false,
+          };
+          directory.titles.set(slug, state);
+        }
+        return write(
+          state,
+          async () => [...((await loadListing()).get(slug)?.values() ?? [])],
+          recordCandidate,
+          slug,
+          (candidate) =>
+            directory.sourceOwners?.has(candidate)
+              ? { owner: directory.sourceOwners.get(candidate) }
+              : undefined,
+          publishedCandidate,
+        );
+      };
+      return await (guard ? guard(allocate) : allocate());
     });
   }
 
@@ -1240,61 +1358,26 @@ export class KnowledgeAllocationSession {
       } finally {
         directory.titles.clear();
         directory.listing = undefined;
+        directory.sourceOwners = undefined;
+        directory.sourceCandidates = undefined;
       }
     });
   }
 }
 
-/** Publish complete opaque ownership atomically; only its creator removes the reservation. */
-async function acquireKnowledgeCandidate(
-  outputDir: string,
-  candidate: string,
-  owner: string,
-): Promise<{ kind: "owned"; path: string } | { kind: "busy"; owner: string | undefined }> {
-  const directory = join(outputDir, KNOWLEDGE_OUTPUT_CLAIM_DIRECTORY, "v1");
-  await Deno.mkdir(directory, { recursive: true });
-  const path = join(directory, `${await computeHash(candidate)}.lock`);
-  const prepared = join(directory, `${crypto.randomUUID()}.prepared`);
-  await Deno.writeTextFile(prepared, owner, { createNew: true });
-  try {
-    for (let retry = 0; retry < 3; retry += 1) {
-      try {
-        await Deno.link(prepared, path);
-        return { kind: "owned", path };
-      } catch (error) {
-        // The npm shim exposes fs.link errors without mapping them to Deno errors.
-        if (
-          !(error instanceof Deno.errors.AlreadyExists) &&
-          !(error instanceof Error && "code" in error && error.code === "EEXIST")
-        ) {
-          throw new Error(`Cannot reserve knowledge output: ${candidate}.md`);
-        }
-        try {
-          const existing = await Deno.readTextFile(path);
-          return { kind: "busy", owner: /^[a-f0-9]{64}$/.test(existing) ? existing : undefined };
-        } catch (readError) {
-          // Its creator may have finished between EEXIST and the ownership read.
-          // Re-publish only after absence; a remaining orphan is never removed.
-          if (readError instanceof Deno.errors.NotFound) continue;
-          return { kind: "busy", owner: undefined };
-        }
-      }
-    }
-    throw new Error(`Knowledge output changed while reserving: ${candidate}.md`);
-  } finally {
-    await Deno.remove(prepared);
-  }
-}
+/** Keep allocation callers on the shared, generation-aware claim protocol. */
+const acquireKnowledgeCandidate = acquireKnowledgeOutputClaim;
 
 /** Re-read every reuse candidate; cached conflicts only avoid redundant probes. */
 async function writeKnowledgeFile(
   outputDir: string,
   slug: string,
-  identity: { resource: string; sourceKey?: string; localPath?: string },
+  identity: { resource: string; sourceKey?: string; localPath?: string; inputPath: string },
   markdown: string,
   signal: AbortSignal | undefined,
   session: KnowledgeAllocationSession,
 ): Promise<{ slug: string; path: string }> {
+  const publicationHash = await computeHash(markdown);
   const sourceIdentity = (resource: string, sourceKey?: string) =>
     JSON.stringify(
       sourceKey === undefined ? ["resource", resource] : ["sourceKey", sourceKey],
@@ -1318,206 +1401,326 @@ async function writeKnowledgeFile(
     owner === source || owner === legacySource ||
     (legacyLocalSource !== undefined && owner === legacyLocalSource);
   const reservationOwner = await computeHash(source);
-  return await session.allocate(outputDir, slug, async (state, listSiblings, recordWrite) => {
-    const ownerFromContent = (path: string, content: string): string | undefined => {
-      const metadata = inspectOkfDocument(path, content).metadata;
-      const storedKey = readKnowledgeIngestSourceKey(metadata);
-      const generated = metadata.generated;
-      if (generated !== null && typeof generated === "object" && "source_key" in generated) {
-        return storedKey === undefined ? undefined : sourceIdentity("", storedKey);
-      }
-      if (metadata.resource === undefined) {
-        const local = readProvableLegacyLocalKnowledgeSource(metadata);
-        return local === undefined ? undefined : JSON.stringify(["legacy-local", local]);
-      }
-      const legacyGenerated = generated !== null && typeof generated === "object" &&
-        "by" in generated && typeof generated.by === "string" &&
-        /^veryfront\/\d/.test(generated.by);
-      return legacyGenerated && typeof metadata.resource === "string"
-        ? sourceIdentity(metadata.resource)
-        : undefined;
-    };
-    const observe = (attempt: number, owner: string | undefined, occupied = true) =>
-      observeKnowledgeCandidate(state, attempt, owner, occupied);
-    const forgetAbsent = (attempt: number) => {
-      observe(attempt, undefined);
-      state.observed.delete(attempt);
-      state.owners.delete(attempt);
-      state.next = Math.min(state.next, attempt);
-    };
-    const inspectPath = async (path: string) => {
-      try {
-        const value = await inspectLink(path, { bigint: true });
-        return {
-          reusable: value.isFile() && !value.isSymbolicLink() && value.nlink === 1n,
-        };
-      } catch (error) {
-        if (error instanceof Error && "code" in error && error.code === "ENOENT") {
-          throw new Deno.errors.NotFound();
-        }
-        throw error;
-      }
-    };
-    const reusablePath = async (path: string) => (await inspectPath(path)).reusable;
-    // Sibling ownership is a snapshot for this ingestion run. Selected paths are always reread.
-    const discover = async (attempt: number, path: string) => {
-      signal?.throwIfAborted();
-      try {
-        const name = basename(path).slice(0, -3);
-        const claimPath = join(
-          outputDir,
-          KNOWLEDGE_OUTPUT_CLAIM_DIRECTORY,
-          "v1",
-          `${await computeHash(name)}.lock`,
-        );
-        try {
-          if (await Deno.readTextFile(claimPath) === reservationOwner) {
-            throw new Error(`Knowledge output is busy or reserved: ${name}.md`);
-          }
-        } catch (error) {
-          if (!(error instanceof Deno.errors.NotFound)) throw error;
-        }
-        if (!(await inspectPath(path)).reusable) {
-          observe(attempt, undefined, false);
-          return;
-        }
-        observe(attempt, ownerFromContent(path, await Deno.readTextFile(path)), false);
-      } catch (error) {
-        if (error instanceof Deno.errors.NotFound) forgetAbsent(attempt);
-        else if (
-          error instanceof Deno.errors.PermissionDenied ||
-          (error instanceof Error && "code" in error &&
-            (error.code === "EACCES" || error.code === "EPERM"))
-        ) {
-          observe(attempt, undefined, false);
-        } else throw error;
-      }
-    };
-    if (!state.discoveryComplete) {
-      const siblings: Array<{ attempt: number; path: string }> = [];
-      for (const entry of await listSiblings()) {
-        if (!entry.isFile || entry.isSymlink) continue;
-        const suffix = entry.name.startsWith(`${slug}-`) && entry.name.endsWith(".md")
-          ? entry.name.slice(slug.length + 1, -3)
-          : undefined;
-        const attempt = entry.name === `${slug}.md`
-          ? 1
-          : suffix && /^[1-9]\d*$/.test(suffix) && Number.isSafeInteger(Number(suffix)) &&
-              Number(suffix) >= 2
-          ? Number(suffix)
-          : undefined;
-        if (attempt !== undefined) siblings.push({ attempt, path: join(outputDir, entry.name) });
-      }
-      siblings.sort((a, b) => a.attempt - b.attempt);
-      for (const sibling of siblings) await discover(sibling.attempt, sibling.path);
-      state.discoveryComplete = true;
+  const ownerFromContent = (path: string, content: string): string | undefined => {
+    const metadata = inspectOkfDocument(path, content).metadata;
+    const storedKey = readKnowledgeIngestSourceKey(metadata);
+    const generated = metadata.generated;
+    if (generated !== null && typeof generated === "object" && "source_key" in generated) {
+      return storedKey === undefined ? undefined : sourceIdentity("", storedKey);
     }
-    const preferredCandidate = () => {
-      const typed = identity.sourceKey === undefined ? undefined : state.sources.get(source);
-      if (typed !== undefined) return typed;
-      const resourceOwner = state.sources.get(legacySource);
-      const localOwner = legacyLocalSource === undefined
-        ? undefined
-        : state.sources.get(legacyLocalSource);
-      if (resourceOwner === undefined) return localOwner;
-      return localOwner === undefined ? resourceOwner : Math.min(resourceOwner, localOwner);
-    };
-    const firstCandidate = preferredCandidate() ?? state.next;
-    for (let attempt = firstCandidate;; attempt += 1) {
-      signal?.throwIfAborted();
-      if (!Number.isSafeInteger(attempt) || attempt < 1) {
-        throw new Error(`Knowledge output suffix exhausted: ${slug}.md`);
-      }
-      const observed = state.owners.get(attempt);
-      if (observed !== undefined && !matchesOwner(observed)) continue;
-      const remember = (owner: string | undefined) => {
-        observe(attempt, owner);
+    if (metadata.resource === undefined) {
+      const local = readProvableLegacyLocalKnowledgeSource(metadata);
+      return local === undefined ? undefined : JSON.stringify(["legacy-local", local]);
+    }
+    const legacyGenerated = generated !== null && typeof generated === "object" &&
+      "by" in generated && typeof generated.by === "string" &&
+      /^veryfront\/\d/.test(generated.by);
+    return legacyGenerated && typeof metadata.resource === "string"
+      ? sourceIdentity(metadata.resource)
+      : undefined;
+  };
+  const canonicalSource = localPath !== undefined
+    ? JSON.stringify(["local", localPath])
+    : identity.sourceKey === undefined
+    ? JSON.stringify(["local-input", normalize(identity.inputPath)])
+    : source;
+  const globalIdentity = identity.sourceKey !== undefined || localPath !== undefined;
+  let sourceIndex: SourceOutputIndex;
+  return await session.allocate(
+    outputDir,
+    slug,
+    async (state, listSiblings, recordWrite, selectedSlug, cachedOwner, publishedCandidate) => {
+      slug = selectedSlug;
+      const observe = (attempt: number, owner: string | undefined, occupied = true) =>
+        observeKnowledgeCandidate(state, attempt, owner, occupied);
+      const forgetAbsent = (attempt: number) => {
+        observe(attempt, undefined);
+        state.observed.delete(attempt);
+        state.owners.delete(attempt);
+        state.next = Math.min(state.next, attempt);
       };
-      const candidate = attempt === 1 ? slug : `${slug}-${attempt}`;
-      const path = join(outputDir, `${candidate}.md`);
-      const priorOwner = state.owners.get(attempt);
-      const reselectLostHint = () => {
-        if (!matchesOwner(priorOwner)) return false;
-        const fallback = preferredCandidate();
-        if (fallback === undefined || fallback === attempt) return false;
-        attempt = fallback - 1;
-        return true;
-      };
-      const inspectOwner = (content: string) => {
-        const owner = ownerFromContent(path, content);
-        remember(owner);
-        return {
-          matches: matchesOwner(owner),
-          keyed: owner !== undefined && owner !== legacySource,
-        };
-      };
-      signal?.throwIfAborted();
-      const lock = await acquireKnowledgeCandidate(outputDir, candidate, reservationOwner);
-      if (lock.kind === "busy") {
-        if (
-          (identity.sourceKey !== undefined && state.sources.get(source) === attempt) ||
-          lock.owner === reservationOwner ||
-          lock.owner === undefined
-        ) {
-          throw new Error(`Knowledge output is busy or reserved: ${candidate}.md`);
-        }
-        continue;
-      }
-      try {
-        signal?.throwIfAborted();
-        let existing: string;
+      const inspectPath = async (path: string) => {
         try {
-          if (!await reusablePath(path)) {
+          const value = await inspectLink(path, { bigint: true });
+          const stage = value.isFile() && !value.isSymbolicLink() && value.nlink === 2n
+            ? await readProvenKnowledgeOutputStage(outputDir, basename(path).slice(0, -3))
+            : undefined;
+          return {
+            reusable: value.isFile() && !value.isSymbolicLink() &&
+              (value.nlink === 1n || stage !== undefined),
+            stage,
+          };
+        } catch (error) {
+          if (error instanceof Error && "code" in error && error.code === "ENOENT") {
+            throw new Deno.errors.NotFound();
+          }
+          throw error;
+        }
+      };
+      const reusablePath = async (path: string, recover = false) => {
+        const inspected = await inspectPath(path);
+        if (recover && inspected.stage) {
+          // This call is only made while holding the candidate reservation.
+          await Deno.remove(inspected.stage.stagePath);
+          const fresh = await inspectLink(path, { bigint: true });
+          return fresh.isFile() && !fresh.isSymbolicLink() && fresh.nlink === 1n;
+        }
+        return inspected.reusable;
+      };
+      // Sibling ownership is a snapshot for this ingestion run. Selected paths are always reread.
+      const discover = async (attempt: number, path: string) => {
+        signal?.throwIfAborted();
+        try {
+          const name = basename(path).slice(0, -3);
+          const claimPath = join(
+            outputDir,
+            KNOWLEDGE_OUTPUT_CLAIM_DIRECTORY,
+            "v1",
+            `${await computeHash(name)}.lock`,
+          );
+          try {
+            if (await readKnowledgeClaimOwner(claimPath) === reservationOwner) {
+              throw new Error(`Knowledge output is busy or reserved: ${name}.md`);
+            }
+          } catch (error) {
+            if (!(error instanceof Deno.errors.NotFound)) throw error;
+          }
+          const cached = cachedOwner(name);
+          if (cached !== undefined) {
+            observe(attempt, cached.owner, false);
+            return;
+          }
+          if (!(await inspectPath(path)).reusable) {
+            observe(attempt, undefined, false);
+            return;
+          }
+          observe(attempt, ownerFromContent(path, await Deno.readTextFile(path)), false);
+        } catch (error) {
+          if (error instanceof Deno.errors.NotFound) forgetAbsent(attempt);
+          else if (
+            error instanceof Deno.errors.PermissionDenied ||
+            (error instanceof Error && "code" in error &&
+              (error.code === "EACCES" || error.code === "EPERM"))
+          ) {
+            observe(attempt, undefined, false);
+          } else throw error;
+        }
+      };
+      if (!state.discoveryComplete) {
+        const siblings: Array<{ attempt: number; path: string }> = [];
+        for (const entry of await listSiblings()) {
+          if (!entry.isFile || entry.isSymlink) continue;
+          const suffix = entry.name.startsWith(`${slug}-`) && entry.name.endsWith(".md")
+            ? entry.name.slice(slug.length + 1, -3)
+            : undefined;
+          const attempt = entry.name === `${slug}.md`
+            ? 1
+            : suffix && /^[1-9]\d*$/.test(suffix) && Number.isSafeInteger(Number(suffix)) &&
+                Number(suffix) >= 2
+            ? Number(suffix)
+            : undefined;
+          if (attempt !== undefined) {
+            siblings.push({ attempt, path: join(outputDir, entry.name) });
+          }
+        }
+        siblings.sort((a, b) => a.attempt - b.attempt);
+        for (const sibling of siblings) await discover(sibling.attempt, sibling.path);
+        state.discoveryComplete = true;
+      }
+      const preferredCandidate = () => {
+        const publishedAttempt = publishedCandidate === slug
+          ? 1
+          : publishedCandidate?.startsWith(slug + "-")
+          ? Number(publishedCandidate.slice(slug.length + 1))
+          : undefined;
+        const publishedOwner = publishedAttempt === undefined
+          ? undefined
+          : state.owners.get(publishedAttempt);
+        const typed = identity.sourceKey === undefined ? undefined : state.sources.get(source);
+        if (typed !== undefined) return publishedOwner === source ? publishedAttempt : typed;
+        if (publishedAttempt !== undefined && matchesOwner(publishedOwner)) return publishedAttempt;
+        const resourceOwner = state.sources.get(legacySource);
+        const localOwner = legacyLocalSource === undefined
+          ? undefined
+          : state.sources.get(legacyLocalSource);
+        if (resourceOwner === undefined) return localOwner;
+        return localOwner === undefined ? resourceOwner : Math.min(resourceOwner, localOwner);
+      };
+      const firstCandidate = preferredCandidate() ?? state.next;
+      for (let attempt = firstCandidate;; attempt += 1) {
+        signal?.throwIfAborted();
+        if (!Number.isSafeInteger(attempt) || attempt < 1) {
+          throw new Error(`Knowledge output suffix exhausted: ${slug}.md`);
+        }
+        const observed = state.owners.get(attempt);
+        if (observed !== undefined && !matchesOwner(observed)) continue;
+        const remember = (owner: string | undefined) => {
+          observe(attempt, owner);
+        };
+        const candidate = attempt === 1 ? slug : `${slug}-${attempt}`;
+        const path = join(outputDir, `${candidate}.md`);
+        const priorOwner = state.owners.get(attempt);
+        const reselectLostHint = () => {
+          if (!matchesOwner(priorOwner)) return false;
+          const fallback = preferredCandidate();
+          if (fallback === undefined || fallback === attempt) return false;
+          attempt = fallback - 1;
+          return true;
+        };
+        const inspectOwner = (content: string) => {
+          const owner = ownerFromContent(path, content);
+          remember(owner);
+          return {
+            matches: matchesOwner(owner),
+            keyed: owner !== undefined && owner !== legacySource,
+          };
+        };
+        signal?.throwIfAborted();
+        const lock = await acquireKnowledgeCandidate(
+          outputDir,
+          candidate,
+          reservationOwner,
+          publicationHash,
+        );
+        if (lock.kind === "busy") {
+          if (
+            (identity.sourceKey !== undefined && state.sources.get(source) === attempt) ||
+            lock.owner === reservationOwner ||
+            lock.owner === undefined
+          ) {
+            throw new Error(`Knowledge output is busy or reserved: ${candidate}.md`);
+          }
+          continue;
+        }
+        try {
+          signal?.throwIfAborted();
+          let existing: string;
+          try {
+            if (!await reusablePath(path, true)) {
+              remember(undefined);
+              reselectLostHint();
+              continue;
+            }
+            existing = await Deno.readTextFile(path);
+          } catch (error) {
+            if (!(error instanceof Deno.errors.NotFound)) throw error;
+            forgetAbsent(attempt);
+            if (reselectLostHint()) continue;
+            try {
+              const owner = ownerFromContent(path, markdown);
+              if (globalIdentity && owner !== undefined) await sourceIndex.record(owner, candidate);
+              signal?.throwIfAborted();
+              await publishKnowledgeOutput({
+                path,
+                claim: lock,
+                content: markdown,
+                signal,
+                publication: { kind: "create" },
+              });
+              remember(source);
+              recordWrite(candidate, source);
+              return { slug: candidate, path };
+            } catch (writeError) {
+              if (!(writeError instanceof Deno.errors.AlreadyExists)) throw writeError;
+              // Noncooperating writers and dangling links still require a winner re-read.
+              try {
+                if (!await reusablePath(path, true)) {
+                  remember(undefined);
+                  reselectLostHint();
+                  continue;
+                }
+                existing = await Deno.readTextFile(path);
+              } catch (readError) {
+                if (!(readError instanceof Deno.errors.NotFound)) throw readError;
+                remember(undefined);
+                continue;
+              }
+            }
+          }
+          if (!await reusablePath(path, true)) {
             remember(undefined);
             reselectLostHint();
             continue;
           }
-          existing = await Deno.readTextFile(path);
-        } catch (error) {
-          if (!(error instanceof Deno.errors.NotFound)) throw error;
-          forgetAbsent(attempt);
-          if (reselectLostHint()) continue;
-          try {
-            await Deno.writeTextFile(path, markdown, { createNew: true, signal });
-            remember(source);
-            recordWrite(candidate, source);
-            return { slug: candidate, path };
-          } catch (writeError) {
-            if (!(writeError instanceof Deno.errors.AlreadyExists)) throw writeError;
-            // Noncooperating writers and dangling links still require a winner re-read.
-            try {
-              if (!await reusablePath(path)) {
-                remember(undefined);
-                reselectLostHint();
-                continue;
-              }
-              existing = await Deno.readTextFile(path);
-            } catch (readError) {
-              if (!(readError instanceof Deno.errors.NotFound)) throw readError;
-              remember(undefined);
-              continue;
-            }
+          if (!inspectOwner(existing).matches) {
+            reselectLostHint();
+            continue;
           }
+          signal?.throwIfAborted();
+          const owner = ownerFromContent(path, markdown);
+          if (globalIdentity && owner !== undefined) await sourceIndex.record(owner, candidate);
+          signal?.throwIfAborted();
+          const published = await publishKnowledgeOutput({
+            path,
+            claim: lock,
+            content: markdown,
+            signal,
+            publication: {
+              kind: "replace",
+              validate: async () => {
+                if (!await reusablePath(path, true)) return false;
+                const current = await Deno.readTextFile(path);
+                return current === existing && inspectOwner(current).matches;
+              },
+            },
+          });
+          if (!published) {
+            remember(undefined);
+            reselectLostHint();
+            continue;
+          }
+          remember(source);
+          recordWrite(candidate, source);
+          return { slug: candidate, path };
+        } finally {
+          await Deno.remove(lock.path);
         }
-        if (!await reusablePath(path)) {
-          remember(undefined);
-          reselectLostHint();
-          continue;
-        }
-        if (!inspectOwner(existing).matches) {
-          reselectLostHint();
-          continue;
-        }
-        signal?.throwIfAborted();
-        await Deno.writeTextFile(path, markdown, { signal });
-        remember(source);
-        recordWrite(candidate, source);
-        return { slug: candidate, path };
-      } finally {
-        await Deno.remove(lock.path);
       }
-    }
-  });
+    },
+    {
+      hints: () =>
+        sourceIndex.read([
+          source,
+          legacySource,
+          ...(legacyLocalSource === undefined ? [] : [legacyLocalSource]),
+        ]),
+      owners: !globalIdentity
+        ? []
+        : identity.sourceKey === undefined
+        ? [[legacySource, ...(legacyLocalSource === undefined ? [] : [legacyLocalSource])]]
+        : [[source], [
+          legacySource,
+          ...(legacyLocalSource === undefined ? [] : [legacyLocalSource]),
+        ]],
+      readOwner: async (candidate) => {
+        signal?.throwIfAborted();
+        const path = join(outputDir, `${candidate}.md`);
+        try {
+          const stat = await inspectLink(path, { bigint: true });
+          if (!stat.isFile() || stat.isSymbolicLink()) return undefined;
+          if (stat.nlink !== 1n) {
+            if (stat.nlink !== 2n) return undefined;
+            const stage = await readProvenKnowledgeOutputStage(outputDir, candidate);
+            return stage === undefined ? undefined : ownerFromContent(path, stage.content);
+          }
+          return ownerFromContent(path, await Deno.readTextFile(path));
+        } catch (error) {
+          if (
+            error instanceof Deno.errors.NotFound ||
+            error instanceof Deno.errors.PermissionDenied ||
+            (error instanceof Error && "code" in error &&
+              ["ENOENT", "EACCES", "EPERM"].includes(String(error.code)))
+          ) return undefined;
+          throw error;
+        }
+      },
+    },
+    (allocate) =>
+      withKnowledgeSourceClaim(outputDir, canonicalSource, signal, async (index) => {
+        sourceIndex = index;
+        return await allocate();
+      }),
+  );
 }
 
 function validateOkfBundleRelativePath(path: string): string {
@@ -2038,7 +2241,10 @@ export async function runKnowledgeParsers(input: {
         ? findFirstH1(content, definition.sourceType === "mdx")
         : undefined;
       const title = heading || stem;
-      const sourceReference = file.sourceReference ?? fileName;
+      const sourceReference = file.sourceReference ?? (file.resource === undefined &&
+          file.sourceKey === undefined && file.sourceKind !== "upload"
+        ? normalize(file.filePath)
+        : fileName);
       const resource = file.resource ?? sourceReference;
       const localReference = file.sourceReference ?? resource;
       const localPath = file.sourceKind !== "upload" &&
@@ -2081,7 +2287,7 @@ export async function runKnowledgeParsers(input: {
         ({ slug, path: outputPath } = await writeKnowledgeFile(
           input.outputDir,
           preferredSlug,
-          { resource, sourceKey: file.sourceKey, localPath },
+          { resource, sourceKey: file.sourceKey, localPath, inputPath: file.filePath },
           markdown,
           deps.signal,
           allocationSession,
