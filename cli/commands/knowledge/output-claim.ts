@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { lstat, readFile, stat } from "node:fs/promises";
+import { lstat } from "node:fs/promises";
 import { hostname, platform } from "node:os";
 import { kill, pid } from "node:process";
 import { basename, dirname, join } from "veryfront/platform/path";
@@ -62,22 +62,30 @@ function parseRecord(text: string): ClaimRecord | undefined {
   }
 }
 
+function readProcessIdentity(command: string, args: string[]): Promise<string> {
+  return new Promise<string>((resolve, reject) => {
+    execFile(
+      command,
+      args,
+      { timeout: 2000, maxBuffer: 256 },
+      (error, stdout) => error ? reject(error) : resolve(stdout.trim()),
+    );
+  });
+}
+
 async function processScope(): Promise<string | null> {
   try {
     const name = hostname();
     let boot: string;
     let namespace = "host";
     if (platform() === "linux") {
-      boot = (await readFile("/proc/sys/kernel/random/boot_id", "utf8")).trim();
-      const info = await stat("/proc/self/ns/pid", { bigint: true });
-      namespace = `${info.dev}:${info.ino}`;
+      // Deno protects this kernel path even with --allow-read. Use the fixed
+      // OS reader under the same explicit subprocess permission as Darwin.
+      boot = await readProcessIdentity("/bin/cat", ["/proc/sys/kernel/random/boot_id"]);
+      namespace = await readProcessIdentity("/usr/bin/stat", ["-Lc", "%d:%i", "/proc/self/ns/pid"]);
+      if (!/^\d+:\d+$/.test(namespace)) return null;
     } else if (platform() === "darwin") {
-      boot = await new Promise<string>((resolve, reject) => {
-        execFile("/usr/sbin/sysctl", ["-n", "kern.bootsessionuuid"], {
-          timeout: 2000,
-          maxBuffer: 256,
-        }, (error, stdout) => error ? reject(error) : resolve(stdout.trim()));
-      });
+      boot = await readProcessIdentity("/usr/sbin/sysctl", ["-n", "kern.bootsessionuuid"]);
     } else {
       // Unknown process namespaces must not authorize recovery on shared storage.
       return null;

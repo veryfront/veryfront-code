@@ -21,6 +21,77 @@ import {
 } from "../../../cli/commands/knowledge/command.test-helpers.ts";
 
 describe("local allocation sessions", () => {
+  it("recovers a Linux child claim with explicit CLI permissions and no allow-all", async () => {
+    if (Deno.build.os !== "linux") return;
+    const root = await makeTempDir({ prefix: "knowledge-linux-process-scope-" });
+    try {
+      const helper =
+        new URL("../../../cli/commands/knowledge/output-claim.ts", import.meta.url).href;
+      const config = fileURLToPath(new URL("../../../deno.json", import.meta.url));
+      const script = join(root, "recover.ts");
+      const childScript = `
+        import { acquireKnowledgeOutputClaim } from ${JSON.stringify(helper)};
+        console.log(JSON.stringify(await acquireKnowledgeOutputClaim(
+          ${JSON.stringify(join(root, "out"))}, "candidate", "a".repeat(64)
+        )));
+        await new Promise(() => setInterval(() => {}, 1000));
+      `;
+      await Deno.writeTextFile(
+        script,
+        `
+        import { acquireKnowledgeOutputClaim } from ${JSON.stringify(helper)};
+        const directory = ${JSON.stringify(join(root, "out"))};
+        const child = new Deno.Command(Deno.execPath(), {
+          args: ["eval", "--cached-only", "--config", ${JSON.stringify(config)}, ${
+          JSON.stringify(childScript)
+        }],
+          stdout: "piped", stderr: "piped",
+        }).spawn();
+        let reaped = false;
+        const reader = child.stdout.getReader();
+        try {
+          const line = await reader.read();
+          const claim = JSON.parse(new TextDecoder().decode(line.value));
+          const original = await Deno.readTextFile(claim.path);
+          const record = JSON.parse(original);
+          if (!record.scope) throw Error("Child scope must be verifiable");
+          const live = await acquireKnowledgeOutputClaim(directory, "candidate", "b".repeat(64));
+          if (live.kind !== "busy") throw Error("Live child must retain ownership");
+          child.kill("SIGKILL"); await child.status; reaped = true;
+          const recovered = await acquireKnowledgeOutputClaim(directory, "candidate", "b".repeat(64));
+          if (recovered.kind !== "owned") throw Error("Same-scope dead child must be recoverable");
+          const successor = JSON.parse(await Deno.readTextFile(recovered.path));
+          if (successor.scope !== record.scope) throw Error("Parent and child scopes must match");
+          if (await Deno.readTextFile(claim.path) !== original) throw Error("Original claim must remain immutable");
+        } finally {
+          if (!reaped) { child.kill("SIGKILL"); await child.status; }
+          await reader.cancel(); reader.releaseLock();
+          await new Response(child.stderr).arrayBuffer();
+        }
+      `,
+      );
+      const result = await new Deno.Command(Deno.execPath(), {
+        args: [
+          "run",
+          "--cached-only",
+          "--config",
+          config,
+          "--allow-read",
+          "--allow-write",
+          "--allow-env",
+          "--allow-run",
+          "--allow-sys",
+          script,
+        ],
+        stdout: "piped",
+        stderr: "piped",
+      }).output();
+      assert(result.success, new TextDecoder().decode(result.stderr));
+    } finally {
+      await Deno.remove(root, { recursive: true });
+    }
+  });
+
   it("reuses a proven legacy source whose full filename contains a large numeric ID", async () => {
     const root = await makeTempDir({ prefix: "knowledge-full-numeric-stem-" });
     try {
