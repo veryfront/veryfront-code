@@ -79,6 +79,14 @@ function cancelRequest(targetRunId: string) {
   };
 }
 
+// The v1 digests, pinned independently of the fixture. The fixture's own
+// payloadSha256 sits next to the payload it describes, so regenerating both
+// would redefine the contract under an unchanged contract id with nothing red.
+const EXPECTED_PAYLOAD_DIGESTS = {
+  projectScoped: "3c7a72b84951623b3453ae0f55cefc3b54b49e60bf5b26815997bb3d2682915b",
+  projectless: "b497e9653658442cb65731bad7ff8227e16ddc3e5be6724345655d3830b6a183",
+};
+
 describe("hosted cancellation token authorization", () => {
   it("pins the cross-repo cancellation claim contract", async () => {
     assertEquals(
@@ -91,6 +99,11 @@ describe("hosted cancellation token authorization", () => {
     );
     assertEquals(apiRunCancellationContract.serviceIdentity, "veryfront-server");
     for (const shape of ["projectScoped", "projectless"] as const) {
+      assertEquals(
+        apiRunCancellationContract[shape].payloadSha256,
+        EXPECTED_PAYLOAD_DIGESTS[shape],
+        `${shape} contract digest was redefined under an unchanged contract id`,
+      );
       assertEquals(
         await sha256Hex(JSON.stringify(apiRunCancellationContract[shape].payload)),
         apiRunCancellationContract[shape].payloadSha256,
