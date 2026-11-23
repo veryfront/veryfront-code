@@ -4546,17 +4546,6 @@ function getStringArrayConfig(
   config: Record<string, unknown>,
   keys: readonly string[],
 ): string[] {
-  return getOptionalStringArrayConfig(config, keys) ?? [];
-}
-
-/**
- * Like `getStringArrayConfig`, but `undefined` when no key holds an array, so
- * an unset list stays distinguishable from an explicitly empty one.
- */
-function getOptionalStringArrayConfig(
-  config: Record<string, unknown>,
-  keys: readonly string[],
-): string[] | undefined {
   for (let keyIndex = 0; keyIndex < keys.length; keyIndex++) {
     const key = keys[keyIndex];
     if (key === undefined) continue;
@@ -4571,7 +4560,44 @@ function getOptionalStringArrayConfig(
     }
   }
 
-  return undefined;
+  return [];
+}
+
+/**
+ * Read the eval tool allowlist from the run config, failing closed.
+ *
+ * Only an absent key (or one holding `undefined`, which JSON cannot carry)
+ * leaves the allowlist unset. Any other value must be an array of non-empty
+ * strings. A malformed value, including `null`, is rejected rather than read
+ * as unset: unset hands the run the eval case's allowlist or the agent's full
+ * tool set, so a typo such as `allowed_tools: "lookup"` would widen the run.
+ * Every present key is checked, so a valid alias cannot hide a malformed one.
+ */
+function getEvalAllowedToolsConfig(config: Record<string, unknown>): string[] | undefined {
+  const keys = ["allowed_tools", "allowedTools"] as const;
+  let allowedTools: string[] | undefined;
+  for (let keyIndex = 0; keyIndex < keys.length; keyIndex++) {
+    const key = keys[keyIndex]!;
+    const value = getOwnDataProperty(config, key);
+    if (value === undefined) continue;
+    if (!ArrayIsArray(value)) {
+      throw INVALID_ARGUMENT.create({
+        detail: "Eval allowed_tools must be an array of tool names",
+      });
+    }
+    const names: string[] = [];
+    for (let valueIndex = 0; valueIndex < value.length; valueIndex++) {
+      const item = value[valueIndex];
+      if (typeof item !== "string" || item.length === 0) {
+        throw INVALID_ARGUMENT.create({
+          detail: "Eval allowed_tools must contain only non-empty tool names",
+        });
+      }
+      names[names.length] = item;
+    }
+    allowedTools ??= names;
+  }
+  return allowedTools;
 }
 
 function getStringConfig(
@@ -5269,8 +5295,9 @@ function createEvalAdapterConfig(input: {
   );
   const agentId = getEvalTargetAgentId(input.definition);
   // An eval that names no allowed tools sends no allowlist, so its agent run
-  // keeps the tools a direct run gets. An explicit empty list still allows none.
-  const allowedTools = getOptionalStringArrayConfig(config, ["allowed_tools", "allowedTools"]);
+  // keeps the tools a direct run gets. An explicit empty list still allows
+  // none, and a malformed one is rejected rather than read as unset.
+  const allowedTools = getEvalAllowedToolsConfig(config);
   const maxSteps = getPositiveIntConfig(config, ["max_steps", "maxSteps"]);
   const hasMaxSteps = maxSteps != null;
   const configuredRestrictions: AgUiRuntimeRestrictions = {
