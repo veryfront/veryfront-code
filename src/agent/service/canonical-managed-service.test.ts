@@ -81,6 +81,8 @@ async function fixture(
     cleanupEntered = Promise.withResolvers<void>(),
     cleanupRelease = Promise.withResolvers<void>();
   const finalizations: string[] = [], resumed: AgUiResumeValue[] = [];
+  const executionController = new AbortController();
+  const runtimeController = new AbortController();
   let prepared = 0, started = 0, cleaned = 0, cursor = 0;
   let signal: AbortSignal | undefined;
   let wait: ((toolCallId: string) => Promise<AgUiResumeValue>) | undefined;
@@ -154,7 +156,7 @@ async function fixture(
       return {
         start,
         messages: [],
-        executionSignal: new AbortController().signal,
+        executionSignal: executionController.signal,
         async cleanup() {
           cleaned++;
           cleanupEntered.resolve();
@@ -167,19 +169,22 @@ async function fixture(
         started++;
         input.bindSessionOwnedWork!((operation) => operation());
         const settled = Promise.withResolvers<void>();
+        let sourceEnded = false, closeRequested = false;
         const runtime: ManagedExecutorRuntime = {
           definition: { id: "builder", name: "Builder", description: "", instructions: "Work" },
           modelId: input.installation.grant.defaultModelId,
           runtimeKind: "framework",
           accepted: false,
-          signal: input.session.preparationSignal!,
+          signal: AbortSignal.any([input.session.preparationSignal!, runtimeController.signal]),
           settled: settled.promise,
           runOwned: (operation) => operation(),
           accept() {
             Object.defineProperty(runtime, "accepted", { value: true });
           },
           close(reason = "canceled") {
-            settled.resolve();
+            closeRequested = true;
+            runtimeController.abort();
+            if (sourceEnded) settled.resolve();
             return Promise.resolve({ reason, release: "released" });
           },
           agent: {
@@ -188,23 +193,30 @@ async function fixture(
                 steps: Promise.resolve([]),
                 toUIMessageStream() {
                   return (async function* () {
-                    yield { type: "start", messageId: base.run.messageId } as const;
-                    if (mode === "resume") {
-                      const result = wait!("tool_1");
-                      entered.resolve();
-                      resumed.push(await result);
-                      yield { type: "text-start", id: "text" } as const;
-                      yield { type: "text-delta", id: "text", delta: "Approved" } as const;
-                      yield { type: "text-end", id: "text" } as const;
-                      yield { type: "finish", finishReason: "stop" } as const;
-                    } else {
-                      entered.resolve();
-                      if (!runtime.signal.aborted) {
-                        await new Promise<void>((resolve) =>
-                          runtime.signal.addEventListener("abort", () => resolve(), { once: true })
-                        );
+                    try {
+                      yield { type: "start", messageId: base.run.messageId } as const;
+                      if (mode === "resume") {
+                        const result = wait!("tool_1");
+                        entered.resolve();
+                        resumed.push(await result);
+                        yield { type: "text-start", id: "text" } as const;
+                        yield { type: "text-delta", id: "text", delta: "Approved" } as const;
+                        yield { type: "text-end", id: "text" } as const;
+                        yield { type: "finish", finishReason: "stop" } as const;
+                      } else {
+                        entered.resolve();
+                        if (!runtime.signal.aborted) {
+                          await new Promise<void>((resolve) =>
+                            runtime.signal.addEventListener("abort", () => resolve(), {
+                              once: true,
+                            })
+                          );
+                        }
+                        throw new DOMException("Execution canceled", "AbortError");
                       }
-                      throw new DOMException("Execution canceled", "AbortError");
+                    } finally {
+                      sourceEnded = true;
+                      if (closeRequested) settled.resolve();
                     }
                   })();
                 },
@@ -239,7 +251,16 @@ async function fixture(
     finalizations,
     resumed,
     control,
-    start: () => service.handle(sealIngressCredentials(signed.request.clone())),
+    start: (requestSignal?: AbortSignal) =>
+      service.handle(
+        sealIngressCredentials(
+          new Request(signed.request.clone(), {
+            ...(requestSignal ? { signal: requestSignal } : {}),
+          }),
+        ),
+      ),
+    abortExecution: () => executionController.abort(),
+    abortRuntime: () => runtimeController.abort(),
     get signal() {
       return signal;
     },
@@ -257,6 +278,43 @@ async function fixture(
 }
 
 describe("canonical managed service ownership", () => {
+  for (const cancellation of ["request", "execution", "runtime", "body"] as const) {
+    it(`retires a pending host-tool wait on ${cancellation} cancellation`, async () => {
+      const f = await fixture("resume");
+      const requestController = new AbortController();
+      let reading: Promise<unknown> | undefined;
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      try {
+        const response = await f.start(requestController.signal);
+        assertEquals(response.status, 200);
+        if (cancellation !== "body") reading = response.text();
+        await f.entered;
+        assertEquals(f.service.active, 1);
+        if (cancellation === "request") requestController.abort();
+        else if (cancellation === "execution") f.abortExecution();
+        else if (cancellation === "runtime") f.abortRuntime();
+        else reading = response.body!.cancel();
+        await Promise.race([
+          reading,
+          new Promise((_, reject) => {
+            timer = setTimeout(
+              () => reject(new Error("Tool wait retained canceled execution")),
+              1000,
+            );
+          }),
+        ]);
+        assertEquals(f.service.active, 0);
+        assertEquals(f.cleaned, 1);
+        assertEquals(f.resumed, []);
+      } finally {
+        clearTimeout(timer);
+        f.release();
+        await f.service.close();
+        await reading?.catch(() => {});
+      }
+    });
+  }
+
   it("refuses an unnegotiated API invocation before policy preparation or allocation", async () => {
     const f = await fixture("cancel", false, undefined, false);
     try {

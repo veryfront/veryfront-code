@@ -130,6 +130,7 @@ type ManagedBrokerPreparation = {
   start: ManagedExecutorStartInput;
   messages: HostedChatRuntimeStreamInput["messages"];
   executionSignal: AbortSignal;
+  cancelExecution?: () => void;
   output?: ManagedBrokerOutput;
   eventPersistence?: typeof RUNTIME_EVENT_PERSISTENCE_MODE;
   cleanup?: () => Promise<void>;
@@ -501,6 +502,7 @@ function createManagedBrokerIngressHandler<TIngress>(options: {
               runtime,
               messages: prepared.messages,
               requestSignal: AbortSignal.any([request.signal, prepared.executionSignal]),
+              cancelExecution: prepared.cancelExecution?.bind(prepared),
               output: prepared.output,
               onExecutionError: (error) => options.onExecutionError?.(error, runId),
               finishOutput: sseFinalization?.finish,
@@ -657,6 +659,7 @@ async function createSseResponse(input: {
   runtime: ManagedExecutorRuntime;
   messages: HostedChatRuntimeStreamInput["messages"];
   requestSignal: AbortSignal;
+  cancelExecution?: () => void;
   output?: ManagedBrokerOutput;
   finishOutput?: (outcome: ManagedOutputOutcome) => Promise<void>;
   onExecutionError?: (error: unknown) => void;
@@ -680,21 +683,45 @@ async function createSseResponse(input: {
   const completion = Promise.withResolvers<void>();
   let natural = false;
   let failure: unknown;
+  let errorChunkSeen = false;
   let terminalOutput: unknown;
   let terminalMetadata: HostedLifecycleTerminalState["metadata"];
   let cleanup: Promise<void> | undefined;
+  let closingRuntime = false;
+  let pendingWorkCanceled = false;
+  const cancelPendingWork = () => {
+    if (pendingWorkCanceled) return;
+    pendingWorkCanceled = true;
+    try {
+      input.cancelExecution?.();
+    } catch (error) {
+      failure ??= error;
+      reportFailure(error);
+    }
+  };
   const settlement = Promise.withResolvers<void>();
-  const invalidateRequestAbort = () =>
+  const invalidateRequestAbort = () => {
+    cancelPendingWork();
     invalidateHostedAgentPauseSettlement(input.runtime, new Error("SSE request aborted"));
+  };
+  const invalidateRuntimeAbort = () => {
+    if (closingRuntime) return;
+    cancelPendingWork();
+    invalidateHostedAgentPauseSettlement(input.runtime, new Error("SSE executor stopped"));
+  };
   input.requestSignal.addEventListener("abort", invalidateRequestAbort, { once: true });
+  input.runtime.signal.addEventListener("abort", invalidateRuntimeAbort, { once: true });
   if (input.requestSignal.aborted) invalidateRequestAbort();
+  if (input.runtime.signal.aborted) invalidateRuntimeAbort();
   input.trackExecution(
-    settlement.promise.finally(() =>
-      input.requestSignal.removeEventListener("abort", invalidateRequestAbort)
-    ),
+    settlement.promise.finally(() => {
+      input.requestSignal.removeEventListener("abort", invalidateRequestAbort);
+      input.runtime.signal.removeEventListener("abort", invalidateRuntimeAbort);
+    }),
   );
   const finish = (reason: "completed" | "canceled") => {
     if (reason === "canceled") {
+      cancelPendingWork();
       invalidateHostedAgentPauseSettlement(input.runtime, new Error("SSE execution canceled"));
     }
     if (!cleanup) {
@@ -733,6 +760,8 @@ async function createSseResponse(input: {
           input.runtime,
           !finalizationFailed && natural && reason === "completed" && !input.requestSignal.aborted,
         );
+        if (finalizationFailed) cancelPendingWork();
+        closingRuntime = true;
         const closure = await input.runtime.close(finalizationFailed ? "canceled" : reason).catch(
           (error) => {
             invalidateHostedAgentPauseSettlement(input.runtime, error);
@@ -791,6 +820,7 @@ async function createSseResponse(input: {
           await input.runtime.runOwned(() => output.write(chunk));
         }
         if (chunk.type === "error" || (chunk.type === "finish" && chunk.finishReason === "error")) {
+          if (chunk.type === "error") errorChunkSeen = true;
           if (failure === undefined) {
             const code = chunk.type === "error"
               ? getExecutorAgentFailureCodeSchema().safeParse(chunk.code)
@@ -806,6 +836,10 @@ async function createSseResponse(input: {
         }
         yield chunk;
       }
+      // A finish-error chunk carries metadata, not an AG-UI failed terminal.
+      // Without projection the encoder could finalize partial output as success.
+      // An explicit error chunk has already projected that terminal exactly once.
+      if (failure !== undefined && !errorChunkSeen) throw failure;
       natural = failure === undefined;
     } catch (error) {
       failure ??= error;

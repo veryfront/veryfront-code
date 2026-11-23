@@ -1060,7 +1060,12 @@ async function request(signal?: AbortSignal, requestPath = path) {
 
 function runtimeFixture(
   streamFailure = false,
-  terminalChunk?: "error" | "coded-error" | "empty-response-error" | "finish-error",
+  terminalChunk?:
+    | "error"
+    | "coded-error"
+    | "empty-response-error"
+    | "finish-error"
+    | "partial-finish-error",
   finishWithUsage?: true,
   streamOpenFailure = false,
   streamOpenQuota = false,
@@ -1118,7 +1123,10 @@ function runtimeFixture(
                 } as const;
                 return;
               }
-              if (terminalChunk === "finish-error") {
+              if (terminalChunk === "finish-error" || terminalChunk === "partial-finish-error") {
+                if (terminalChunk === "partial-finish-error") {
+                  yield { type: "text-delta", id: "text-1", delta: "partial response" } as const;
+                }
                 yield { type: "finish", finishReason: "error" } as const;
                 return;
               }
@@ -1173,7 +1181,12 @@ async function handler(
     streamFailure?: boolean;
     streamOpenFailure?: boolean;
     streamOpenQuota?: boolean;
-    terminalChunk?: "error" | "coded-error" | "empty-response-error" | "finish-error";
+    terminalChunk?:
+      | "error"
+      | "coded-error"
+      | "empty-response-error"
+      | "finish-error"
+      | "partial-finish-error";
     finishWithUsage?: true;
     missingOutput?: boolean;
     negotiatedWriter?: boolean;
@@ -1364,6 +1377,41 @@ describe("managed broker handler", () => {
             ),
           );
         }
+      } finally {
+        f.fixture.release();
+        await f.managed.close();
+      }
+    });
+  }
+
+  for (
+    const terminalChunk of ["error", "coded-error", "finish-error", "partial-finish-error"] as const
+  ) {
+    it(`emits one failed SSE terminal without success for ${terminalChunk}`, async () => {
+      const f = await handler("sse", { terminalChunk });
+      try {
+        const response = await f.managed.handle(f.first.request);
+        f.fixture.release();
+        const parsed = await parseAgUiSseResponse(response);
+        assertEquals(
+          parsed.events.filter((event) => event.type === agUiSseEventTypes.runError).length,
+          1,
+        );
+        assertEquals(
+          parsed.events.filter((event) => event.type === agUiSseEventTypes.runFinished).length,
+          0,
+        );
+        if (terminalChunk === "partial-finish-error") {
+          assert(
+            parsed.events.some((event) =>
+              event.type === agUiSseEventTypes.textMessageContent &&
+              (event as { delta?: string }).delta === "partial response"
+            ),
+          );
+        }
+        assertEquals(f.outputFinishes, [false]);
+        assert(f.outputFinishErrors[0] instanceof Error);
+        assertEquals(f.fixture.closeReasons, ["canceled"]);
       } finally {
         f.fixture.release();
         await f.managed.close();

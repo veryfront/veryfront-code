@@ -74,9 +74,21 @@ export function createCanonicalManagedBrokerService<T>(
       const settled = Promise.withResolvers<void>();
       tracker.registerExecution(run.runId, settled.promise);
       let retired = false;
+      const cancellationSources = new Set<AbortSignal>();
+      const cancelOwned = () => {
+        if (!retired) tracker.sessionManager.cancelRun(run.runId, ownedSignal);
+      };
+      const followCancellation = (signal: AbortSignal) => {
+        if (cancellationSources.has(signal)) return;
+        cancellationSources.add(signal);
+        signal.addEventListener("abort", cancelOwned, { once: true });
+        if (signal.aborted) cancelOwned();
+      };
       const retire = (failed: boolean, error?: unknown) => {
         if (retired) return;
         retired = true;
+        for (const signal of cancellationSources) signal.removeEventListener("abort", cancelOwned);
+        cancellationSources.clear();
         if (!failed) {
           tracker.sessionManager.completeRun(run.runId, ownedSignal);
           settled.resolve();
@@ -85,6 +97,7 @@ export function createCanonicalManagedBrokerService<T>(
           settled.reject(error);
         }
       };
+      followCancellation(input.signal);
       try {
         const prepared = await prepareExecutor({
           ...input,
@@ -106,10 +119,18 @@ export function createCanonicalManagedBrokerService<T>(
           },
         });
         const cleanup = prepared.cleanup?.bind(prepared);
+        const cancelPrepared = prepared.cancelExecution?.bind(prepared);
+        const executionSignal = AbortSignal.any([prepared.executionSignal, ownedSignal]);
+        followCancellation(prepared.executionSignal);
         let cleanupPromise: Promise<void> | undefined;
         return {
           ...prepared,
-          executionSignal: AbortSignal.any([prepared.executionSignal, ownedSignal]),
+          executionSignal,
+          cancelExecution() {
+            if (retired) return;
+            cancelOwned();
+            cancelPrepared?.();
+          },
           cleanup() {
             return cleanupPromise ??= (async () => {
               try {

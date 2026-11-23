@@ -40,6 +40,8 @@ export function createCanonicalManagedBrokerHandler<T>(
       start: Start;
       messages: Awaited<ReturnType<HandlerOptions<T>["prepare"]>>["messages"];
       executionSignal: AbortSignal;
+      /** Synchronously cancel pending host work before waiting for executor retirement. */
+      cancelExecution?: () => void;
       initialCheckpoints?: ExecutorInitialCheckpointState;
       latestConversationUserText?: (signal: AbortSignal) => Promise<string | null>;
       cleanup?: () => Promise<void>;
@@ -169,6 +171,7 @@ export function createCanonicalManagedBrokerHandler<T>(
         return {
           messages: prepared.messages,
           executionSignal: prepared.executionSignal,
+          cancelExecution: prepared.cancelExecution?.bind(prepared),
           start: {
             ...start,
             prepare: parseRuntimePreparationData(getExecutorRuntimePrepareRequestSchema(), {
