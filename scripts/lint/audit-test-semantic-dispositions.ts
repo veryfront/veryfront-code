@@ -11,6 +11,7 @@ import {
 } from "../test/test-semantic-audit-migration.ts";
 
 const MIGRATION_FILE_PATH = "scripts/test/test-semantic-audit-migration.ts";
+const DISCOVERY_FAILURE_PREFIX = "semantic audit discovery failed:";
 
 export function formatSemanticAuditFailure(
   errors: readonly string[],
@@ -26,6 +27,14 @@ export function formatSemanticAuditFailure(
       ...errors.map((error) => `  ${error}`),
       "",
       `Regenerate ${MIGRATION_FILE_PATH} to remove the stale dispositions.`,
+    ].join("\n");
+  }
+  // No inventory was audited when discovery failed, so the advice about the
+  // migration inventory does not apply.
+  if (errors.some((error) => error.startsWith(DISCOVERY_FAILURE_PREFIX))) {
+    return [
+      "Semantic unit-boundary audit failed:",
+      ...errors.map((error) => `  ${error}`),
     ].join("\n");
   }
   return [
@@ -57,7 +66,7 @@ async function main(): Promise<void> {
     result = {
       consideredFiles: 0,
       candidates: [],
-      errors: [`semantic audit discovery failed: ${message}`],
+      errors: [`${DISCOVERY_FAILURE_PREFIX} ${message}`],
     };
   }
   let baselineErrors: readonly string[];

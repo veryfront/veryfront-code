@@ -119,7 +119,7 @@ describe("test migration baseline workflow", () => {
     }
   });
 
-  it("keeps test-discovery failures machine-readable in JSON mode", async () => {
+  it("reports test-discovery failures in JSON and text mode", async () => {
     const repository = new URL("../../../", import.meta.url);
     const fixture = await makeTempDir({ prefix: "semantic-discovery-json-" });
     try {
@@ -173,6 +173,33 @@ describe("test migration baseline workflow", () => {
         `the JSON report must contain the discovery failure, got: ${stdout}`,
       );
       assertEquals(stderr, "", "JSON mode must not mix an uncaught stack trace into stderr");
+
+      const human = await new Deno.Command(Deno.execPath(), {
+        args: [
+          "run",
+          "--quiet",
+          `--config=${fromFileUrl(new URL("scripts/test.deno.json", repository))}`,
+          "--no-check",
+          "--allow-read",
+          "--allow-run=git",
+          "--allow-env=TEST_SEMANTIC_AUDIT_BASE_REF",
+          fromFileUrl(new URL("scripts/lint/audit-test-semantic-dispositions.ts", repository)),
+        ],
+        cwd: fixture,
+        stdout: "piped",
+        stderr: "piped",
+      }).output();
+      const humanStderr = new TextDecoder().decode(human.stderr);
+      assertEquals(human.code, 1, "a discovery failure must fail the audit in text mode");
+      assertEquals(new TextDecoder().decode(human.stdout), "");
+      assertEquals(
+        humanStderr.trim(),
+        [
+          "Semantic unit-boundary audit failed:",
+          "  semantic audit discovery failed: unclassified.test.ts: no test layout owner",
+        ].join("\n"),
+        "text mode must name the discovery failure without the migration-inventory advice",
+      );
     } finally {
       await remove(fixture, { recursive: true });
     }
