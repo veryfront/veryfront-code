@@ -55,6 +55,19 @@ def read_timeout(limit):
     return max(1,min(limit,ATTEMPT_BUDGET['deadline']-ATTEMPT_BUDGET['clock']()))
 
 
+def read_bounded(response,limit):
+    # Reads at most limit bytes. A socket timeout bounds one blocking read, not
+    # a body that keeps arriving slowly, so the deadline is checked per chunk.
+    chunks=[];total=0
+    while total<limit:
+        if ATTEMPT_BUDGET and ATTEMPT_BUDGET['clock']()>=ATTEMPT_BUDGET['deadline']:
+            raise TimeoutError('Read passed the witness deadline')
+        chunk=response.read(min(1024*1024,limit-total))
+        if not chunk:break
+        chunks.append(chunk);total+=len(chunk)
+    return b''.join(chunks)
+
+
 class TransientRead(Exception):
     # A read that failed without an answer about the release facts.
     def __init__(self,check):
@@ -89,7 +102,7 @@ def public_json(url):
     # Call sites construct only the fixed public registry/release routes below.
     with build_opener(NoRedirect).open(Request(url,headers={'Accept':'application/json','User-Agent':'platform-component-publication'}),timeout=read_timeout(30)) as response:
         require(response.status==200,'public record status')
-        raw=response.read(2*1024*1024+1)
+        raw=read_bounded(response,2*1024*1024+1)
         require(0<len(raw)<=2*1024*1024,'public record size')
     return json.loads(raw,object_pairs_hook=unique)
 
@@ -114,7 +127,7 @@ def public_asset(asset_id,size):
         # GitHub either streams the asset from the fixed route or redirects once.
         final=response.geturl()
         require(response.status==200 and (final==url or urlsplit(final).hostname==ASSET_HOST),'release asset response route')
-        raw=response.read(size+1)
+        raw=read_bounded(response,size+1)
     require(len(raw)==size,'release asset download size')
     return raw
 

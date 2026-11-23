@@ -217,11 +217,13 @@ class AssetRouteTests(unittest.TestCase):
     def test_asset_reader_accepts_a_direct_stream_or_the_asset_host_only(self):
         route='https://api.github.com/repos/veryfront/veryfront/releases/assets/701'
         class Response:
-            def __init__(self,final):self.status=200;self.final=final
+            def __init__(self,final):self.status=200;self.final=final;self.body=b'x'*3
             def __enter__(self):return self
             def __exit__(self,*_):return False
             def geturl(self):return self.final
-            def read(self,limit):return b'x'*3
+            def read(self,limit):
+                chunk,self.body=self.body[:limit],self.body[limit:]
+                return chunk
         def opener_for(final):
             class Opener:
                 def open(self,request,timeout):
@@ -240,6 +242,21 @@ class AssetRouteTests(unittest.TestCase):
             with self.assertRaises(ValueError):publisher.public_asset(701,4)
         finally:
             publisher.build_opener=original
+
+    def test_a_slow_stream_stops_at_the_deadline(self):
+        now=[0];reads=[]
+        class Slow:
+            def read(self,limit):
+                reads.append(limit);now[0]+=6
+                return b'x'
+        publisher.ATTEMPT_BUDGET.update(deadline=10,clock=lambda:now[0])
+        try:
+            with self.assertRaises(TimeoutError):publisher.read_bounded(Slow(),5)
+        finally:
+            publisher.ATTEMPT_BUDGET.clear()
+        self.assertEqual(len(reads),2)
+        self.assertEqual(publisher.read_bounded(io.BytesIO(b'abcdef'),4),b'abcd')
+        self.assertEqual(publisher.read_bounded(io.BytesIO(b'ab'),4),b'ab')
 
     def test_asset_reader_refuses_unbounded_requests(self):
         for asset_id,size in [(0,1),(True,1),(1,0),(1,publisher.TARBALL_LIMIT+1)]:
