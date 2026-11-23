@@ -14,6 +14,53 @@ import {
 } from "./broker-ingress.test-helpers.ts";
 
 describe("managed broker ingress", () => {
+  it("retains terminal authority only for the broker and trusted scope verifier", async () => {
+    const signed = await signedRequest();
+    signed.request.headers.set("x-veryfront-run-terminal-token", "terminal-only-token");
+    const result = await parseBrokerRuntimeAgentIngress(signed.request, {
+      ...options(signed.publicKeyPem),
+      authorizeScope(input) {
+        assertEquals(Reflect.get(input, "terminalAuthToken"), "terminal-only-token");
+        return { principal: { userId }, runEventWriter: { id: "writer-1" } };
+      },
+    });
+    assertEquals(Reflect.get(result.privateAuthority, "terminalAuthToken"), "terminal-only-token");
+    assertEquals(JSON.stringify(result.executor).includes("terminal-only-token"), false);
+  });
+
+  it("rejects oversized terminal authority before scope authorization", async () => {
+    const signed = await signedRequest();
+    signed.request.headers.set("x-veryfront-run-terminal-token", "t".repeat(16 * 1024 + 1));
+    let authorized = false;
+    await assertIngressError(
+      () =>
+        parseBrokerRuntimeAgentIngress(signed.request, {
+          ...options(signed.publicKeyPem),
+          authorizeScope() {
+            authorized = true;
+            return { principal: { userId }, runEventWriter: { id: "writer-1" } };
+          },
+        }),
+      401,
+      "BROKER_INGRESS_AUTH_REQUIRED",
+    );
+    assertEquals(authorized, false);
+  });
+
+  for (const token of ["terminal-only-token", "terminal%2Donly%2Dtoken"]) {
+    it(`rejects reflected terminal authority in executor data: ${token}`, async () => {
+      const signed = await signedRequest(invocation({
+        forwardedProps: { attachments: [{ url: `https://files.test/document?token=${token}` }] },
+      }));
+      signed.request.headers.set("x-veryfront-run-terminal-token", "terminal-only-token");
+      await assertIngressError(
+        () => parseBrokerRuntimeAgentIngress(signed.request, options(signed.publicKeyPem)),
+        403,
+        "BROKER_INGRESS_SCOPE_DENIED",
+      );
+    });
+  }
+
   it("preserves selected shared source independently of execution and keeps its credential private", async () => {
     const base = invocation();
     const sourceProject = {
