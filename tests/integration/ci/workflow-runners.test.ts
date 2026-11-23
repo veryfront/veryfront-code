@@ -94,6 +94,58 @@ describe("cicd.yml runner pools", () => {
       }
     }
   });
+
+  // A hung dependency download once held a release run for hours: without a
+  // timeout a job waits out the six-hour runner default. Recent main runs
+  // finish a binary build in under four minutes and the prepare step in under
+  // thirty seconds, so these bounds leave room for cold caches and retries.
+  it("bounds binary builds and their dependency preparation", async () => {
+    const PREPARE_ACTION = "./.github/actions/prepare-build-deps";
+    const jobs = await cicdJobs();
+    const buildTimeout = jobs["build-binaries"]["timeout-minutes"];
+    assert(
+      typeof buildTimeout === "number" && buildTimeout >= 10 && buildTimeout <= 20,
+      "build-binaries must fail a hung build within twenty minutes",
+    );
+
+    let prepareSteps = 0;
+    for (const [name, job] of Object.entries(jobs)) {
+      if (!Array.isArray(job.steps)) continue;
+      for (const step of job.steps) {
+        const record = asRecord(step, `${name} step`);
+        if (record.uses !== PREPARE_ACTION) continue;
+        prepareSteps++;
+        const stepTimeout = record["timeout-minutes"];
+        assert(
+          typeof stepTimeout === "number" && stepTimeout >= 3 && stepTimeout <= 5,
+          `${name} must bound ${PREPARE_ACTION} so a hang names that step`,
+        );
+        if (name === "build-binaries") {
+          assert(stepTimeout < Number(buildTimeout), "the step must time out before the job");
+        }
+      }
+    }
+    assert(prepareSteps >= 2, "expected the pull request and release build legs");
+
+    const action = asRecord(
+      parse(
+        await Deno.readTextFile(
+          new URL(`../../../${PREPARE_ACTION}/action.yml`, import.meta.url),
+        ),
+      ),
+      "prepare-build-deps action",
+    );
+    const steps = asRecord(action.runs, "action runs").steps as Record<string, unknown>[];
+    const script = String(steps[0].run);
+    assert(
+      script.includes('echo "build:prepare attempt ${attempt}/3 started at'),
+      "each attempt must be logged before it starts so a timeout names it",
+    );
+    assert(
+      script.indexOf("build:prepare attempt") < script.indexOf("if deno task build:prepare"),
+      "the attempt must be logged before the command that can hang",
+    );
+  });
 });
 
 // The self-hosted pool is selected only inside this reusable workflow, which
