@@ -70,7 +70,7 @@ export function buildNativeCoverageGroups() {
     ...executorBootstrapTestPatterns().map((pattern, index) => ({
       testFiles: [bootstrap],
       pattern,
-      expectedTests: index === 3 ? 22 : 1,
+      expectedTests: index < 2 ? 2 : index === 3 ? 22 : 1,
     })),
   ];
 }

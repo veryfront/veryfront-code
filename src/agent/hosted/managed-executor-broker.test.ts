@@ -1793,6 +1793,7 @@ function trustedFixture(
   let peer: ReturnType<typeof createExecutorChannel> | undefined;
   let peerCleanup: Promise<void> = Promise.resolve();
   let installedProjectMode = false;
+  let installedAgentEntrypoint: { path: string } | undefined;
   f.input.session.connectTransport = ({ binding }) => {
     const decoder = new TextDecoder();
     const outbound = new TransformStream<Uint8Array, Uint8Array>({
@@ -1808,6 +1809,7 @@ function trustedFixture(
       artifact: { version: 1, owner: scope.owner, source, root: "project" },
       async install(input, signal, context) {
         installedProjectMode = input.mode === "project-tools";
+        installedAgentEntrypoint = input.agentEntrypoint;
         const registered = tool({
           id: "inspect",
           description: "Inspect an approved argument",
@@ -1824,6 +1826,8 @@ function trustedFixture(
           binding,
           source,
           projectDir: "/synthetic-project",
+          defaultAgentId: input.context.agentId,
+          agentEntrypoint: input.agentEntrypoint,
           signal,
           backend: {
             load: () =>
@@ -1900,6 +1904,9 @@ function trustedFixture(
     },
     get executions() {
       return executions;
+    },
+    get installedAgentEntrypoint() {
+      return installedAgentEntrypoint;
     },
     get projectWire() {
       return projectWire;
@@ -2541,4 +2548,11 @@ describe("broker-local trusted runtime", () => {
     await f.peerCleanup;
     assertEquals(broker.active, 0);
   });
+});
+
+it("trusted broker preserves the selected source in the authenticated project-tools installation", async () => {
+  const f = trustedFixture();
+  f.input.installation.agentEntrypoint = { path: "agents/selected.ts" };
+  await drainTrustedFixture(f);
+  assertEquals(f.installedAgentEntrypoint, { path: "agents/selected.ts" });
 });

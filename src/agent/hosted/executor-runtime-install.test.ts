@@ -370,3 +370,31 @@ describe("executor runtime installation", () => {
     assertEquals(settled, true);
   });
 });
+
+it("preserves an exact entrypoint only in the strict one-shot installation", () => {
+  const input = {
+    ...artifact,
+    binding,
+    grant,
+    agentEntrypoint: { path: "agents/selected.ts" },
+    capabilities: { persistence: {} },
+  };
+  assertEquals(
+    parseExecutorInstallation(getExecutorRuntimeInstallSchema(), input).agentEntrypoint,
+    { path: "agents/selected.ts" },
+  );
+  assertThrows(() =>
+    parseExecutorInstallation(getExecutorRuntimeInstallSchema(), {
+      ...input,
+      grant: { ...grant, agentEntrypoint: { path: "agents/selected.ts" } },
+    })
+  );
+  for (const path of ["../other.ts", "agents/../other.ts", "agents//selected.ts"]) {
+    assertThrows(() =>
+      parseExecutorInstallation(getExecutorRuntimeInstallSchema(), {
+        ...input,
+        agentEntrypoint: { path },
+      })
+    );
+  }
+});

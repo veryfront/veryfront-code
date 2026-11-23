@@ -2,6 +2,23 @@ import { isAbsolute, relative, resolve, sep } from "node:path";
 import type { VeryfrontConfig } from "#veryfront/config";
 import { createProjectDiscoveryConfig } from "#veryfront/discovery/project-discovery-config.ts";
 import { ExecutorDiscoveryError } from "#veryfront/agent/hosted/executor-discovery-schema.ts";
+import { isNormalizedAgentEntrypointPath } from "#veryfront/discovery/agent-entrypoint-path.ts";
+
+/** Bind an exact selected file, including symlink resolution, to the immutable artifact root. */
+export async function bindExecutorAgentEntrypoint(
+  projectDir: string,
+  entrypoint: { path: string },
+  canonicalize: (path: string) => Promise<string>,
+) {
+  const path = entrypoint.path;
+  if (!isNormalizedAgentEntrypointPath(path)) throw new ExecutorDiscoveryError("CONFIG_INVALID");
+  const canonical = await canonicalize(resolve(projectDir, path));
+  const local = relative(projectDir, canonical);
+  if (!local || local === ".." || local.startsWith(`..${sep}`) || isAbsolute(local)) {
+    throw new ExecutorDiscoveryError("CONFIG_INVALID");
+  }
+  return Object.freeze({ path });
+}
 
 /** @internal Bind every enabled discovery root to the canonical immutable source. */
 export async function bindExecutorDiscoveryRoots(

@@ -2,7 +2,10 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assert, assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { VeryfrontConfig } from "#veryfront/config";
-import { bindExecutorDiscoveryRoots } from "#veryfront/agent/hosted/executor-discovery-roots.ts";
+import {
+  bindExecutorAgentEntrypoint,
+  bindExecutorDiscoveryRoots,
+} from "#veryfront/agent/hosted/executor-discovery-roots.ts";
 import { ExecutorDiscoveryError } from "#veryfront/agent/hosted/executor-discovery-schema.ts";
 
 const kinds = [
@@ -75,6 +78,54 @@ describe("executor discovery root policy", () => {
         ),
       Error,
       "Synthetic permission failure",
+    );
+  });
+});
+
+describe("selected executor source containment", () => {
+  it("keeps the selected artifact path for an in-root canonical file", async () => {
+    assertEquals(
+      await bindExecutorAgentEntrypoint(
+        "/bound",
+        { path: "agents/selected.ts" },
+        () => Promise.resolve("/bound/agents/selected.ts"),
+      ),
+      { path: "agents/selected.ts" },
+    );
+  });
+  for (const target of ["/outside/agents/selected.ts", "/bound", "/bound-other/selected.ts"]) {
+    it(`refuses a selected file resolving to ${target}`, async () => {
+      await assertRejects(
+        () =>
+          bindExecutorAgentEntrypoint(
+            "/bound",
+            { path: "agents/selected.ts" },
+            () => Promise.resolve(target),
+          ),
+        ExecutorDiscoveryError,
+      );
+    });
+  }
+  it("rejects traversal before resolving any file and propagates missing-source errors", async () => {
+    let reads = 0;
+    await assertRejects(
+      () =>
+        bindExecutorAgentEntrypoint("/bound", { path: "agents/../other.ts" }, () => {
+          reads++;
+          return Promise.resolve("/bound/other.ts");
+        }),
+      ExecutorDiscoveryError,
+    );
+    assertEquals(reads, 0);
+    await assertRejects(
+      () =>
+        bindExecutorAgentEntrypoint(
+          "/bound",
+          { path: "agents/missing.ts" },
+          () => Promise.reject(new Error("Synthetic missing file")),
+        ),
+      Error,
+      "Synthetic missing file",
     );
   });
 });

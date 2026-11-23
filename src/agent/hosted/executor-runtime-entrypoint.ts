@@ -187,6 +187,7 @@ export async function startExecutorRuntimeEntrypoint(
           source: input.source,
           projectDir: artifact.projectDir,
           defaultAgentId: input.context.agentId,
+          agentEntrypoint: input.agentEntrypoint,
           signal: runtimeSignal,
         });
         return await createExecutorProjectToolRuntime({
@@ -219,6 +220,7 @@ export async function startExecutorRuntimeEntrypoint(
             source: input.source,
             projectDir: artifact.projectDir,
             defaultAgentId: input.grant.agentId,
+            agentEntrypoint: input.agentEntrypoint,
             signal: runtimeSignal,
           });
           const { createExecutorRuntimePreparation } = await import(

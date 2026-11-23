@@ -1,5 +1,6 @@
 import type { InferSchema, Schema, SchemaValidator } from "#veryfront/extensions/schema/index.ts";
 import { defineSchema } from "#veryfront/schemas/index.ts";
+import { getRuntimeAgentEntrypointSchema } from "#veryfront/agent/runtime/agent-invocation-contract.ts";
 import { snapshotBoundedJsonValue } from "#veryfront/schemas/json-value.ts";
 import { getExecutorBindingSchema } from "../executor/protocol.ts";
 import {
@@ -52,6 +53,8 @@ export const getExecutorRuntimeInstallSchema = defineSchema((v) =>
     ...artifactShape(v),
     binding: getExecutorBindingSchema(),
     grant: getExecutorRuntimeGrantDataSchema(),
+    /** Trusted source selection, immutable for this installation. */
+    agentEntrypoint: getRuntimeAgentEntrypointSchema().optional(),
     /** Trusted ownership metadata for selected host tools, independent of source listings. */
     platformToolSourceIds: v.array(getExecutorToolIdSchema()).max(128).optional(),
     platformHostTools: v.array(
@@ -127,6 +130,7 @@ export const getExecutorProjectToolInstallSchema = defineSchema((v) =>
     ...artifactShape(v),
     mode: v.literal("project-tools"),
     binding: getExecutorBindingSchema(),
+    agentEntrypoint: getRuntimeAgentEntrypointSchema().optional(),
     context: v.object({
       agentId: getExecutorDiscoveryIdSchema(),
       projectId: getExecutorDiscoveryIdSchema().nullable(),

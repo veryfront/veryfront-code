@@ -3,6 +3,7 @@ import { isKnowledgeEnabled } from "#veryfront/agent/runtime/knowledge-tools.ts"
 import type { DiscoveryResult } from "#veryfront/discovery/types.ts";
 import { replaceDiscoveredProjectPrimitives } from "#veryfront/discovery/registry-replacement.ts";
 import { createProjectDiscoveryConfig } from "#veryfront/discovery/project-discovery-config.ts";
+import { isNormalizedAgentEntrypointPath } from "#veryfront/discovery/agent-entrypoint-path.ts";
 import { clearTranspileCache } from "#veryfront/discovery/transpiler.ts";
 import { getConfig, type VeryfrontConfig } from "#veryfront/config";
 import { runWithRegistryTransaction } from "#veryfront/registry/project-scoped-registry-manager.ts";
@@ -38,6 +39,7 @@ import { defineOwnDataProperty } from "#veryfront/security/own-data-property.ts"
 import { createPrivateMap } from "#veryfront/security/private-map.ts";
 
 const objectSetPrototypeOf = Object.setPrototypeOf;
+const objectFreeze = Object.freeze;
 const objectEntries = Object.entries;
 const arraySort = Array.prototype.sort;
 const apply = Reflect.apply;
@@ -117,6 +119,8 @@ export type ProjectAgentRuntimeAgentIdCandidates = {
 /** Input payload for discover project agent runtime. */
 export type DiscoverProjectAgentRuntimeInput = {
   projectDir: string;
+  /** Exact agent source selected by the trusted caller; never a fallback search. */
+  agentEntrypoint?: { path: string };
   adapter?: RuntimeAdapter;
   config?: VeryfrontConfig | null;
   fsAdapter?: FileSystemAdapter;
@@ -253,6 +257,12 @@ export function getProjectAgentRuntimeInlineTools(
 export async function discoverProjectAgentRuntime(
   input: DiscoverProjectAgentRuntimeInput,
 ): Promise<ProjectAgentRuntimeDiscovery> {
+  const agentEntrypoint = input.agentEntrypoint === undefined
+    ? undefined
+    : objectFreeze({ path: input.agentEntrypoint.path });
+  if (agentEntrypoint && !isNormalizedAgentEntrypointPath(agentEntrypoint.path)) {
+    throw CONFIG_INVALID.create({ detail: "Expected a normalized agent source file" });
+  }
   return await runWithEffectiveSourceIntegrationPolicy(
     input.sourceIntegrationPolicy,
     async () => {
@@ -268,6 +278,7 @@ export async function discoverProjectAgentRuntime(
         fsAdapter: input.fsAdapter,
         verbose: input.verbose,
         allowHostProjectCodeExecution: input.allowHostProjectCodeExecution,
+        agentEntrypoint,
       });
 
       const currentSourcePolicy = normalizeSourceIntegrationPolicy(config.integrations);

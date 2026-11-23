@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assert } from "#veryfront/testing/assert.ts";
+import { assert, assertEquals } from "#veryfront/testing/assert.ts";
 import { it } from "#veryfront/testing/bdd.ts";
 import { agent } from "#veryfront/agent/factory.ts";
 import type { ProjectAgentRuntimeDiscovery } from "#veryfront/agent/project/agent-runtime.ts";
@@ -70,6 +70,81 @@ it("parses discovery requests after agent-first project loading without construc
     );
   } finally {
     Array.prototype.every = originalEvery;
+    await owner.close();
+  }
+});
+
+it("selected candidate metadata does not consult project-controlled array species", async () => {
+  const binding = {
+    allocationId: "selected-allocation",
+    invocationId: "selected-invocation",
+    generation: 1,
+  };
+  const originalArray = Array;
+  const defineProperty = Object.defineProperty;
+  const constructorDescriptor = Object.getOwnPropertyDescriptor(Array.prototype, "constructor")!;
+  const runtime: ProjectAgentRuntimeDiscovery = {
+    agents: new Map(
+      ["coder", "internal"].map(
+        (id) => [id, agent({ id, system: "Synthetic instructions", model: "openai/synthetic" })],
+      ),
+    ),
+    tools: new Map(),
+    skills: new Map(),
+    prompts: new Map(),
+    resources: new Map(),
+    workflows: new Map(),
+    tasks: new Map(),
+    schedules: new Map(),
+    webhooks: new Map(),
+    evals: new Map(),
+    errors: [],
+    sourceIntegrationPolicy: { schemaVersion: 1, mode: "unrestricted" },
+  };
+  const owner = createExecutorDiscovery({
+    binding,
+    source: { type: "release", releaseId: "synthetic-release" },
+    projectDir: "/synthetic-project",
+    defaultAgentId: "coder",
+    agentEntrypoint: { path: "agents/selected.ts" },
+    signal: new AbortController().signal,
+    backend: {
+      load() {
+        defineProperty(originalArray.prototype, "constructor", {
+          configurable: true,
+          get() {
+            if (
+              this.length !== 2 || this[0] !== "coder" || this[1] !== "internal"
+            ) return originalArray;
+            return class extends originalArray {
+              constructor(length: number) {
+                super(length);
+                if (length === 0) this[1] = "internal";
+              }
+            };
+          },
+        });
+        return Promise.resolve(runtime);
+      },
+      cleanup: () => Promise.resolve(),
+    },
+  });
+  try {
+    const operation = owner.operations.get("discovery.describe");
+    assert(operation?.mode === "unary");
+    const result = await operation.handle({}, {
+      binding,
+      signal: new AbortController().signal,
+      deadline: Date.now() + 10_000,
+    });
+    defineProperty(originalArray.prototype, "constructor", constructorDescriptor);
+    assert(result && typeof result === "object" && !Array.isArray(result) && result.ok === true);
+    assertEquals((result.value as { candidates: unknown }).candidates, {
+      codeAgentIds: ["coder"],
+      markdownAgentIds: [],
+    });
+  } finally {
+    defineProperty(originalArray.prototype, "constructor", constructorDescriptor);
     await owner.close();
   }
 });
