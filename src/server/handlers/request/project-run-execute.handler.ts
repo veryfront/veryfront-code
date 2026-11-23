@@ -1,3 +1,4 @@
+import { getBaseLogger } from "#veryfront/utils";
 import {
   PROVIDER_REQUEST_REJECTED_CODE,
   readProviderRequestRejectionMessage,
@@ -6283,6 +6284,8 @@ async function executeProjectRun(
   }
 }
 
+const executeLogger = getBaseLogger("SERVER").component("project-run-execute");
+
 export class ProjectRunExecuteHandler extends BaseHandler {
   metadata: HandlerMetadata = {
     name: "ProjectRunExecuteHandler",
@@ -6334,13 +6337,16 @@ export class ProjectRunExecuteHandler extends BaseHandler {
         .withCORS(req, ctx.securityConfig?.cors)
         .withSecurity(ctx.securityConfig ?? undefined, req);
 
+      let phase = "read_body";
       try {
         const ingress = consumeControlPlaneExecuteIngress(req, ctx, runId);
         const rawBody = ingress?.rawBody ?? await readInternalAgentRequestBody(
           req,
           INTERNAL_AGENT_CONTROL_PLANE_MAX_BODY_BYTES,
         );
+        phase = "parse_request";
         const request = parseExecuteRequest(JSON.parse(rawBody), runId);
+        phase = "verify_signature";
         const claims = ingress?.claims ?? await verifyControlPlaneRequest(req, ctx, rawBody, {
           expectedSubject: runId,
           expectedSurface: "studio",
@@ -6352,6 +6358,7 @@ export class ProjectRunExecuteHandler extends BaseHandler {
         ) {
           return this.respond(builder.json({ error: "Invalid control-plane signature" }, 401));
         }
+        phase = "setup_execution";
         const inferenceToken = readProjectRunInferenceToken(req);
         const eventToken = readIngressCredential(req, INGRESS_RUN_EVENT_TOKEN_HEADER) ?? undefined;
         const stopController = new TaskAbortController();
@@ -6633,6 +6640,19 @@ export class ProjectRunExecuteHandler extends BaseHandler {
           { root: true, links: [activeSpanLink()].filter((link) => link !== undefined) },
         );
       } catch (error) {
+        // Keep refusal diagnostics finite and free of body, credential and exception text.
+        const reasonCode = error instanceof InternalAgentRequestBodyTooLargeError
+          ? "body_too_large"
+          : error instanceof ControlPlaneRequestError
+          ? "control_plane_rejected"
+          : error instanceof VeryfrontError && error.slug === "input-validation-failed"
+          ? "invalid_input"
+          : "unexpected_refusal";
+        const status = error instanceof InternalAgentRequestBodyTooLargeError ||
+            error instanceof ControlPlaneRequestError
+          ? error.status
+          : 400;
+        executeLogger.warn("Project run execute refused", { reasonCode, phase, status });
         if (error instanceof InternalAgentRequestBodyTooLargeError) {
           return this.respond(builder.json({ error: error.message }, error.status));
         }
