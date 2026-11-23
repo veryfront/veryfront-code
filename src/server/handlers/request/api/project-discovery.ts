@@ -27,7 +27,11 @@ interface DiscoveryRecord {
   promise: Promise<DiscoveryResult>;
   sourceSnapshotVersion?: number;
   sourceFingerprint?: string;
-  /** Set only when this record owns and performs mutable partial-result cleanup. */
+  /**
+   * Set only when this record's owner removed its own record from the cache:
+   * after a mutable partial result, or after its own hard failure. An eviction
+   * or a replacement never sets it.
+   */
   discardedAfterCompletion?: boolean;
   /** Set when the result has errors: rediscover once the clock reaches it. */
   retryAt?: number;
@@ -134,6 +138,23 @@ function throwProjectDiscoveryFailure(ctx: HandlerContext, error: unknown): neve
   });
 }
 
+/**
+ * Wait until another invocation's discovery settles. Its failure belongs to
+ * that invocation, which reports it; the waiter re-reads the cache slot and
+ * decides for its own source generation.
+ */
+async function waitForDiscoveryOwner(
+  record: DiscoveryRecord,
+): Promise<{ failed: false } | { failed: true; error: unknown }> {
+  try {
+    await record.promise;
+    return { failed: false };
+  } catch (error) {
+    // Reported by the owner.
+    return { failed: true, error };
+  }
+}
+
 /** Build a discovery cache key that incorporates the release/version. */
 function discoveryKey(ctx: HandlerContext): string {
   const registryScope = tryGetRegistryScopeContext();
@@ -203,7 +224,7 @@ export async function ensureProjectDiscovery(
 
   const existing = discoveredProjects.get<DiscoveryRecord>(key);
   if (existing && existing.entrypointPath !== options.agentEntrypoint?.path) {
-    await existing.promise;
+    await waitForDiscoveryOwner(existing);
     if (discoveredProjects.get(key) === existing) discoveredProjects.delete(key);
     return await ensureProjectDiscovery(ctx, assertCurrent, options);
   }
@@ -237,7 +258,7 @@ export async function ensureProjectDiscovery(
   const currentExisting = discoveredProjects.get<DiscoveryRecord>(key);
   // Fingerprinting awaited tenant data. A different selection may now own this source's registry.
   if (currentExisting && currentExisting.entrypointPath !== options.agentEntrypoint?.path) {
-    await currentExisting.promise;
+    await waitForDiscoveryOwner(currentExisting);
     if (discoveredProjects.get(key) === currentExisting) discoveredProjects.delete(key);
     return await ensureProjectDiscovery(ctx, assertCurrent, options);
   }
@@ -273,7 +294,12 @@ export async function ensureProjectDiscovery(
       // Without a concrete fingerprint, preserve generation isolation. Wait
       // for the invocation that won this cache slot, then re-evaluate this
       // adapter's own generation instead of overwriting an in-flight record.
-      await currentExisting.promise;
+      const owner = await waitForDiscoveryOwner(currentExisting);
+      if (owner.failed && currentExisting.sourceSnapshotVersion === sourceSnapshotVersion) {
+        // The same generation reads the same source: share the owner's failure
+        // instead of repeating a discovery that already failed.
+        throw owner.error;
+      }
       const settledExisting = discoveredProjects.get<DiscoveryRecord>(key);
       if (settledExisting !== currentExisting) {
         if (
@@ -406,6 +432,9 @@ export async function ensureProjectDiscovery(
     // record so the newer discovery remains reusable after it completes.
     const current = discoveredProjects.get<DiscoveryRecord>(key);
     if (current === discovery) {
+      // Tell a waiting generation that the slot is free through this owner's
+      // own cleanup, so it discovers its own source instead of failing.
+      discovery.discardedAfterCompletion = true;
       discoveredProjects.delete(key);
     }
     return throwProjectDiscoveryFailure(ctx, error);

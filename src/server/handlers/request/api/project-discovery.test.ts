@@ -5,6 +5,7 @@ import { getAgent } from "#veryfront/agent";
 import { toolRegistry } from "#veryfront/tool";
 import { createMockAdapter } from "#veryfront/platform/adapters/mock.ts";
 import {
+  assert,
   assertEquals,
   assertExists,
   assertNotStrictEquals,
@@ -24,6 +25,7 @@ import {
 } from "#veryfront/platform/runtime-request-context.ts";
 import { getProjectEnv, runWithProjectEnv } from "#veryfront/server/project-env/storage.ts";
 import { runWithRequestContext } from "#veryfront/platform/adapters/fs/veryfront/multi-project-adapter.ts";
+import type { DiscoveryResult } from "#veryfront/discovery";
 import type { HandlerContext } from "../../types.ts";
 import {
   __setProjectDiscoveryClockForTests,
@@ -142,6 +144,64 @@ async function writeSkillFile(
       "",
     ].join("\n"),
   );
+}
+
+/**
+ * A preview context for one adapter generation. The test settles its source
+ * fingerprint, and the context counts its directory enumerations.
+ */
+function createFallbackGeneration(projectDir: string, projectSlug: string, version: number) {
+  const ctx = createHandlerContext(projectDir, projectSlug, "preview");
+  const fingerprintStarted = Promise.withResolvers<void>();
+  const fingerprint = Promise.withResolvers<string | undefined>();
+  ctx.adapter.fs.getSourceSnapshotVersion = () => version;
+  ctx.adapter.fs.getSourceSnapshotFingerprint = () => {
+    fingerprintStarted.resolve();
+    return fingerprint.promise;
+  };
+  const readDir = ctx.adapter.fs.readDir.bind(ctx.adapter.fs);
+  let enumerationCount = 0;
+  ctx.adapter.fs.readDir = async function* (path) {
+    enumerationCount++;
+    yield* readDir(path);
+  };
+  return {
+    ctx,
+    fingerprintStarted: fingerprintStarted.promise,
+    fingerprint,
+    enumerationCount: () => enumerationCount,
+  };
+}
+
+/** Pause the next discovery of a context, then fail it hard on release. */
+function failNextDiscoveryOnRelease(ctx: HandlerContext, message: string) {
+  const started = Promise.withResolvers<void>();
+  const released = Promise.withResolvers<void>();
+  const exists = ctx.adapter.fs.exists.bind(ctx.adapter.fs);
+  let armed = true;
+  ctx.adapter.fs.exists = async (path: string) => {
+    if (armed && path === `${ctx.projectDir}/skills`) {
+      armed = false;
+      started.resolve();
+      await released.promise;
+      throw new Error(message);
+    }
+    return await exists(path);
+  };
+  return { started: started.promise, release: () => released.resolve() };
+}
+
+function outcomeOf<T>(
+  promise: Promise<T>,
+): Promise<{ value: T; error: undefined } | { value: undefined; error: unknown }> {
+  return promise.then(
+    (value) => ({ value, error: undefined }),
+    (error: unknown) => ({ value: undefined, error }),
+  );
+}
+
+function nextMacrotask(): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, 0));
 }
 
 describe(
@@ -827,6 +887,272 @@ describe(
       await secondFailure;
       await ensureProjectDiscovery(second);
     });
+
+    for (const phase of ["fingerprint", "owner-wait"]) {
+      it(`discovers its own generation after an older generation fails hard during ${phase}`, async () => {
+        agentRegistry.clearAll();
+        toolRegistryInternal.clearAll();
+        const projectSlug = `rejecting-fallback-discovery-${phase}`;
+        const first = createFallbackGeneration("/rejecting-fallback", projectSlug, 1);
+        const second = createFallbackGeneration("/rejecting-fallback", projectSlug, 2);
+        const firstFailure = failNextDiscoveryOnRelease(
+          first.ctx,
+          "older generation filesystem unavailable",
+        );
+        await writeAgentFile(first.ctx, "fallback-agent", "FIRST");
+        await writeAgentFile(second.ctx, "fallback-agent", "SECOND");
+
+        // The failing request still reports its own failure.
+        const firstRejection = assertRejects(
+          () => ensureProjectDiscovery(first.ctx),
+          Error,
+          "Runtime discovery failed: older generation filesystem unavailable",
+        );
+        let secondOutcome: ReturnType<typeof outcomeOf<DiscoveryResult>>;
+        if (phase === "fingerprint") {
+          await first.fingerprintStarted;
+          first.fingerprint.resolve(undefined);
+          await firstFailure.started;
+          secondOutcome = outcomeOf(ensureProjectDiscovery(second.ctx));
+          await second.fingerprintStarted;
+          firstFailure.release();
+          await firstRejection;
+          second.fingerprint.resolve(undefined);
+        } else {
+          secondOutcome = outcomeOf(ensureProjectDiscovery(second.ctx));
+          await Promise.all([first.fingerprintStarted, second.fingerprintStarted]);
+          first.fingerprint.resolve(undefined);
+          await firstFailure.started;
+          second.fingerprint.resolve(undefined);
+          await nextMacrotask();
+          // The waiter does not discover while the older generation owns the slot.
+          assertEquals(second.enumerationCount(), 0);
+          firstFailure.release();
+        }
+
+        await firstRejection;
+        const outcome = await secondOutcome;
+        if (outcome.error) throw outcome.error;
+        assertEquals(outcome.value?.errors.length, 0);
+        assertEquals(second.enumerationCount() > 0, true);
+        assertEquals(getAgent("fallback-agent")?.config.system, "SECOND");
+        assertStrictEquals(await ensureProjectDiscovery(second.ctx), outcome.value);
+      });
+    }
+
+    it("starts one discovery for two requests that waited on a failed older generation", async () => {
+      agentRegistry.clearAll();
+      toolRegistryInternal.clearAll();
+      const projectSlug = "rejecting-fallback-two-waiters";
+      const first = createFallbackGeneration("/rejecting-two-waiters", projectSlug, 1);
+      const second = createFallbackGeneration("/rejecting-two-waiters", projectSlug, 2);
+      const firstFailure = failNextDiscoveryOnRelease(
+        first.ctx,
+        "older generation filesystem unavailable",
+      );
+      await writeAgentFile(first.ctx, "fallback-agent", "FIRST");
+      await writeAgentFile(second.ctx, "fallback-agent", "SECOND");
+      // Discovery checks the skills directory once, so this counts discoveries.
+      const secondExists = second.ctx.adapter.fs.exists.bind(second.ctx.adapter.fs);
+      let secondDiscoveryCount = 0;
+      second.ctx.adapter.fs.exists = async (path: string) => {
+        if (path === `${second.ctx.projectDir}/skills`) secondDiscoveryCount++;
+        return await secondExists(path);
+      };
+
+      const firstRejection = assertRejects(
+        () => ensureProjectDiscovery(first.ctx),
+        Error,
+        "Runtime discovery failed: older generation filesystem unavailable",
+      );
+      const waiters = [
+        outcomeOf(ensureProjectDiscovery(second.ctx)),
+        outcomeOf(ensureProjectDiscovery(second.ctx)),
+      ];
+      await Promise.all([first.fingerprintStarted, second.fingerprintStarted]);
+      first.fingerprint.resolve(undefined);
+      await firstFailure.started;
+      second.fingerprint.resolve(undefined);
+      await nextMacrotask();
+      assertEquals(secondDiscoveryCount, 0);
+      firstFailure.release();
+
+      await firstRejection;
+      const [firstWaiter, secondWaiter] = await Promise.all(waiters);
+      if (firstWaiter!.error) throw firstWaiter!.error;
+      if (secondWaiter!.error) throw secondWaiter!.error;
+      assertEquals(firstWaiter!.value?.errors.length, 0);
+      // Both requests hold the result of one discovery, not one each.
+      assertStrictEquals(secondWaiter!.value, firstWaiter!.value);
+      assertEquals(secondDiscoveryCount, 1);
+    });
+
+    it("shares one hard failure between requests of the generation that failed", async () => {
+      agentRegistry.clearAll();
+      toolRegistryInternal.clearAll();
+      const projectSlug = "rejecting-fallback-same-generation";
+      const generation = createFallbackGeneration("/rejecting-same-generation", projectSlug, 1);
+      await writeAgentFile(generation.ctx, "fallback-agent", "ONLY");
+      // Every discovery of this source fails, and each attempt is counted.
+      let discoveryCount = 0;
+      generation.ctx.adapter.fs.exists = (path: string) => {
+        if (path === `${generation.ctx.projectDir}/skills`) {
+          discoveryCount++;
+          throw new Error("generation filesystem unavailable");
+        }
+        return Promise.resolve(false);
+      };
+
+      // All three read an empty slot, so one becomes the owner and two wait for it.
+      const requests = [
+        outcomeOf(ensureProjectDiscovery(generation.ctx)),
+        outcomeOf(ensureProjectDiscovery(generation.ctx)),
+        outcomeOf(ensureProjectDiscovery(generation.ctx)),
+      ];
+      await generation.fingerprintStarted;
+      generation.fingerprint.resolve(undefined);
+
+      const outcomes = await Promise.all(requests);
+      for (const outcome of outcomes) {
+        assert(outcome.error instanceof Error);
+        assertEquals(outcome.error.message.includes("generation filesystem unavailable"), true);
+      }
+      // The waiters do not repeat a discovery that already failed for their source.
+      assertEquals(discoveryCount, 1);
+    });
+
+    it("serializes two newer generations that waited on a failed older generation", async () => {
+      agentRegistry.clearAll();
+      toolRegistryInternal.clearAll();
+      const projectSlug = "rejecting-fallback-two-generations";
+      const first = createFallbackGeneration("/rejecting-two-generations", projectSlug, 1);
+      const second = createFallbackGeneration("/rejecting-two-generations", projectSlug, 2);
+      const third = createFallbackGeneration("/rejecting-two-generations", projectSlug, 3);
+      const firstFailure = failNextDiscoveryOnRelease(
+        first.ctx,
+        "older generation filesystem unavailable",
+      );
+      await writeAgentFile(first.ctx, "fallback-agent", "FIRST");
+      await writeAgentFile(second.ctx, "fallback-agent", "SECOND");
+      await writeAgentFile(third.ctx, "fallback-agent", "THIRD");
+      // Hold whichever newer generation wins the slot inside its discovery.
+      const winnerStarted = Promise.withResolvers<void>();
+      const releaseWinner = Promise.withResolvers<void>();
+      let running = 0;
+      let maxRunning = 0;
+      let winnerHeld = false;
+      for (const generation of [second, third]) {
+        const exists = generation.ctx.adapter.fs.exists.bind(generation.ctx.adapter.fs);
+        generation.ctx.adapter.fs.exists = async (path: string) => {
+          if (path !== `${generation.ctx.projectDir}/skills`) return await exists(path);
+          running++;
+          maxRunning = Math.max(maxRunning, running);
+          try {
+            if (!winnerHeld) {
+              winnerHeld = true;
+              winnerStarted.resolve();
+              await releaseWinner.promise;
+            }
+            return await exists(path);
+          } finally {
+            running--;
+          }
+        };
+      }
+
+      const firstRejection = assertRejects(
+        () => ensureProjectDiscovery(first.ctx),
+        Error,
+        "Runtime discovery failed: older generation filesystem unavailable",
+      );
+      const secondOutcome = outcomeOf(ensureProjectDiscovery(second.ctx));
+      const thirdOutcome = outcomeOf(ensureProjectDiscovery(third.ctx));
+      await Promise.all([
+        first.fingerprintStarted,
+        second.fingerprintStarted,
+        third.fingerprintStarted,
+      ]);
+      first.fingerprint.resolve(undefined);
+      await firstFailure.started;
+      second.fingerprint.resolve(undefined);
+      third.fingerprint.resolve(undefined);
+      await nextMacrotask();
+      firstFailure.release();
+      await firstRejection;
+
+      // Settled outcomes here mean neither generation discovered: fail below.
+      await Promise.race([winnerStarted.promise, Promise.all([secondOutcome, thirdOutcome])]);
+      await nextMacrotask();
+      // Exactly one newer generation discovers; the other waits for the slot.
+      assertEquals(running, 1);
+      assertEquals(
+        [second.enumerationCount() > 0, third.enumerationCount() > 0].filter(Boolean).length <= 1,
+        true,
+      );
+      releaseWinner.resolve();
+
+      const [secondResult, thirdResult] = await Promise.all([secondOutcome, thirdOutcome]);
+      if (secondResult.error) throw secondResult.error;
+      if (thirdResult.error) throw thirdResult.error;
+      assertEquals(secondResult.value?.errors.length, 0);
+      assertEquals(thirdResult.value?.errors.length, 0);
+      assertNotStrictEquals(thirdResult.value, secondResult.value);
+      assertEquals(maxRunning, 1);
+    });
+
+    for (const phase of ["fingerprint", "owner-wait"]) {
+      it(`stays fenced when a hard-failing generation is evicted during ${phase}`, async () => {
+        const projectSlug = `evicted-rejecting-fallback-${phase}`;
+        const first = createFallbackGeneration("/evicted-rejecting-fallback", projectSlug, 1);
+        const second = createFallbackGeneration("/evicted-rejecting-fallback", projectSlug, 2);
+        const firstFailure = failNextDiscoveryOnRelease(
+          first.ctx,
+          "older generation filesystem unavailable",
+        );
+        await writeAgentFile(second.ctx, "evicted-rejecting-agent", "SECOND");
+
+        const firstRejection = assertRejects(
+          () => ensureProjectDiscovery(first.ctx),
+          Error,
+          "Runtime discovery failed: older generation filesystem unavailable",
+        );
+        let secondFailure: Promise<unknown>;
+        if (phase === "fingerprint") {
+          await first.fingerprintStarted;
+          first.fingerprint.resolve(undefined);
+          await firstFailure.started;
+          secondFailure = assertRejects(
+            () => ensureProjectDiscovery(second.ctx),
+            Error,
+            "Primitive discovery cache changed while the source fingerprint was computed",
+          );
+          await second.fingerprintStarted;
+          clearProjectDiscoveryCacheForScope(`${projectSlug}:preview:main`);
+          firstFailure.release();
+          await firstRejection;
+          second.fingerprint.resolve(undefined);
+        } else {
+          secondFailure = assertRejects(
+            () => ensureProjectDiscovery(second.ctx),
+            Error,
+            "Primitive discovery cache changed while awaiting the current generation",
+          );
+          await Promise.all([first.fingerprintStarted, second.fingerprintStarted]);
+          first.fingerprint.resolve(undefined);
+          await firstFailure.started;
+          second.fingerprint.resolve(undefined);
+          await nextMacrotask();
+          clearProjectDiscoveryCacheForScope(`${projectSlug}:preview:main`);
+          firstFailure.release();
+        }
+
+        await firstRejection;
+        await secondFailure;
+        // The fenced request discovered nothing; the next request starts clean.
+        assertEquals(second.enumerationCount(), 0);
+        assertEquals((await ensureProjectDiscovery(second.ctx)).errors.length, 0);
+      });
+    }
 
     it("restarts fingerprint matching when the adapter generation changes", async () => {
       agentRegistry.clearAll();
@@ -1942,6 +2268,42 @@ Deno.test("exact entrypoints keep separate cached selections and retire with the
     });
     assertEquals(refreshed.agents.get("first")?.config.name, "Refreshed");
   } finally {
+    clearProjectDiscoveryCacheForScope(`${slug}:release:release-exact`);
+  }
+});
+
+Deno.test("an exact entrypoint does not inherit the hard failure of the selection it waited for", async () => {
+  const slug = `rejecting-entrypoints-${crypto.randomUUID()}`;
+  const ctx = createHandlerContext(`/project/${slug}`, slug, "production", "release-exact");
+  await ctx.adapter.fs.writeFile(
+    `${ctx.projectDir}/agents/first.md`,
+    "---\nname: First\n---\nFirst source.",
+  );
+  await ctx.adapter.fs.writeFile(
+    `${ctx.projectDir}/agents/second.md`,
+    "---\nname: Second\n---\nSecond source.",
+  );
+  const firstFailure = failNextDiscoveryOnRelease(ctx, "first selection filesystem unavailable");
+  try {
+    const firstRejection = assertRejects(
+      () =>
+        ensureProjectDiscovery(ctx, undefined, { agentEntrypoint: { path: "agents/first.md" } }),
+      Error,
+      "Runtime discovery failed: first selection filesystem unavailable",
+    );
+    await firstFailure.started;
+    const secondOutcome = outcomeOf(
+      ensureProjectDiscovery(ctx, undefined, { agentEntrypoint: { path: "agents/second.md" } }),
+    );
+    await nextMacrotask();
+    firstFailure.release();
+
+    await firstRejection;
+    const outcome = await secondOutcome;
+    if (outcome.error) throw outcome.error;
+    assertEquals([...(outcome.value?.agents.keys() ?? [])], ["second"]);
+  } finally {
+    firstFailure.release();
     clearProjectDiscoveryCacheForScope(`${slug}:release:release-exact`);
   }
 });
