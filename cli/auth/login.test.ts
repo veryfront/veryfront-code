@@ -499,7 +499,6 @@ describe("Login Module", { sanitizeOps: false, sanitizeResources: false }, () =>
     it("keeps a stored login that a different API host rejects", async () => {
       // A login saved for one API (production) must survive a check against
       // another (staging) that does not recognise it.
-      const originalFetch = globalThis.fetch;
       const originalLog = console.log;
       const projectDir = await makeTempDir({ prefix: "login-other-host-" });
       const savedEnv = { ...testEnv, apiUrl: "https://api.prod.example.test/api" };
@@ -508,8 +507,6 @@ describe("Login Module", { sanitizeOps: false, sanitizeResources: false }, () =>
       try {
         setNonInteractive(true);
         console.log = () => {};
-        globalThis.fetch = (() =>
-          Promise.resolve(new Response(null, { status: 401 }))) as typeof fetch;
         const { withCwd } = await import("#veryfront/testing/cwd.ts");
         const { ensureAuthenticated, whoami } = await import("./login.ts");
         const checks: Array<[string, () => Promise<unknown>]> = [
@@ -518,17 +515,21 @@ describe("Login Module", { sanitizeOps: false, sanitizeResources: false }, () =>
           ["login", () => login(undefined, otherEnv, projectDir)],
         ];
 
-        for (const [name, check] of checks) {
-          await saveToken("stored-prod-token", savedEnv);
-          assertEquals(await withCwd(projectDir, check), null, name);
-          assertEquals(await readToken(testEnv), "stored-prod-token", name);
-        }
+        await withMockFetch(
+          () => Promise.resolve(new Response(null, { status: 401 })),
+          async () => {
+            for (const [name, check] of checks) {
+              await saveToken("stored-prod-token", savedEnv);
+              assertEquals(await withCwd(projectDir, check), null, name);
+              assertEquals(await readToken(testEnv), "stored-prod-token", name);
+            }
 
-        // The host the login was saved for still removes it when it rejects it.
-        assertEquals(await withCwd(projectDir, () => whoami(savedEnv)), null);
-        assertEquals(await readToken(testEnv), null);
+            // The host the login was saved for still removes it when it rejects it.
+            assertEquals(await withCwd(projectDir, () => whoami(savedEnv)), null);
+            assertEquals(await readToken(testEnv), null);
+          },
+        );
       } finally {
-        globalThis.fetch = originalFetch;
         console.log = originalLog;
         resetInteractiveMode();
         await safeDeleteToken();
