@@ -1468,9 +1468,21 @@ function findFirstH1(markdown: string, mdx = false): string | undefined {
     );
     if (blockEnd) {
       indentedCode = false;
-      blockIndent = quoteParagraph && markdownHtmlBlockEnd(line, false) === undefined
-        ? containerIndent + 1
-        : containerIndent;
+      const lazyQuoteHtml = markdownHtmlBlockEnd(line, false) === undefined
+        ? quoteParagraph
+        : undefined;
+      if (lazyQuoteHtml) {
+        quotedBlockOwner = [];
+        if (containerIndent) {
+          quotedBlockOwner.push({ kind: "list", indent: containerIndent, empty: false });
+        }
+        for (const owner of lazyQuoteHtml.owners) {
+          quotedBlockOwner.push({ kind: "quote" });
+          const indent = owner.at(-1) ?? 0;
+          if (indent) quotedBlockOwner.push({ kind: "list", indent, empty: false });
+        }
+      }
+      blockIndent = lazyQuoteHtml ? containerIndent + 1 : containerIndent;
       quoteParagraph = undefined;
       if (blockEnd === "blank" || !blockEnd.test(line)) htmlEnd = blockEnd;
       paragraphOpen = false;

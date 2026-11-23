@@ -7389,6 +7389,49 @@ describe("runKnowledgeParser", () => {
     }
   });
 
+  it("retains lazy HTML owners when quote and list prefixes resume", async () => {
+    const root = await makeTempDir({ prefix: "knowledge-html-owner-resumption-" });
+    // Reference expectations were checked against the content renderer's remark-parse 11.
+    const owners: [string, string[]][] = [
+      ["> Quoted text", ["> continued", "> ===", ">", "> ## Section", "continued"]],
+      ["> [a]: /url", ["> continued", "> ===", ">", "> ## Section"]],
+      ["> ## Heading", ["> continued", "> ===", ">", "> ## Section"]],
+      ["- Item", ["  continued", "  ===", "  ", "  ## Section", "continued"]],
+      ["- [a]: /url", ["  continued", "  ===", "  ", "  ## Section"]],
+      ["- > Quoted text", ["  > continued", "  > ===", "  >", "  > ## Section"]],
+      ["> - Item", [">   continued", ">   ===", ">", ">   ## Section"]],
+      ["> > Quoted text", ["> > continued", "> > ===", ">", "> continued"]],
+    ];
+    try {
+      let index = 0;
+      for (const [first, continuations] of owners) {
+        for (const continuation of continuations) {
+          for (const tag of ["<span>", "<custom>", "</custom>"]) {
+            const body = `${first}\n${tag}\n${continuation}\n<span>\n# Example\n</span>\n\n# Guide`;
+            // Plain text after the owner ends remains a paragraph; its inline tag
+            // cannot hide the following heading. Partial nested-quote exit agrees.
+            const title = continuation === "continued" ||
+                (first === "> > Quoted text" && continuation === "> continued")
+              ? "Example"
+              : "Guide";
+            for (const extension of ["md", "pdf", "html", "docx"]) {
+              const filePath = join(root, `source-${index}.${extension}`);
+              await Deno.writeTextFile(filePath, body);
+              const result = await runKnowledgeParser({
+                filePath,
+                outputDir: join(root, `out-${index}-${extension}`),
+              }, { extractDocumentText: () => Promise.resolve(body) });
+              assertEquals(result.title, title, body);
+            }
+            index += 1;
+          }
+        }
+      }
+    } finally {
+      await Deno.remove(root, { recursive: true });
+    }
+  });
+
   it("keeps lazy HTML paragraph continuations separate from root HTML blocks", async () => {
     const root = await makeTempDir({ prefix: "veryfront-heading-lazy-html-" });
     // Expected titles follow the remark parser used by the content renderer.
