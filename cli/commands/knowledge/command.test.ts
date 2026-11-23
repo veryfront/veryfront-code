@@ -8194,7 +8194,9 @@ it("keeps title-derived filenames portable without rewriting safe near matches",
     const safe = ["com0", "com10", "lpt0", "lpt10", "console", "nul-value", "auxiliary"];
     let index = 0;
     for (const name of [...reserved, ...safe]) {
-      for (const title of [name, name.toUpperCase(), name.charAt(0).toUpperCase() + name.slice(1)]) {
+      for (
+        const title of [name, name.toUpperCase(), name.charAt(0).toUpperCase() + name.slice(1)]
+      ) {
         const filePath = join(root, `source-${index}.md`);
         await Deno.writeTextFile(filePath, `# ${title}\n\nBody`);
         const result = await runKnowledgeParser({
