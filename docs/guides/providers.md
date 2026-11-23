@@ -515,6 +515,13 @@ provider's base URL variable.
   `openai/gpt-5.4-nano` normally routes through the AI Gateway; a hook
   credential keeps that call on the provider instead. An omitted, `auto`, or
   `veryfront-cloud/*` model cannot take a credential.
+- A per-call model override may pick another model of the agent's provider. An
+  override that selects a different provider fails the call, so a caller
+  cannot redirect the credential.
+- With Veryfront Cloud enabled and no provider key in the environment, the
+  runtime still loads the Cloud model catalog before the hook runs, waiting up
+  to three seconds. Routing for a hook that returns no credential depends on
+  it.
 - The hook does not run for calls that a platform-managed project run resolves
   through Veryfront Cloud, so a credential has no effect there.
 

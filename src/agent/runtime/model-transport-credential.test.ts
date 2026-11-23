@@ -36,6 +36,7 @@ function settle(
     routed: { modelString: HOSTED },
     implicitModel: false,
     directModel: () => DIRECT,
+    agentDirectModel: () => DIRECT,
     ...overrides,
   });
 }
@@ -143,6 +144,21 @@ describe("model transport hook credential", () => {
       settle({ credential: SECRET }, { routed: { modelString: DIRECT }, implicitModel: true })
     );
     assert(error.message.includes("explicit"));
+  });
+
+  it("lets a model override keep the credential within the agent's provider", () => {
+    assertEquals(
+      settle({ credential: SECRET }, { directModel: () => "openai/gpt-5.4-mini" }),
+      "openai/gpt-5.4-mini",
+    );
+  });
+
+  it("rejects a model override that would send the credential to another provider", () => {
+    const error = configErrorOf(() =>
+      settle({ credential: SECRET }, { directModel: () => "anthropic/claude-haiku-4-5" })
+    );
+    assert(error.message.includes("override"));
+    configErrorOf(() => settle({ credential: SECRET }, { agentDirectModel: () => undefined }));
   });
 
   for (

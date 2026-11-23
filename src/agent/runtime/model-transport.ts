@@ -313,8 +313,11 @@ export async function resolveAgentModelTransport(
     agentId: input.agentId,
     transport,
     routed,
-    implicitModel: isImplicitAgentModel(configuredModel),
+    implicitModel: isImplicitAgentModel(input.config.model) ||
+      isImplicitAgentModel(configuredModel),
     directModel,
+    agentDirectModel: () =>
+      readCatalog(() => resolveDirectProviderRuntimeModel(input.config.model)),
   });
 
   const privateThinking = privatelyResolvedModel

@@ -58,7 +58,9 @@ function credentialConfigError(agentId: string, reason: string): Error {
  * explicit provider model routes through Veryfront Cloud only because the
  * environment holds no key for it, and the credential is that key. A model the
  * runtime chose (omitted or `auto`) cannot take a credential, because the
- * provider that would receive it depends on ambient keys.
+ * provider that would receive it depends on ambient keys. A per-call model
+ * override may change the model but not the provider: the credential was
+ * issued for the agent's provider, and a caller must not redirect it.
  */
 export function settleCredentialModel(options: {
   agentId: string;
@@ -66,6 +68,7 @@ export function settleCredentialModel(options: {
   routed: RoutedModel;
   implicitModel: boolean;
   directModel: () => string | undefined;
+  agentDirectModel: () => string | undefined;
 }): string {
   if (!requestsCredential(options.transport)) {
     if (options.routed.refusal !== undefined) throw options.routed.refusal;
@@ -87,5 +90,20 @@ export function settleCredentialModel(options: {
         `so the credential goes to the provider it belongs to.`,
     );
   }
-  return options.directModel() ?? options.routed.modelString;
+  const directModel = options.directModel();
+  if (
+    directModel !== undefined &&
+    providerOf(directModel) !== providerOf(options.agentDirectModel())
+  ) {
+    throw credentialConfigError(
+      options.agentId,
+      `but this call's model override selects another provider than the agent's own model. ` +
+        `The credential belongs to the agent's provider and is not sent elsewhere.`,
+    );
+  }
+  return directModel ?? options.routed.modelString;
+}
+
+function providerOf(modelString: string | undefined): string | undefined {
+  return modelString?.slice(0, modelString.indexOf("/"));
 }

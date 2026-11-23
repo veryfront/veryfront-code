@@ -310,6 +310,53 @@ describe("resolveAgentModelTransport hook credential", () => {
     });
   }
 
+  for (
+    const [label, config] of [
+      ["an explicit agent model", agentConfig(MODEL, { credential: "sk-agent-policies" })],
+      ["an omitted agent model", {
+        system: "You are a helpful assistant.",
+        resolveModelTransport: () => ({ credential: "sk-agent-policies" }),
+      }],
+    ] as const
+  ) {
+    it(`never sends the credential to a provider a model override picks over ${label}`, async () => {
+      setEnv("OPENAI_API_KEY", PROCESS_KEY);
+      setEnv("ANTHROPIC_API_KEY", PROCESS_KEY);
+      const requests = captureRequests();
+
+      const error = await assertRejects(() =>
+        resolveAgentModelTransport({
+          agentId: "policies",
+          config,
+          context: undefined,
+          mode: "generate",
+          modelOverride: "anthropic/claude-haiku-4-5",
+        })
+      );
+
+      assertEquals(fromError(error)?.type, "config");
+      assertEquals(requests, []);
+    });
+  }
+
+  it("rejects a credential when a model override asks the runtime to choose", async () => {
+    setEnv("ANTHROPIC_API_KEY", PROCESS_KEY);
+    const requests = captureRequests();
+
+    const error = await assertRejects(() =>
+      resolveAgentModelTransport({
+        agentId: "policies",
+        config: agentConfig(MODEL, { credential: "sk-agent-policies" }),
+        context: undefined,
+        mode: "generate",
+        modelOverride: "auto",
+      })
+    );
+
+    assertEquals(fromError(error)?.type, "config");
+    assertEquals(requests, []);
+  });
+
   it("still rejects a credential for an omitted model that Veryfront Cloud serves", async () => {
     setEnv("VERYFRONT_API_TOKEN", "vf_test_credential");
     setEnv("VERYFRONT_PROJECT_SLUG", "credential-project");
