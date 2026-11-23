@@ -24,6 +24,8 @@ describe("native executor source coverage", () => {
       `fixed Node executor bootstrap loads a real project only after fixed ${profile} installation`
     );
     names.push(
+      "fixed Node executor bootstrap loads a real project only after fixed runtime selected-source installation",
+      "fixed Node executor bootstrap loads a real project only after fixed project-tools selected-source installation",
       "fixed Node executor bootstrap accepts native Node when a Deno compatibility namespace is present",
     );
     for (const name of names) {

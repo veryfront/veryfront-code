@@ -1,6 +1,7 @@
 import { privateJsonStringify } from "#veryfront/security/private-json.ts";
 import { isAbsolute, join, relative, sep } from "node:path";
 import { createPrivateSet } from "#veryfront/security/private-set.ts";
+import { filterPrivateArray } from "#veryfront/security/private-array.ts";
 import {
   chainPrivatePromise as chain,
   createPrivateDeferred,
@@ -12,6 +13,7 @@ import type {
   ProjectAgentRuntimeDiscovery,
 } from "#veryfront/agent/project/agent-runtime.ts";
 import type { RuntimeAgentMarkdownDefinition } from "#veryfront/agent/runtime/agent-definition.ts";
+import { getRuntimeAgentEntrypointSchema } from "#veryfront/agent/runtime/agent-invocation-contract.ts";
 import type { ExecutorOperation, ExecutorOperationContext } from "../executor/channel.ts";
 import { type ExecutorBinding, getExecutorBindingSchema } from "../executor/protocol.ts";
 import { warmExecutorProjectToolSchemas } from "#veryfront/agent/hosted/executor-project-tools.ts";
@@ -57,6 +59,8 @@ export interface ExecutorDiscoveryOptions {
   projectDir: string;
   agentSource?: ProjectAgentRuntimeAgentSource;
   defaultAgentId?: string;
+  /** Trusted exact source selection, not a discovery request parameter. */
+  agentEntrypoint?: { path: string };
   signal: AbortSignal;
   /** Local dependency injection; never populated from the protocol. */
   backend?: ExecutorDiscoveryBackend;
@@ -101,6 +105,12 @@ export function createExecutorDiscovery(input: ExecutorDiscoveryOptions): Execut
   const defaultId = input.defaultAgentId === undefined
     ? undefined
     : parseDiscoveryData(getExecutorDiscoveryIdSchema(), input.defaultAgentId);
+  const agentEntrypoint = input.agentEntrypoint === undefined
+    ? undefined
+    : Object.freeze(parseDiscoveryData(getRuntimeAgentEntrypointSchema(), input.agentEntrypoint));
+  if (agentEntrypoint && !defaultId) {
+    throw new ExecutorDiscoveryError("EXECUTOR_DISCOVERY_INVALID_INPUT");
+  }
   if (
     typeof input.projectDir !== "string" || !isAbsolute(input.projectDir) ||
     !(input.signal instanceof AbortSignal)
@@ -175,12 +185,16 @@ export function createExecutorDiscovery(input: ExecutorDiscoveryOptions): Execut
       backend = createNodeExecutorDiscoveryBackend({
         projectDir,
         cacheKey: privateJsonStringify(binding),
+        agentEntrypoint,
       });
     }
     loadStarted = true;
     try {
       runtime = await observePrivatePromise(backend.load(lifetime.signal));
       assertActive();
+      if (agentEntrypoint && (runtime.agentEntrypointErrors ?? runtime.errors).length > 0) {
+        throw new ExecutorDiscoveryError("EXECUTOR_DISCOVERY_FAILED");
+      }
       // Validate the whole catalog before publishing local or wire access.
       const module = await observePrivatePromise(helpers());
       parseDiscoveryData(
@@ -197,6 +211,9 @@ export function createExecutorDiscovery(input: ExecutorDiscoveryOptions): Execut
   }
 
   async function describeAgent(discovery: ProjectAgentRuntimeDiscovery, agentId: string) {
+    if (agentEntrypoint && agentId !== defaultId) {
+      throw new ExecutorDiscoveryError("AGENT_NOT_FOUND");
+    }
     const cached = apply(mapGet, definitions, [agentId]) as
       | RuntimeAgentMarkdownDefinition
       | undefined;
@@ -216,7 +233,9 @@ export function createExecutorDiscovery(input: ExecutorDiscoveryOptions): Execut
       ));
       definition = { ...projected, id: agentId };
     } else {
-      if (agentSource === "code") throw new ExecutorDiscoveryError("AGENT_NOT_FOUND");
+      if (agentEntrypoint || agentSource === "code") {
+        throw new ExecutorDiscoveryError("AGENT_NOT_FOUND");
+      }
       const files = await import("#veryfront/agent/runtime/agent-definition-files.ts");
       const lookup = { baseDir: projectDir, id: agentId };
       if (!files.resolveRuntimeAgentDefinitionsDirInputSchema.safeParse(lookup).success) {
@@ -316,7 +335,19 @@ export function createExecutorDiscovery(input: ExecutorDiscoveryOptions): Execut
           parseDiscoveryData(discoveryRequestSchema, value);
           const discovery = await observePrivatePromise(discover());
           const module = await observePrivatePromise(helpers());
-          const candidates = module.getProjectAgentRuntimeAgentIdCandidates(discovery);
+          const allCandidates = module.getProjectAgentRuntimeAgentIdCandidates(discovery);
+          const candidates = agentEntrypoint
+            ? {
+              codeAgentIds: filterPrivateArray(
+                allCandidates.codeAgentIds,
+                (id) => id === defaultId,
+              ),
+              markdownAgentIds: filterPrivateArray(
+                allCandidates.markdownAgentIds,
+                (id) => id === defaultId,
+              ),
+            }
+            : allCandidates;
           const defaultAgentId = defaultId ??
             module.resolveSingleProjectAgentRuntimeAgentId({ candidates, source: agentSource });
           if (!defaultAgentId) throw new ExecutorDiscoveryError("CONFIG_INVALID");
@@ -338,6 +369,9 @@ export function createExecutorDiscovery(input: ExecutorDiscoveryOptions): Execut
       handle(value, context) {
         return execute(context, async () => {
           const request = parseDiscoveryData(agentDescribeRequestSchema, value);
+          if (agentEntrypoint && request.agentId !== defaultId) {
+            throw new ExecutorDiscoveryError("AGENT_NOT_FOUND");
+          }
           const discovery = await observePrivatePromise(discover());
           const definition = await observePrivatePromise(describeAgent(discovery, request.agentId));
           return discoverySuccess(

@@ -607,6 +607,9 @@ function snapshotTrustedRuntime(
       ...(execution.projectSlug === undefined ? {} : { projectSlug: execution.projectSlug }),
     },
     allowedToolNames: input.projectToolNames,
+    ...(installation.agentEntrypoint === undefined
+      ? {}
+      : { agentEntrypoint: installation.agentEntrypoint }),
     maxCalls: operations.tools.maxCalls,
     maxConcurrent: operations.tools.maxConcurrent,
     limits: operations.tools.limits,

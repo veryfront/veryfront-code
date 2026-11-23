@@ -16,7 +16,15 @@ it("keeps cold executor installations inside independent child budgets without o
       cost: 2,
     },
     { name: "loads a real project only after fixed runtime installation", cost: 6000 },
+    {
+      name: "loads a real project only after fixed runtime selected-source installation",
+      cost: 6000,
+    },
     { name: "loads a real project only after fixed project-tools installation", cost: 4300 },
+    {
+      name: "loads a real project only after fixed project-tools selected-source installation",
+      cost: 4300,
+    },
     { name: "loads a real project only after fixed http installation", cost: 11200 },
     { name: "accepts native Node when a Deno compatibility namespace is present", cost: 2 },
     { name: "rejects missing and noncanonical bootstrap values before reading a key", cost: 2 },
@@ -65,7 +73,7 @@ it("keeps cold executor installations inside independent child budgets without o
   }
   assertEquals(
     patterns.map((pattern) => cases.filter((test) => pattern.test(`${suite} ${test.name}`)).length),
-    [1, 1, 1, 19],
+    [2, 2, 1, 19],
   );
   for (const pattern of patterns) {
     const selected = cases.filter((test) => pattern.test(`${suite} ${test.name}`));

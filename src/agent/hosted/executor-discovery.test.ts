@@ -49,6 +49,7 @@ function fixture(
     agents?: Agent[];
     agentSource?: "auto" | "code" | "markdown";
     defaultAgentId?: string;
+    agentEntrypoint?: { path: string };
     backend?: ExecutorDiscoveryBackend;
   } = {},
 ) {
@@ -62,6 +63,7 @@ function fixture(
     projectDir: "/synthetic-project",
     agentSource: input.agentSource,
     defaultAgentId: input.defaultAgentId,
+    agentEntrypoint: input.agentEntrypoint,
     signal: controller.signal,
     backend: input.backend ?? {
       load: () => {
@@ -652,5 +654,75 @@ describe("executor discovery operations", () => {
         await f.owner.close();
       }
     }
+  });
+});
+
+describe("selected executor agent source", () => {
+  it("requires an explicit agent and refuses unnormalized source paths before discovery", () => {
+    assertThrows(() => fixture({ agentEntrypoint: { path: "agents/selected.ts" } }));
+    for (
+      const path of [
+        "../selected.ts",
+        "agents/../other.ts",
+        "agents//selected.ts",
+        "/agents/selected.ts",
+      ]
+    ) {
+      assertThrows(() => fixture({ defaultAgentId: "coder", agentEntrypoint: { path } }));
+    }
+  });
+
+  it("does not expose another export or load discovery for another requested ID", async () => {
+    const f = fixture({
+      agents: [codeAgent(), codeAgent("internal")],
+      defaultAgentId: "coder",
+      agentEntrypoint: { path: "agents/selected.ts" },
+    });
+    try {
+      assertEquals(await call(f.owner, "agent.describe", { agentId: "internal" }), {
+        ok: false,
+        code: "AGENT_NOT_FOUND",
+      });
+      assertEquals(f.loads, 0);
+      const response = getExecutorDiscoveryResultSchema().parse(
+        await call(f.owner, "discovery.describe"),
+      );
+      assert(response.ok);
+      assertEquals(response.value.candidates, { codeAgentIds: ["coder"], markdownAgentIds: [] });
+      assertEquals(response.value.definition.id, "coder");
+      assertEquals(f.loads, 1);
+    } finally {
+      await f.owner.close();
+    }
+  });
+
+  it("never falls back to the conventional Markdown location when the selected file omits the ID", async () => {
+    const f = fixture({
+      agents: [],
+      defaultAgentId: "coder",
+      agentEntrypoint: { path: "agents/selected.ts" },
+    });
+    try {
+      assertEquals(await call(f.owner, "agent.describe", { agentId: "coder" }), {
+        ok: false,
+        code: "AGENT_NOT_FOUND",
+      });
+    } finally {
+      await f.owner.close();
+    }
+  });
+
+  it("fails closed and retires partial discovery when the selected source has errors", async () => {
+    const f = fixture({ defaultAgentId: "coder", agentEntrypoint: { path: "agents/selected.ts" } });
+    f.state.agentEntrypointErrors = [{
+      file: "agents/selected.ts",
+      error: new Error("Synthetic selected source failure"),
+    }];
+    assertEquals(await call(f.owner, "discovery.describe"), {
+      ok: false,
+      code: "EXECUTOR_DISCOVERY_FAILED",
+    });
+    await f.owner.settled;
+    assertEquals(f.cleanups, 1);
   });
 });

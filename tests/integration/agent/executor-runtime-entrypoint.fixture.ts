@@ -59,10 +59,18 @@ export function registerExecutorRuntimeEntrypointTests(): void {
       await executor?.close();
     }
   });
-  for (const profile of ["runtime", "project-tools", "http"] as const) {
-    it(`loads a real project only after fixed ${profile} installation`, {
-      timeout: 45_000,
-    }, async () => {
+  for (
+    const [profile, selectedSource] of [
+      ["runtime", false],
+      ["runtime", true],
+      ["project-tools", false],
+      ["project-tools", true],
+      ["http", false],
+    ] as const
+  ) {
+    const selection = selectedSource ? " selected-source" : "";
+    const name = `loads a real project only after fixed ${profile}${selection} installation`;
+    it(name, { timeout: 45_000 }, async () => {
       const dir = await mkdtemp(join(tmpdir(), "vf-managed-executor-"));
       const marker = join(dir, "loaded.json");
       const streamCanceled = join(dir, "stream-canceled.txt");
@@ -77,6 +85,13 @@ export function registerExecutorRuntimeEntrypointTests(): void {
         join(dir, "crew", "writer.md"),
         "---\nname: Writer\n---\nSynthetic instructions.\n",
       );
+      if (selectedSource) {
+        await mkdir(join(dir, "agents"));
+        await writeFile(
+          join(dir, "agents", "writer.md"),
+          "---\nname: Selected writer\n---\nExact selected source instructions.\n",
+        );
+      }
       if (profile === "http") {
         await mkdir(join(dir, "pages", "api"), { recursive: true });
         await writeFile(
@@ -255,6 +270,7 @@ export function registerExecutorRuntimeEntrypointTests(): void {
             execution: { kind: "ephemeral", projectId: null },
           },
           capabilities: { persistence: {} },
+          ...(selectedSource ? { agentEntrypoint: { path: "agents/writer.md" } } : {}),
         };
         const projectContext = {
           agentId: "writer",
@@ -277,6 +293,7 @@ export function registerExecutorRuntimeEntrypointTests(): void {
           : {
             version: 1,
             mode: "project-tools",
+            ...(selectedSource ? { agentEntrypoint: { path: "agents/writer.md" } } : {}),
             binding,
             root: "project",
             owner: runtimeInput.owner,
@@ -388,6 +405,13 @@ export function registerExecutorRuntimeEntrypointTests(): void {
             await channel.request("discovery.describe", {}, { timeoutMs: 30_000 }),
           );
           assert(description.ok, JSON.stringify(description));
+          if (selectedSource) {
+            assertEquals(description.value.definition.name, "Selected writer");
+            assertEquals(description.value.candidates, {
+              codeAgentIds: [],
+              markdownAgentIds: ["writer"],
+            });
+          }
         }
         assertEquals(JSON.parse(await readFile(marker, "utf8")).pid, endpoint.pid);
         await assertRejects(() => channel!.request("runtime.install", input));

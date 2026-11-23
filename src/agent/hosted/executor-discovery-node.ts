@@ -1,6 +1,9 @@
 import { realpath } from "node:fs/promises";
 import { clearConfigCache, getConfig } from "#veryfront/config";
-import { bindExecutorDiscoveryRoots } from "#veryfront/agent/hosted/executor-discovery-roots.ts";
+import {
+  bindExecutorAgentEntrypoint,
+  bindExecutorDiscoveryRoots,
+} from "#veryfront/agent/hosted/executor-discovery-roots.ts";
 import { clearRegistryScope } from "#veryfront/registry/project-scoped-registry-manager.ts";
 import { tryGetRegistryScopeId } from "#veryfront/cache/cache-key-builder.ts";
 import { clearTranspileCache } from "#veryfront/discovery/transpiler.ts";
@@ -15,7 +18,7 @@ let activeOwner: object | undefined;
 
 /** Executor-only default backend. Its module is loaded on the first metadata operation. */
 export function createNodeExecutorDiscoveryBackend(
-  input: { projectDir: string; cacheKey: string },
+  input: { projectDir: string; cacheKey: string; agentEntrypoint?: { path: string } },
 ): ExecutorDiscoveryBackend {
   const owner = {};
   let claimed = false;
@@ -29,8 +32,11 @@ export function createNodeExecutorDiscoveryBackend(
       }
       activeOwner = owner;
       claimed = true;
-      const config = await getConfig(input.projectDir, nodeAdapter, { cacheKey: input.cacheKey });
       const projectDir = await realpath(input.projectDir);
+      const agentEntrypoint = input.agentEntrypoint === undefined
+        ? undefined
+        : await bindExecutorAgentEntrypoint(projectDir, input.agentEntrypoint, realpath);
+      const config = await getConfig(projectDir, nodeAdapter, { cacheKey: input.cacheKey });
       const boundConfig = await bindExecutorDiscoveryRoots(projectDir, config, realpath);
       signal.throwIfAborted();
       return discoverProjectAgentRuntime({
@@ -41,6 +47,7 @@ export function createNodeExecutorDiscoveryBackend(
         // source filesystem. Preserve discovery paths/policy in a local copy.
         config: boundConfig,
         allowHostProjectCodeExecution: true,
+        agentEntrypoint,
       });
     },
     async cleanup() {

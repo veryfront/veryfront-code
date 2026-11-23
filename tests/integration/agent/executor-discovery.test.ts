@@ -60,12 +60,13 @@ async function project() {
   return { dir, loaded, projected, cleanup: () => rm(dir, { recursive: true, force: true }) };
 }
 
-function owner(dir: string, defaultAgentId?: string) {
+function owner(dir: string, defaultAgentId?: string, agentEntrypoint?: { path: string }) {
   return createExecutorDiscovery({
     binding,
     source,
     projectDir: dir,
     defaultAgentId,
+    agentEntrypoint,
     signal: new AbortController().signal,
   });
 }
@@ -454,4 +455,114 @@ describe("isolated executor local project discovery", () => {
     }
     assertEquals(agentRegistry.get("writer"), undefined);
   });
+});
+
+describe("executor exact source selection", () => {
+  it("loads only the captured file and keeps unrelated agent modules unevaluated", async () => {
+    const f = await project();
+    let executor: ReturnType<typeof owner> | undefined;
+    try {
+      await mkdir(join(f.dir, "agents"));
+      const selected = (await readFile(join(f.dir, "crew", "coder.ts"), "utf8")).replaceAll(
+        "coder",
+        "selected",
+      ).replaceAll("Coder", "Selected");
+      await writeFile(join(f.dir, "agents", "selected.ts"), selected);
+      const marker = join(f.dir, "internal-loaded");
+      await writeFile(
+        join(f.dir, "agents", "internal.ts"),
+        `import { writeFileSync } from "node:fs"; writeFileSync(${
+          JSON.stringify(marker)
+        }, "must not execute"); throw new Error("Unselected agent loaded");`,
+      );
+      const entrypoint = { path: "agents/selected.ts" };
+      executor = owner(f.dir, "selected", entrypoint);
+      entrypoint.path = "agents/internal.ts";
+      const result = getExecutorDiscoveryResultSchema().parse(
+        await request(executor, "discovery.describe", {}),
+      );
+      assert(result.ok);
+      assertEquals(result.value.candidates, { codeAgentIds: ["selected"], markdownAgentIds: [] });
+      assertEquals(result.value.definition.name, "Selected");
+      assertEquals(result.value.errorCount, 0);
+      assertEquals(existsSync(marker), false);
+      assertEquals(await request(executor, "agent.describe", { agentId: "coder" }), {
+        ok: false,
+        code: "AGENT_NOT_FOUND",
+      });
+    } finally {
+      await executor?.close();
+      await f.cleanup();
+    }
+  });
+
+  it("refuses a missing selected file before evaluating configuration instead of searching for Markdown", async () => {
+    const f = await project();
+    let executor: ReturnType<typeof owner> | undefined;
+    try {
+      await mkdir(join(f.dir, "agents"));
+      await writeFile(
+        join(f.dir, "agents", "selected.md"),
+        "---\nname: Selected\n---\nFallback must not be used.",
+      );
+      executor = owner(f.dir, "selected", { path: "agents/missing.ts" });
+      const result = await request(executor, "discovery.describe", {});
+      assertEquals(result, { ok: false, code: "EXECUTOR_DISCOVERY_FAILED" });
+      assertEquals(existsSync(f.loaded), false);
+    } finally {
+      await executor?.close();
+      await f.cleanup();
+    }
+  });
+
+  it("refuses a selected file symlink outside the immutable project before configuration loads", async () => {
+    const f = await project();
+    const outside = await mkdtemp(join(tmpdir(), "vf-executor-selected-outside-"));
+    let executor: ReturnType<typeof owner> | undefined;
+    try {
+      await mkdir(join(f.dir, "agents"));
+      const target = join(outside, "selected.ts");
+      await writeFile(target, "throw new Error('Outside source must not load');");
+      await symlink(target, join(f.dir, "agents", "selected.ts"));
+      executor = owner(f.dir, "selected", { path: "agents/selected.ts" });
+      assertEquals(await request(executor, "discovery.describe", {}), {
+        ok: false,
+        code: "CONFIG_INVALID",
+      });
+      assertEquals(existsSync(f.loaded), false);
+    } finally {
+      await executor?.close();
+      await f.cleanup();
+      await rm(outside, { recursive: true, force: true });
+    }
+  });
+});
+
+it("project configuration cannot replace the captured source selection through Object.freeze", async () => {
+  const f = await project();
+  const originalFreeze = Object.freeze;
+  let executor: ReturnType<typeof owner> | undefined;
+  try {
+    await mkdir(join(f.dir, "agents"));
+    const code = (await readFile(join(f.dir, "crew", "coder.ts"), "utf8")).replaceAll(
+      "coder",
+      "selected",
+    );
+    await writeFile(join(f.dir, "agents", "selected.ts"), code.replaceAll("Coder", "Selected"));
+    await writeFile(join(f.dir, "agents", "internal.ts"), code.replaceAll("Coder", "Internal"));
+    await writeFile(
+      join(f.dir, "veryfront.config.ts"),
+      `const freeze = Object.freeze; Object.freeze = value => value && typeof value === "object" && Object.keys(value).length === 1 && value.path === "agents/selected.ts" ? freeze({ path: "agents/internal.ts" }) : freeze(value); export default {};`,
+    );
+    executor = owner(f.dir, "selected", { path: "agents/selected.ts" });
+    const result = getExecutorDiscoveryResultSchema().parse(
+      await request(executor, "discovery.describe"),
+    );
+    assert(result.ok);
+    assertEquals(result.value.definition.name, "Selected");
+  } finally {
+    Object.freeze = originalFreeze;
+    await executor?.close();
+    await f.cleanup();
+  }
 });
