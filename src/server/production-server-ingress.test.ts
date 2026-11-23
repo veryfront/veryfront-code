@@ -1,3 +1,9 @@
+import { createManagedBrokerHandler } from "#veryfront/agent/service/managed-broker-handler.ts";
+import { BrokerIngressError } from "#veryfront/agent/service/broker-ingress.ts";
+import {
+  options as brokerOptions,
+  signedRequest,
+} from "#veryfront/agent/service/broker-ingress.test-helpers.ts";
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { isDeno } from "#veryfront/platform/compat/runtime.ts";
@@ -21,6 +27,59 @@ function createBootstrap(adapter: RuntimeAdapter): BootstrapResult {
 }
 
 describe("production server ingress", () => {
+  it("passes deployment-owned managed routes through the production listener", async () => {
+    const signed = await signedRequest();
+    const adapter = createMockAdapter();
+    let served: Parameters<RuntimeAdapter["serve"]>[0] | undefined;
+    adapter.serve = (handler, options) => {
+      served = handler;
+      options.onListen?.({ hostname: "127.0.0.1", port: options.port ?? 0 });
+      return Promise.resolve({
+        stop: () => Promise.resolve(),
+        addr: { hostname: "127.0.0.1", port: options.port ?? 0 },
+      });
+    };
+    let prepared = false;
+    const broker = createManagedBrokerHandler({
+      responseMode: "sse",
+      broker: { start: () => Promise.reject(new Error("Must not allocate")) },
+      resolveIngressOptions: () => brokerOptions(signed.publicKeyPem),
+      prepare: () => {
+        prepared = true;
+        return Promise.reject(new BrokerIngressError(503, "BROKER_UNAVAILABLE"));
+      },
+    });
+    const server = await startProductionServerWithDependencies({
+      projectDir: "/production-agent-broker",
+      port: 0,
+      adapter,
+      bootstrapResult: createBootstrap(adapter),
+      unhandledRejectionGuard: false,
+      managedAgents: {
+        handlers: {
+          signedStream: broker,
+          durableStart: broker,
+          agUi: broker,
+          cancel: broker,
+          resume: broker,
+        },
+        readiness: () => false,
+      },
+    }, { bootstrap: () => Promise.reject(new Error("Unexpected bootstrap")) });
+    try {
+      await server.ready;
+      if (!served) throw new Error("Production listener was not installed");
+      const response = await served(signed.request);
+      if (!(response instanceof Response)) throw new Error("Expected a response");
+      assertEquals(response.status, 503);
+      assertEquals(await response.json(), { errorCode: "BROKER_UNAVAILABLE" });
+      assertEquals(prepared, true);
+    } finally {
+      await broker.close();
+      await server.stop();
+    }
+  });
+
   // The probes pin what Deno 2.7.7 calls through the live prototypes.
   it("takes run credentials off the request before the combined-mode interceptor", {
     ignore: !isDeno,

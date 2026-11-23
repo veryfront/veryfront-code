@@ -6,6 +6,7 @@ import { resolveHostOwnedSourceApiBaseUrl } from "#veryfront/config/host-api-bas
 import {
   INGRESS_RUN_STOP_TOKEN_HEADER,
   INGRESS_RUN_TERMINAL_TOKEN_HEADER,
+  readIngressCredential,
 } from "#veryfront/security/http/ingress-credentials.ts";
 import { MAX_ROOT_RUN_EVENT_WRITER_TOKEN_BYTES } from "../conversation/run-event-limits.ts";
 import { parseBrokerSignedRunPath } from "./broker-run-route.ts";
@@ -163,11 +164,11 @@ export async function parseBrokerRuntimeAgentIngress<TAuthorization>(
   if (request.method !== "POST" || parseBrokerSignedRunPath(actualPath) !== expectedRunId) {
     throw new BrokerIngressError(400, "BROKER_INGRESS_TARGET_MISMATCH");
   }
-  const inboundAuthorization = request.headers.get("authorization");
+  const inboundAuthorization = readIngressCredential(request, "authorization");
   const signature = request.headers.get(CONTROL_PLANE_JWS_HEADER);
-  const runEventToken = request.headers.get(RUN_EVENT_APPEND_TOKEN_HEADER);
-  const stopToken = request.headers.get(INGRESS_RUN_STOP_TOKEN_HEADER);
-  const terminalAuthToken = request.headers.get(INGRESS_RUN_TERMINAL_TOKEN_HEADER);
+  const runEventToken = readIngressCredential(request, RUN_EVENT_APPEND_TOKEN_HEADER);
+  const stopToken = readIngressCredential(request, INGRESS_RUN_STOP_TOKEN_HEADER);
+  const terminalAuthToken = readIngressCredential(request, INGRESS_RUN_TERMINAL_TOKEN_HEADER);
   if (
     (stopToken && stopToken.length > 16 * 1024) ||
     (terminalAuthToken && terminalAuthToken.length > 16 * 1024)

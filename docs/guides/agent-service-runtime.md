@@ -853,6 +853,30 @@ controls. The npm smoke jobs run the suite on the minimum supported Node version
 and the current CI version. These checks use local synthetic services. Verify
 the deployed artifact and isolation configuration separately before traffic cutover.
 
+## Mount managed agents in the production proxy
+
+`startProductionServer` accepts a deployment-owned `managedAgents` option with
+`signedStream`, `durableStart`, `agUi`, `cancel`, and `resume` handlers plus a
+readiness callback. Its optional `capabilities` handler must verify the signed
+metadata request and advertise only a qualified execution profile. Omitting
+that handler refuses capability requests; mounting routes does not enable
+account chat or advertise a protocol.
+
+This option requires proxy mode with host project execution disabled. It handles
+only the fixed managed-agent routes, before application proxy source resolution.
+Each handler retains its own authentication and exact-run authorization. Request
+credentials remain in the private ingress credential store, not restored to
+headers or passed to project code. Application HTTP and health routes retain
+their existing handlers. Agent response bodies remain in the server shutdown
+drain until consumption or cancellation; the deployment still owns broker
+shutdown and settlement.
+
+The option supplies routing, not deployment policy. Configure the canonical
+preparation handler, trusted immutable image selection, allocator, model and tool
+authority, cancellation/resume handlers and their lifecycle before enabling
+traffic. The separate signed project `execute` path also needs its own serving
+qualification; it is not converted into an agent stream by this mount.
+
 ## Verify it worked
 
 Start the service entrypoint and call the run route directly. The default

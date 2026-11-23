@@ -1,3 +1,9 @@
+import { createManagedBrokerHandler } from "#veryfront/agent/service/managed-broker-handler.ts";
+import { BrokerIngressError } from "#veryfront/agent/service/broker-ingress.ts";
+import {
+  options as brokerIngressOptions,
+  signedRequest as signedBrokerRequest,
+} from "#veryfront/agent/service/broker-ingress.test-helpers.ts";
 // Deno-only end-to-end runtime-handler coverage. Node and Bun planners
 // intentionally exclude this file because it exercises Deno.env and the Deno adapter.
 import "#veryfront/schemas/_test-setup.ts";
@@ -381,6 +387,120 @@ describe("server/runtime-handler/index", () => {
     resetMetrics();
     resetOtelInstruments();
     _resetShimForTests();
+  });
+
+  it("mounts the authenticated agent broker before project resolution without an HTTP fallback", async () => {
+    const signed = await signedBrokerRequest();
+    let prepared = false;
+    let applicationCalls = 0;
+    const broker = createManagedBrokerHandler({
+      responseMode: "sse",
+      broker: { start: () => Promise.reject(new Error("Must not allocate")) },
+      resolveIngressOptions: () => brokerIngressOptions(signed.publicKeyPem),
+      prepare: ({ ingress }) => {
+        prepared = ingress.executor.run.runId === "run-1";
+        return Promise.reject(new BrokerIngressError(503, "BROKER_UNAVAILABLE"));
+      },
+    });
+    const managedAgents = {
+      handlers: {
+        signedStream: broker,
+        durableStart: broker,
+        agUi: broker,
+        cancel: broker,
+        resume: broker,
+      },
+      readiness: () => false,
+    };
+    const handler = createVeryfrontHandler("/owned-agent-broker", createMockAdapter(), {
+      projectDir: "/owned-agent-broker",
+      config: { fs: { veryfront: { proxyMode: true } } } as VeryfrontConfig,
+      managedAgents,
+      hostedHttp: {
+        resolve: () => {
+          applicationCalls++;
+          return Promise.reject(new Error("Must not resolve application"));
+        },
+        broker: { fetch: () => Promise.reject(new Error("Must not call application")) },
+      },
+    });
+    try {
+      const response = await handler(signed.request);
+      assertEquals(response.status, 503);
+      assertEquals((await response.json()).errorCode, "BROKER_UNAVAILABLE");
+      assertEquals(prepared, true);
+      assertEquals(applicationCalls, 0);
+      const unsigned = await handler(
+        new Request("https://broker.test/api/control-plane/runs/run-1/stream", {
+          method: "POST",
+          body: "{}",
+        }),
+      );
+      assertEquals(unsigned.status, 401);
+      await unsigned.arrayBuffer();
+      assertEquals(applicationCalls, 0);
+      assertThrows(
+        () =>
+          createVeryfrontHandler("/unisolated", createMockAdapter(), {
+            projectDir: "/unisolated",
+            managedAgents,
+            config: {} as VeryfrontConfig,
+          }),
+        TypeError,
+        "proxy without host project execution",
+      );
+    } finally {
+      await broker.close();
+    }
+  });
+
+  it("keeps managed response bodies in the shutdown drain and contains handler failures", async () => {
+    const baseline = requestTracker.getInFlightCount();
+    let cancelled = false;
+    let fail = false;
+    const delegate = {
+      handle: () => {
+        if (fail) throw new Error("private synthetic broker detail");
+        return new Response(
+          new ReadableStream<Uint8Array>({
+            cancel() {
+              cancelled = true;
+            },
+          }),
+          {
+            headers: { "content-type": "text/event-stream" },
+          },
+        );
+      },
+    };
+    const handler = createVeryfrontHandler("/owned-agent-broker", createMockAdapter(), {
+      projectDir: "/owned-agent-broker",
+      config: { fs: { veryfront: { proxyMode: true } } } as VeryfrontConfig,
+      managedAgents: {
+        handlers: {
+          signedStream: delegate,
+          durableStart: delegate,
+          agUi: delegate,
+          cancel: delegate,
+          resume: delegate,
+        },
+        readiness: () => true,
+      },
+    });
+    const response = await handler(
+      new Request("https://broker.test/api/control-plane/runs/run-1/stream", { method: "POST" }),
+    );
+    assertEquals(requestTracker.getInFlightCount(), baseline + 1);
+    await response.body!.cancel();
+    assertEquals(cancelled, true);
+    assertEquals(requestTracker.getInFlightCount(), baseline);
+    fail = true;
+    const rejected = await handler(
+      new Request("https://broker.test/api/control-plane/runs/run-1/stream", { method: "POST" }),
+    );
+    assertEquals(rejected.status, 503);
+    assertEquals(await rejected.json(), { errorCode: "BROKER_UNAVAILABLE" });
+    assertEquals(requestTracker.getInFlightCount(), baseline);
   });
 
   it("retains separate profiling sessions across interleaved request phases", async () => {

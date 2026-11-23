@@ -1,3 +1,4 @@
+import { sealIngressCredentials } from "#veryfront/security/http/ingress-credentials.ts";
 import {
   hostedAcceptedChildEvidenceFromCapability,
   hostedRunCanResolveAcceptedChildInput,
@@ -23,6 +24,55 @@ function verifyProjectAccess() {
 }
 
 describe("managed agent ingress", () => {
+  for (const kind of ["durable", "ag-ui"] as const) {
+    for (const credential of ["run-event-secret", "inference-secret"]) {
+      it(`refuses reflected sealed ${credential} in ${kind} executor data`, async () => {
+        const messages = kind === "durable"
+          ? [{ id: "m1", role: "user", parts: [{ type: "text", text: credential }] }]
+          : [{ id: "m1", role: "user", content: credential }];
+        const payload = kind === "durable"
+          ? {
+            messages,
+            context: { conversationId, projectId, branchId: "branch-1" },
+            durableRootRun: { runId: "run_root_1", messageId },
+          }
+          : {
+            threadId: conversationId,
+            runId: "run-1",
+            messages,
+            tools: [],
+            context: [{ description: "veryfront.projectId", value: JSON.stringify(projectId) }],
+          };
+        const request = sealIngressCredentials(
+          new Request("https://agent.example.test/api/" + kind, {
+            method: "POST",
+            headers: {
+              "content-type": "application/json",
+              authorization: "Bearer request-auth-secret",
+              "X-Veryfront-Run-Event-Token": "run-event-secret",
+              "X-Veryfront-Inference-Token": "inference-secret",
+            },
+            body: JSON.stringify(payload),
+          }),
+        );
+        const options = {
+          authenticate,
+          verifyProjectAccess,
+          verifyRunEventAppendToken: () => Promise.resolve(true),
+        };
+        const result = kind === "durable"
+          ? await parseManagedDurableAgentIngress(request, options)
+          : await parseManagedAgUiAgentIngress(request, options);
+        assert(result instanceof Response);
+        const body = await result.json();
+        assertEquals({ status: result.status, body }, {
+          status: 403,
+          body: { errorCode: "BROKER_INGRESS_SCOPE_DENIED" },
+        });
+      });
+    }
+  }
+
   it("projects a writer-verified resume call into detached executor data", async () => {
     const resumeToolCall = {
       id: "call-inbox:resume-1",

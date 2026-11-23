@@ -1,3 +1,4 @@
+import type { ManagedAgentBrokerIngressOptions } from "#veryfront/agent/service/managed-broker-ingress.ts";
 import type { HostedHttpIngressOptions } from "./isolated-http/hosted-http-ingress.ts";
 import {
   HOSTED_HTTP_ISOLATION_ENV,
@@ -181,6 +182,8 @@ export interface ServerHandle {
 
 /** Options accepted by start production server. */
 export interface StartProductionServerOptions extends ServerOptions {
+  /** Host-owned managed agent routes. Requires proxy isolation; caller owns broker shutdown. */
+  managedAgents?: ManagedAgentBrokerIngressOptions;
   /** Host-owned immutable-release ingress. Requires proxy mode without a shared host-execution grant; the caller owns broker shutdown. */
   hostedHttp?: HostedHttpIngressOptions;
   debug?: boolean;
@@ -356,7 +359,7 @@ export function startProductionServerWithDependencies(
         }
 
         if (
-          options.hostedHttp && (
+          (options.hostedHttp || options.managedAgents) && (
             bootstrap.config.fs?.veryfront?.proxyMode !== true ||
             isHostProjectExecutionOverrideEnabled() || options.localProjects !== undefined ||
             options.discoveryConfig !== undefined
@@ -367,7 +370,7 @@ export function startProductionServerWithDependencies(
           );
         }
 
-        if (!options.hostedHttp) {
+        if (!options.hostedHttp && !options.managedAgents) {
           await prewarmLocalProductionCSSArtifacts(bootstrap.adapter, {
             projectDir,
             defaultProjectSlug,
@@ -450,6 +453,7 @@ export function startProductionServerWithDependencies(
           localProjects,
           allowHostProjectCodeExecution,
           hostedHttp: options.hostedHttp,
+          managedAgents: options.managedAgents,
         });
 
         const coreHandler = baseHandler;
