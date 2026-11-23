@@ -8,7 +8,8 @@ export const NO_SYNC_NOTICE =
 
 /** Printed when a sync shortcut is pressed in a session that has sync off. */
 export const NO_SYNC_SHORTCUT_NOTICE =
-  "Source sync is off for this session. Restart without --no-sync to select, pull or push.";
+  "Source sync is off for this session. Restart without --no-sync and with " +
+  "VERYFRONT_DEV_NO_SYNC unset to select, pull or push.";
 
 const SYNC_SHORTCUT_KEYS: ReadonlySet<string> = new Set(["s", "p", "u"]);
 
@@ -33,6 +34,11 @@ export function announceNoSync(
   if (!options.noSync || options.proxyMode || !options.linkedProjectSlug) return false;
   log(`  ${NO_SYNC_NOTICE}`);
   return true;
+}
+
+/** The account status hint: it points at the project shortcut only when that key works. */
+export function accountStatusHint(noSync: boolean): string {
+  return noSync ? "" : ", press s to select a project";
 }
 
 /** The shortcuts a session lists: the project, pull and push keys go when sync is off. */

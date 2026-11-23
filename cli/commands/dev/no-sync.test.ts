@@ -2,11 +2,13 @@ import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { DEV_SHORTCUTS } from "../../ui/components/shortcuts.ts";
 import {
+  accountStatusHint,
   announceNoSync,
   connectedDevDisabled,
   devSessionShortcuts,
   guardSyncShortcuts,
   NO_SYNC_NOTICE,
+  NO_SYNC_SHORTCUT_NOTICE,
 } from "./no-sync.ts";
 
 describe("dev --no-sync session", () => {
@@ -28,6 +30,16 @@ describe("dev --no-sync session", () => {
 
     assertEquals(announceNoSync(linked, log), true);
     assertEquals(lines, [`  ${NO_SYNC_NOTICE}`]);
+  });
+
+  it("points the account status at the project shortcut only when it works", () => {
+    assertEquals(accountStatusHint(false), ", press s to select a project");
+    assertEquals(accountStatusHint(true), "");
+  });
+
+  it("names both ways sync was turned off in the shortcut notice", () => {
+    assertEquals(NO_SYNC_SHORTCUT_NOTICE.includes("--no-sync"), true);
+    assertEquals(NO_SYNC_SHORTCUT_NOTICE.includes("VERYFRONT_DEV_NO_SYNC"), true);
   });
 
   it("lists every shortcut in a syncing session", () => {

@@ -62,6 +62,7 @@ import {
   stopDevServices,
 } from "./connected-dev.ts";
 import {
+  accountStatusHint,
   announceNoSync,
   connectedDevDisabled,
   devSessionShortcuts,
@@ -716,7 +717,7 @@ export function devCommand(options: DevOptions): Promise<DevCommandResult> {
             await authReady;
             if (identity) {
               console.log(
-                `  ${dim(authStatus(identity))}${dim(", press s to select a project")}`,
+                `  ${dim(authStatus(identity))}${dim(accountStatusHint(noSync))}`,
               );
               return;
             }
