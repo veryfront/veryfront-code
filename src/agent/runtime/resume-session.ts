@@ -485,22 +485,33 @@ export class RunResumeSessionManager<T> {
        */
       rememberCancellation?: boolean;
       /**
-       * Cancel only a session dispatched from before this durable event id. An
-       * integration-auth park names the event it settled at, so a late or retried
-       * park cancel cannot stop the resumed start that reused the run id.
+       * Cancel only a session dispatched from before this durable event id, and
+       * refuse only delayed starts dispatched from before it. A caller names the
+       * event its generation ended at, so a late or retried cancel cannot stop or
+       * refuse a newer start that reused the run id.
        */
       onlyIfStartedBeforeEventId?: number;
     } = {},
   ): boolean {
     const runId = assertRunControlAuthority(authority, "cancel");
     return this.cancelRunById(runId, {
-      remember: options.rememberCancellation !== false
-        ? {}
-        : options.onlyIfStartedBeforeEventId !== undefined
+      remember: options.onlyIfStartedBeforeEventId !== undefined
         ? { refusesStartsBeforeEventId: options.onlyIfStartedBeforeEventId }
+        : options.rememberCancellation !== false
+        ? {}
         : undefined,
       onlyIfStartedBeforeEventId: options.onlyIfStartedBeforeEventId,
     });
+  }
+
+  /**
+   * Whether the session holding this run id was dispatched from this durable
+   * event id or later. A fenced cancel uses it to tell a newer start of the run
+   * apart from the generation it addressed.
+   */
+  isRunStartedAtOrAfter(runId: string, eventId: number): boolean {
+    const startedFromEventId = this.sessions.get(runId)?.startedFromEventId;
+    return startedFromEventId !== undefined && startedFromEventId >= eventId;
   }
 
   /**

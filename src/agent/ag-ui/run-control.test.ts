@@ -644,4 +644,139 @@ describe("agent/ag-ui-run-control", () => {
       assertEquals(sessionManager.getRunStatus("run_1"), "running");
     });
   }
+
+  /**
+   * An ordinary cancel can arrive after a newer start has reused the run id.
+   * `started_before_event_id` names the generation the caller means, so the
+   * cancel stops and refuses only starts dispatched before that event.
+   */
+  describe("fenced cancellation", () => {
+    const fencedCancel = (
+      handler: (request: Request) => Promise<Response>,
+      query = "started_before_event_id=20",
+    ) =>
+      handler(
+        new Request(`https://example.com/api/runs/run_1?${query}`, { method: "DELETE" }),
+      );
+    const startRefused = (
+      sessionManager: RunResumeSessionManager<{ ok: boolean }>,
+      startedFromEventId: number | undefined,
+    ): boolean => {
+      try {
+        sessionManager.startRun({
+          runId: "run_1",
+          threadId: crypto.randomUUID(),
+          ...(startedFromEventId !== undefined ? { startedFromEventId } : {}),
+        });
+        return false;
+      } catch (error) {
+        if (error instanceof RunCancelledError) return true;
+        throw error;
+      }
+    };
+
+    it("leaves a newer start running and startable when a cancel for an earlier generation arrives late", async () => {
+      const sessionManager = new RunResumeSessionManager<{ ok: boolean }>();
+      const signal = sessionManager.startRun({
+        runId: "run_1",
+        threadId: crypto.randomUUID(),
+        startedFromEventId: 30,
+      });
+      const handler = createAgUiCancelHandler({
+        sessionManager,
+        authorizeRunControl: allowRunControl,
+      });
+
+      const response = await fencedCancel(handler);
+
+      assertEquals(response.status, 204);
+      assertEquals(signal.aborted, false);
+      assertEquals(sessionManager.getRunStatus("run_1"), "running");
+      sessionManager.completeRun("run_1", signal);
+      assertEquals(startRefused(sessionManager, 35), false, "a newer start stays startable");
+    });
+
+    it("stops the earlier generation and refuses only its delayed starts", async () => {
+      const sessionManager = new RunResumeSessionManager<{ ok: boolean }>();
+      const signal = sessionManager.startRun({
+        runId: "run_1",
+        threadId: crypto.randomUUID(),
+        startedFromEventId: 10,
+      });
+      const handler = createAgUiCancelHandler({
+        sessionManager,
+        authorizeRunControl: allowRunControl,
+      });
+
+      const response = await fencedCancel(handler);
+
+      assertEquals(response.status, 202);
+      assertEquals(signal.aborted, true);
+      assertEquals(startRefused(sessionManager, 15), true, "a delayed earlier start is refused");
+      assertEquals(startRefused(sessionManager, undefined), true, "an unfenced start is refused");
+      assertEquals(startRefused(sessionManager, 20), false, "a start at the fence is accepted");
+    });
+
+    it("does not report a newer start as the stopped execution", async () => {
+      const sessionManager = new RunResumeSessionManager<{ ok: boolean }>();
+      sessionManager.startRun({
+        runId: "run_1",
+        threadId: crypto.randomUUID(),
+        startedFromEventId: 30,
+      });
+      const handler = createAgUiCancelHandler({
+        sessionManager,
+        authorizeRunControl: allowRunControl,
+        hasPendingExecution: () => true,
+        hasSettledExecution: () => false,
+      });
+
+      const response = await fencedCancel(
+        handler,
+        "started_before_event_id=20&confirm_stopped=true",
+      );
+
+      assertEquals(response.status, 204);
+      assertEquals(sessionManager.getRunStatus("run_1"), "running");
+    });
+
+    it("refuses a malformed fence without cancelling or remembering anything", async () => {
+      for (const fence of ["", "0", "-1", "1.5", "abc", "9007199254740993"]) {
+        const sessionManager = new RunResumeSessionManager<{ ok: boolean }>();
+        sessionManager.startRun({
+          runId: "run_1",
+          threadId: crypto.randomUUID(),
+          startedFromEventId: 30,
+        });
+        const handler = createAgUiCancelHandler({
+          sessionManager,
+          authorizeRunControl: allowRunControl,
+        });
+
+        const response = await fencedCancel(handler, `started_before_event_id=${fence}`);
+
+        assertEquals(response.status, 400, `fence "${fence}"`);
+        assertEquals(sessionManager.getRunStatus("run_1"), "running");
+        sessionManager.cancelRun("run_1");
+        assertEquals(startRefused(sessionManager, 5), false, "no tombstone is remembered");
+      }
+    });
+
+    it("checks authority before reading the fence", async () => {
+      const sessionManager = new RunResumeSessionManager<{ ok: boolean }>();
+      sessionManager.startRun({
+        runId: "run_1",
+        threadId: crypto.randomUUID(),
+        startedFromEventId: 10,
+      });
+      const handler = createAgUiCancelHandler({
+        sessionManager,
+        authorizeRunControl: () => false,
+      });
+
+      assertEquals((await fencedCancel(handler)).status, 403);
+      assertEquals((await fencedCancel(handler, "started_before_event_id=abc")).status, 403);
+      assertEquals(sessionManager.getRunStatus("run_1"), "running");
+    });
+  });
 });

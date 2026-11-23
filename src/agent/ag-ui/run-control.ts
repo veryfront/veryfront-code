@@ -220,13 +220,31 @@ export function createAgUiCancelHandler<T = unknown>(
     const parkedAfterEventId = parkCancellation
       ? parsePositiveEventId(new URL(request.url).searchParams.get("parked_after_event_id"))
       : undefined;
+    // An ordinary cancel can name the generation it means. A newer start that
+    // reused the run id is then neither stopped nor refused. A fence that is
+    // present but unreadable is rejected: treating it as absent would cancel
+    // and refuse every generation, which is what the caller asked to avoid.
+    const startedBeforeParam = parkCancellation
+      ? null
+      : new URL(request.url).searchParams.get("started_before_event_id");
+    const startedBeforeEventId = parsePositiveEventId(startedBeforeParam);
+    if (startedBeforeParam !== null && startedBeforeEventId === undefined) {
+      return Response.json({ error: "Invalid started_before_event_id" }, { status: 400 });
+    }
+    const fenceEventId = parkedAfterEventId ?? startedBeforeEventId;
     const accepted = options.sessionManager.cancelRunWithAuthority(authority, {
       rememberCancellation: !parkCancellation,
-      ...(parkedAfterEventId !== undefined
-        ? { onlyIfStartedBeforeEventId: parkedAfterEventId }
-        : {}),
+      ...(fenceEventId !== undefined ? { onlyIfStartedBeforeEventId: fenceEventId } : {}),
     });
     if (!parkCancellation && new URL(request.url).searchParams.get("confirm_stopped") === "true") {
+      // The execution lookups below are keyed by run id alone. When a newer
+      // start holds the run id, they describe that start, not the caller's.
+      if (
+        !accepted && startedBeforeEventId !== undefined &&
+        options.sessionManager.isRunStartedAtOrAfter(runId, startedBeforeEventId)
+      ) {
+        return new Response(null, { status: 204 });
+      }
       const stopped = options.hasSettledExecution?.(runId) === true;
       const owned = accepted || options.hasPendingExecution?.(runId) === true || stopped;
       if (owned) {

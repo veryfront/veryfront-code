@@ -451,6 +451,37 @@ describe("agent/runtime/resume-session", () => {
     assertEquals(manager.getRunStatus("run_1"), "running");
   });
 
+  it("remembers a fenced ordinary cancel only for starts before the fence", async () => {
+    const manager = new RunResumeSessionManager<{ ok: boolean }>();
+    const authority = await authorizeRunControl(() => true, {
+      request: new Request("https://runtime.example.test/api/runs/run_1", { method: "DELETE" }),
+      runId: "run_1",
+      operation: "cancel",
+    });
+    if (!authority) throw new Error("Test authorizer must grant authority");
+
+    manager.startRun({ runId: "run_1", threadId: crypto.randomUUID(), startedFromEventId: 30 });
+    assertEquals(manager.isRunStartedAtOrAfter("run_1", 20), true);
+    assertEquals(manager.isRunStartedAtOrAfter("run_1", 31), false);
+    assertEquals(manager.isRunStartedAtOrAfter("missing", 20), false);
+    assertEquals(
+      manager.cancelRunWithAuthority(authority, { onlyIfStartedBeforeEventId: 20 }),
+      false,
+      "a newer start must not be cancelled",
+    );
+    assertEquals(manager.getRunStatus("run_1"), "running");
+    manager.completeRun("run_1");
+
+    assertThrows(
+      () =>
+        manager.startRun({ runId: "run_1", threadId: crypto.randomUUID(), startedFromEventId: 10 }),
+      RunCancelledError,
+      "cancelled before start",
+    );
+    manager.startRun({ runId: "run_1", threadId: crypto.randomUUID(), startedFromEventId: 35 });
+    assertEquals(manager.getRunStatus("run_1"), "running");
+  });
+
   it("keeps the strictest remembered cancellation when park cancels follow", async () => {
     const manager = new RunResumeSessionManager<{ ok: boolean }>();
     const grant = async (runId: string) => {
