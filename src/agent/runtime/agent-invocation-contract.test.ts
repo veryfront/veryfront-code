@@ -77,6 +77,36 @@ function createInvocation(overrides: Record<string, unknown> = {}) {
 }
 
 describe("agent/runtime-agent-invocation-contract", () => {
+  it("retains canonical admission cursors and rejects incomplete or unsafe counters", () => {
+    const invocation = createInvocation();
+    const eventCursor = {
+      canonicalRunId: "30000000-3000-4000-8000-300000000001",
+      latestEventId: 42,
+      latestExternalEventSequence: 17,
+    };
+    const parsed = RuntimeAgentRunInvocationSchema.parse({
+      ...invocation,
+      run: { ...invocation.run, eventCursor },
+    });
+    assertEquals(parsed.run.eventCursor, eventCursor);
+    const initialCursor = { ...eventCursor, latestEventId: 0, latestExternalEventSequence: 0 };
+    assertEquals(
+      RuntimeAgentRunInvocationSchema.parse({
+        ...invocation,
+        run: { ...invocation.run, eventCursor: initialCursor },
+      }).run.eventCursor,
+      initialCursor,
+    );
+    for (const latestExternalEventSequence of [undefined, -1, 0.5, Number.MAX_SAFE_INTEGER + 1]) {
+      assertThrows(() =>
+        RuntimeAgentRunInvocationSchema.parse({
+          ...invocation,
+          run: { ...invocation.run, eventCursor: { ...eventCursor, latestExternalEventSequence } },
+        })
+      );
+    }
+  });
+
   it("preserves an exact agent entrypoint through the signed invocation and stream adapter", () => {
     const parsed = RuntimeAgentRunInvocationSchema.parse(createInvocation({
       agentEntrypoint: { path: "agents/shared/selected.ts" },

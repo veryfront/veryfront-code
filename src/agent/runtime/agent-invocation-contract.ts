@@ -316,6 +316,12 @@ export const getRuntimeAgentRunContextSchema = defineSchema((v) =>
     runId: getRuntimeAgentRunIdSchema(),
     messageId: v.string().uuid(),
     inputAnchorMessageId: v.string().uuid(),
+    // Canonical admission state, carried inside the signed invocation.
+    eventCursor: v.object({
+      canonicalRunId: v.string().uuid(),
+      latestEventId: v.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+      latestExternalEventSequence: v.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+    }).strict().optional(),
     requestedByUserId: v.string().uuid(),
     project: getRuntimeAgentProjectContextSchema(),
     parentConversationId: v.string().uuid().nullable().optional(),
