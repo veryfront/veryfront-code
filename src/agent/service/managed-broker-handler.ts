@@ -655,6 +655,23 @@ function retainManagedBrokerOutputFinalization(
   };
 }
 
+/** Project explicit runtime errors to known public codes and retain the original privately. */
+function normalizeManagedErrorChunk(chunk: { errorText: string; code?: unknown }) {
+  const schema = getExecutorAgentFailureCodeSchema();
+  const explicit = schema.safeParse(chunk.code);
+  // Older UI-message producers carry a known code only in errorText. Accept
+  // exact registered codes, never a diagnostic prefix or arbitrary message.
+  const code = explicit.success ? explicit : schema.safeParse(chunk.errorText);
+  const failure = new ExecutorAgentError(code.success ? code.data : "EXECUTOR_AGENT_STREAM_FAILED");
+  const diagnostic = new Error(chunk.errorText);
+  Object.defineProperty(failure, "cause", { value: diagnostic });
+  return {
+    chunk: { type: "error" as const, errorText: failure.message, code: failure.code },
+    failure,
+    diagnostic,
+  };
+}
+
 async function createSseResponse(input: {
   runtime: ManagedExecutorRuntime;
   messages: HostedChatRuntimeStreamInput["messages"];
@@ -815,26 +832,24 @@ async function createSseResponse(input: {
         },
       });
       for await (const chunk of source) {
+        const projected = chunk.type === "error" ? normalizeManagedErrorChunk(chunk) : undefined;
+        const forwardedChunk = projected?.chunk ?? chunk;
+        if (projected) reportFailure(projected.diagnostic);
         if (input.output) {
           const output = input.output;
-          await input.runtime.runOwned(() => output.write(chunk));
+          await input.runtime.runOwned(() => output.write(forwardedChunk));
         }
         if (chunk.type === "error" || (chunk.type === "finish" && chunk.finishReason === "error")) {
           if (chunk.type === "error") errorChunkSeen = true;
           if (failure === undefined) {
-            const code = chunk.type === "error"
-              ? getExecutorAgentFailureCodeSchema().safeParse(chunk.code)
-              : undefined;
-            failure = code?.success
-              ? new ExecutorAgentError(code.data)
-              : new Error("Agent stream failed");
+            failure = projected?.failure ?? new Error("Agent stream failed");
           }
           invalidateHostedAgentPauseSettlement(
             input.runtime,
             new Error("Agent stream failed after pause acknowledgement"),
           );
         }
-        yield chunk;
+        yield forwardedChunk;
       }
       // A finish-error chunk carries metadata, not an AG-UI failed terminal.
       // Without projection the encoder could finalize partial output as success.

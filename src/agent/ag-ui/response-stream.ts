@@ -70,6 +70,7 @@ export function createAgUiResponseStream<TChunk, TState>(
 ): ReadableStream<Uint8Array> {
   let streamClosed = false;
   let nextEventId = 1;
+  let terminalWritten = false;
 
   return new ReadableStream<Uint8Array>({
     start(controller) {
@@ -79,9 +80,14 @@ export function createAgUiResponseStream<TChunk, TState>(
           return false;
         }
 
+        const terminal = event.event === "RunError" || event.event === "RunFinished";
+        // Keep draining execution and cleanup after the first terminal event.
+        if (terminal && terminalWritten) return true;
+
         try {
           const [timed] = stampAgUiEventTiming(timingState, [event]);
           controller.enqueue(formatAgUiSseEventWithId(timed ?? event, nextEventId));
+          if (terminal) terminalWritten = true;
           nextEventId += 1;
           return true;
         } catch {

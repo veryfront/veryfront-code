@@ -1065,7 +1065,9 @@ function runtimeFixture(
     | "coded-error"
     | "empty-response-error"
     | "finish-error"
-    | "partial-finish-error",
+    | "partial-finish-error"
+    | "error-then-throw"
+    | "legacy-coded-error",
   finishWithUsage?: true,
   streamOpenFailure = false,
   streamOpenQuota = false,
@@ -1107,6 +1109,10 @@ function runtimeFixture(
                 yield { type: "error", errorText: "ordinary stream error" } as const;
                 return;
               }
+              if (terminalChunk === "legacy-coded-error") {
+                yield { type: "error", errorText: "INSUFFICIENT_CREDITS" } as const;
+                return;
+              }
               if (terminalChunk === "coded-error") {
                 yield {
                   type: "error",
@@ -1114,6 +1120,14 @@ function runtimeFixture(
                   code: "INSUFFICIENT_CREDITS",
                 } as const;
                 return;
+              }
+              if (terminalChunk === "error-then-throw") {
+                yield {
+                  type: "error",
+                  errorText: "private callback detail",
+                  code: "EMPTY_RESPONSE",
+                } as const;
+                throw new Error("private stream cleanup detail");
               }
               if (terminalChunk === "empty-response-error") {
                 yield {
@@ -1186,7 +1200,9 @@ async function handler(
       | "coded-error"
       | "empty-response-error"
       | "finish-error"
-      | "partial-finish-error";
+      | "partial-finish-error"
+      | "error-then-throw"
+      | "legacy-coded-error";
     finishWithUsage?: true;
     missingOutput?: boolean;
     negotiatedWriter?: boolean;
@@ -1209,6 +1225,7 @@ async function handler(
   let brokerStarts = 0;
   let cleanupCalls = 0;
   const outputChunks: string[] = [];
+  const outputErrorTexts: string[] = [];
   const outputFinishes: boolean[] = [];
   const outputPauses: (true | undefined)[] = [];
   const outputFinishErrors: unknown[] = [];
@@ -1266,8 +1283,9 @@ async function handler(
         executionSignal: executionController.signal,
         ...(options.negotiatedWriter ? { eventPersistence: "runtime-owned-v1" as const } : {}),
         output: options.missingOutput ? undefined : {
-          async write(chunk: { type: string }) {
+          async write(chunk: { type: string; errorText?: string }) {
             outputChunks.push(chunk.type);
+            if (typeof chunk.errorText === "string") outputErrorTexts.push(chunk.errorText);
             if (options.writeFailure) throw new Error("SSE output write failed");
           },
           async finish(
@@ -1303,6 +1321,7 @@ async function handler(
     authorizationEntered: authorizationEntered.promise,
     releaseAuthorization: authorizationRelease.resolve,
     outputChunks,
+    outputErrorTexts,
     outputFinishes,
     outputPauses,
     outputFinishErrors,
@@ -1385,7 +1404,13 @@ describe("managed broker handler", () => {
   }
 
   for (
-    const terminalChunk of ["error", "coded-error", "finish-error", "partial-finish-error"] as const
+    const terminalChunk of [
+      "error",
+      "coded-error",
+      "finish-error",
+      "partial-finish-error",
+      "error-then-throw",
+    ] as const
   ) {
     it(`emits one failed SSE terminal without success for ${terminalChunk}`, async () => {
       const f = await handler("sse", { terminalChunk });
@@ -1418,6 +1443,69 @@ describe("managed broker handler", () => {
       }
     });
   }
+
+  it("retains exact known codes from older errorText-only producers", async () => {
+    const f = await handler("sse", { terminalChunk: "legacy-coded-error" });
+    try {
+      const response = await f.managed.handle(f.first.request);
+      f.fixture.release();
+      const parsed = await parseAgUiSseResponse(response);
+      const error = parsed.events.find((event) => event.type === agUiSseEventTypes.runError);
+      assertEquals((error as { code?: string })?.code, "INSUFFICIENT_CREDITS");
+      assertEquals(f.outputErrorTexts, ["INSUFFICIENT_CREDITS"]);
+      assertEquals((f.outputFinishErrors[0] as ExecutorAgentError).code, "INSUFFICIENT_CREDITS");
+    } finally {
+      f.fixture.release();
+      await f.managed.close();
+    }
+  });
+
+  it("redacts explicit error chunks while retaining their private diagnostic and public code", async () => {
+    const f = await handler("sse", { terminalChunk: "empty-response-error" });
+    try {
+      const response = await f.managed.handle(f.first.request);
+      f.fixture.release();
+      const wire = await response.text();
+      assert(!wire.includes("private executor empty-response detail"));
+      assert(wire.includes("EMPTY_RESPONSE"));
+      assertEquals(f.outputErrorTexts, ["EMPTY_RESPONSE"]);
+      assertEquals((f.outputFinishErrors[0] as Error).cause instanceof Error, true);
+      assertEquals(
+        ((f.outputFinishErrors[0] as Error).cause as Error).message,
+        "private executor empty-response detail",
+      );
+      assert(
+        f.executionErrors.some((error) =>
+          error instanceof Error && error.message === "private executor empty-response detail"
+        ),
+      );
+    } finally {
+      f.fixture.release();
+      await f.managed.close();
+    }
+  });
+
+  it("retains the first failed terminal when output finalization also fails", async () => {
+    const f = await handler("sse", { terminalChunk: "empty-response-error", outputFailure: true });
+    try {
+      const response = await f.managed.handle(f.first.request);
+      f.fixture.release();
+      const wire = await response.text();
+      assertEquals(wire.match(/event: RunError/g)?.length, 1);
+      assert(!wire.includes("event: RunFinished"));
+      assert(wire.includes("EMPTY_RESPONSE"));
+      assert(!wire.includes("Output flush failed"));
+      assert(!wire.includes("private executor empty-response detail"));
+      assert(
+        f.executionErrors.some((error) =>
+          error instanceof Error && error.message === "Output flush failed"
+        ),
+      );
+    } finally {
+      f.fixture.release();
+      await f.managed.close();
+    }
+  });
 
   it("persists SSE output and usage before acknowledging canonical completion", async () => {
     const f = await handler("sse", { finishWithUsage: true });
