@@ -7,12 +7,12 @@
 import { type AgentConfig, type RuntimeReasoningOption } from "../types.ts";
 import { type ModelRuntime, resolveModel } from "#veryfront/provider";
 import { resolveModelWithCredential } from "#veryfront/provider/model-registry.ts";
-import { createError, toError } from "#veryfront/errors";
 import { createPrivateWeakStore } from "#veryfront/security/private-weak-store.ts";
 import { warmVeryfrontCloudCatalog } from "#veryfront/provider/veryfront-cloud/provider.ts";
 import { isVeryfrontCloudEnabled } from "#veryfront/platform/cloud/resolver.ts";
 import { resolveProviderOptionsWithDefaults } from "./default-provider-options.ts";
 import {
+  isImplicitAgentModel,
   resolveConfiguredAgentModel,
   resolveDirectProviderRuntimeModel,
   resolveModelProviderOptionKey,
@@ -28,6 +28,11 @@ import {
   VERYFRONT_CLOUD_MODEL_PREFIX,
 } from "#veryfront/provider/veryfront-cloud/model-catalog.ts";
 import { hasDisabledThinking } from "./model-capabilities.ts";
+import {
+  requestsCredential,
+  routeModelBeforeHook,
+  settleCredentialModel,
+} from "./model-transport-credential.ts";
 
 const IntrinsicReflectApply = Reflect.apply;
 const IntrinsicObjectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
@@ -280,22 +285,14 @@ export async function resolveAgentModelTransport(
   }
   const readCatalog = <T>(fn: () => T): T => privateCatalog ? privateCatalog.read(fn) : fn();
   const requestedModel = readCatalog(() => resolveConfiguredAgentModel(configuredModel));
-  // Veryfront Cloud routing can refuse an explicit provider model outright (a
-  // retired hosted model, say). Whether that refusal stands is only known once
-  // the hook has run: a hook credential calls the provider directly, so the
-  // refusal is held until the hook returns without one.
-  let routingError: unknown;
-  let routedModelString: string;
-  try {
-    routedModelString = readCatalog(() => resolveRuntimeModel(configuredModel));
-  } catch (error) {
-    const directModel = input.config.resolveModelTransport
-      ? readCatalog(() => resolveDirectProviderRuntimeModel(configuredModel))
-      : undefined;
-    if (directModel === undefined) throw error;
-    routingError = error;
-    routedModelString = directModel;
-  }
+  const directModel = (): string | undefined =>
+    readCatalog(() => resolveDirectProviderRuntimeModel(configuredModel));
+  const routed = routeModelBeforeHook({
+    route: () => readCatalog(() => resolveRuntimeModel(configuredModel)),
+    directModel,
+    hasHook: input.config.resolveModelTransport !== undefined,
+  });
+  const routedModelString = routed.modelString;
   const usesVeryfrontCloud = startsWithCloudPrefix(routedModelString);
   const privatelyResolvedModel = input.resolveModelRuntime && usesVeryfrontCloud
     ? input.resolveModelRuntime(routedModelString)
@@ -309,18 +306,16 @@ export async function resolveAgentModelTransport(
       context: input.context,
       mode: input.mode,
     });
-  // A returned `credential` property asks for that credential, whatever its
-  // value. An unset one (a missing environment variable, say) must fail rather
-  // than fall back to the process key and call under another identity.
-  const credentialRequested = transport !== undefined && transport !== null &&
-    Object.hasOwn(transport, "credential");
-  if (routingError !== undefined && !credentialRequested) throw routingError;
-  // An explicit provider model routes through Veryfront Cloud only because the
-  // environment holds no key for it. A hook credential is that key, so the call
-  // goes to the provider it names.
-  const resolvedModelString = credentialRequested && usesVeryfrontCloud
-    ? readCatalog(() => resolveDirectProviderRuntimeModel(configuredModel)) ?? routedModelString
-    : routedModelString;
+  // A hook credential replaces the environment key for this call only. It is
+  // consumed here and never copied onto the returned transport, so it cannot
+  // reach headers, traces or logs.
+  const resolvedModelString = settleCredentialModel({
+    agentId: input.agentId,
+    transport,
+    routed,
+    implicitModel: isImplicitAgentModel(configuredModel),
+    directModel,
+  });
 
   const privateThinking = privatelyResolvedModel
     ? input.modelCallThinking ??
@@ -346,23 +341,9 @@ export async function resolveAgentModelTransport(
     return undefined;
   }
   const providerOptions = resolveTransportProviderOptions();
-  // A hook credential replaces the environment key for this call only. It is
-  // consumed here and never copied onto the returned transport, so it cannot
-  // reach headers, traces or logs. It cannot apply to a runtime the hook built
-  // itself, so that combination fails instead of dropping the credential.
-  if (credentialRequested && transport?.model) {
-    throw toError(
-      createError({
-        type: "config",
-        message: `resolveModelTransport for agent "${input.agentId}" returned both "model" and ` +
-          `"credential". A credential applies only to a built-in provider runtime; ` +
-          `configure the returned model runtime with its own credential instead.`,
-      }),
-    );
-  }
   const languageModel = privatelyResolvedModel ?? transport?.model ??
-    (credentialRequested
-      ? resolveModelWithCredential(resolvedModelString, transport?.credential)
+    (requestsCredential(transport)
+      ? resolveModelWithCredential(resolvedModelString, transport.credential)
       : resolveModel(resolvedModelString));
   // A Veryfront Cloud model settles its protocol and capabilities on its first
   // async step. Settle it here, before anything reads them: the provider option

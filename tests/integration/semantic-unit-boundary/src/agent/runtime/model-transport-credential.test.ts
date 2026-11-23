@@ -292,6 +292,24 @@ describe("resolveAgentModelTransport hook credential", () => {
     assert(error.message.includes("no longer available through Veryfront Cloud"));
   });
 
+  for (const model of [undefined, "auto"]) {
+    it(`rejects a credential for a ${model ?? "omitted"} model the environment key selects`, async () => {
+      setEnv("OPENAI_API_KEY", PROCESS_KEY);
+      const seen = captureAuthorization();
+
+      const error = await assertRejects(() =>
+        resolveFor("policies", {
+          ...(model ? { model } : {}),
+          system: "You are a helpful assistant.",
+          resolveModelTransport: () => ({ credential: "sk-agent-policies" }),
+        })
+      );
+
+      assertEquals(fromError(error)?.type, "config");
+      assertEquals(seen, []);
+    });
+  }
+
   it("still rejects a credential for an omitted model that Veryfront Cloud serves", async () => {
     setEnv("VERYFRONT_API_TOKEN", "vf_test_credential");
     setEnv("VERYFRONT_PROJECT_SLUG", "credential-project");

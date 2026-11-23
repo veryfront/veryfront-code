@@ -352,6 +352,11 @@ export function resolveRuntimeModel(model?: string): string {
   return `veryfront-cloud/${provider}/${modelId}`;
 }
 
+/** Whether the runtime, not the agent, picks the model: omitted or `auto`. */
+export function isImplicitAgentModel(model?: string): boolean {
+  return !model || normalizeAgentModelConfig(model) === AUTO_AGENT_MODEL;
+}
+
 /**
  * The direct provider runtime model an explicit `provider/model` names,
  * whatever keys the environment holds. A hook credential authenticates the
@@ -363,9 +368,7 @@ export function resolveRuntimeModel(model?: string): string {
  * provider the application registered its own runtime for.
  */
 export function resolveDirectProviderRuntimeModel(model?: string): string | undefined {
-  if (model === undefined || normalizeAgentModelConfig(model) === AUTO_AGENT_MODEL) {
-    return undefined;
-  }
+  if (isImplicitAgentModel(model)) return undefined;
   const configuredModel = resolveConfiguredAgentModel(model);
   if (configuredModel.startsWith("veryfront-cloud/") || configuredModel.startsWith("local/")) {
     return undefined;
