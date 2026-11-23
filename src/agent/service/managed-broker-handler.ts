@@ -144,7 +144,7 @@ function snapshotManagedResumeToolCall(
   >;
 }
 
-function brokerOwnedApiAuthToken(ingress: unknown): string | undefined {
+function brokerOwnedKnowledgeAuthToken(ingress: unknown): string | undefined {
   if (ingress === null || typeof ingress !== "object") return undefined;
   const privateAuthorityDescriptor = Object.getOwnPropertyDescriptor(ingress, "privateAuthority");
   if (!privateAuthorityDescriptor || !Object.hasOwn(privateAuthorityDescriptor, "value")) {
@@ -152,7 +152,10 @@ function brokerOwnedApiAuthToken(ingress: unknown): string | undefined {
   }
   const privateAuthority = privateAuthorityDescriptor.value;
   if (privateAuthority === null || typeof privateAuthority !== "object") return undefined;
-  const tokenDescriptor = Object.getOwnPropertyDescriptor(privateAuthority, "apiAuthToken");
+  // Shared agents read knowledge from their source release, independently of
+  // the consuming project's run persistence and billing authority.
+  const tokenDescriptor = Object.getOwnPropertyDescriptor(privateAuthority, "sourceAuthToken") ??
+    Object.getOwnPropertyDescriptor(privateAuthority, "apiAuthToken");
   if (!tokenDescriptor || !Object.hasOwn(tokenDescriptor, "value")) return undefined;
   const token = tokenDescriptor.value;
   return typeof token === "string" && token.length > 0 ? token : undefined;
@@ -164,7 +167,7 @@ function bindBrokerOwnedHostedKnowledgeCredential(
 ): ManagedExecutorStartInput {
   const trustedRuntime = start.trustedRuntime;
   if (trustedRuntime === undefined) return start;
-  const hostedKnowledgeAuthToken = brokerOwnedApiAuthToken(ingress);
+  const hostedKnowledgeAuthToken = brokerOwnedKnowledgeAuthToken(ingress);
   if (hostedKnowledgeAuthToken === undefined) return start;
   return {
     ...start,

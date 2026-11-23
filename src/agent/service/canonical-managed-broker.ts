@@ -1,0 +1,201 @@
+import { getCanonicalRunStatus } from "../conversation/durable.ts";
+import {
+  createManagedBrokerPersistence,
+  type ManagedBrokerRunSnapshot,
+} from "../hosted/managed-broker-persistence.ts";
+import { createManagedBrokerProjectState } from "../hosted/managed-broker-project-state.ts";
+import { sameHostedExecutorOwner } from "../hosted/executor-session-schema.ts";
+import { verifyHostedRuntimeSourceBinding } from "../hosted/runtime-source-binding.ts";
+import type { ManagedExecutorStartInput } from "../hosted/managed-executor-broker.ts";
+import type { ExecutorInitialCheckpointState } from "../hosted/executor-checkpoint-state.ts";
+import {
+  getExecutorRuntimePrepareRequestSchema,
+  parseRuntimePreparationData,
+} from "../hosted/executor-runtime-prepare-schema.ts";
+import { BrokerIngressError, type BrokerRuntimeAgentIngress } from "./broker-ingress.ts";
+import { createManagedBrokerHandler } from "./managed-broker-handler.ts";
+
+type Start = Omit<
+  ManagedExecutorStartInput,
+  "state" | "persistence" | "bindSessionOwnedWork"
+>;
+type HandlerOptions<T> = Parameters<typeof createManagedBrokerHandler<T>>[0];
+
+/**
+ * Signed canonical admission with API-owned lifecycle, append cursors and persistence.
+ * The deployment supplies executor/image/model/tool policy, never application callbacks.
+ * This does not advertise a protocol or enable account-chat execution.
+ */
+export function createCanonicalManagedBrokerHandler<T>(
+  options: Omit<HandlerOptions<T>, "prepare"> & {
+    apiUrl: string;
+    resolveProvider(modelId: string): string;
+    fetch?: typeof globalThis.fetch;
+    toolCallAdmissions?: true;
+    runtimeObservations?: true;
+    prepareExecutor(input: {
+      ingress: BrokerRuntimeAgentIngress<T>;
+      signal: AbortSignal;
+    }): Promise<{
+      start: Start;
+      messages: Awaited<ReturnType<HandlerOptions<T>["prepare"]>>["messages"];
+      executionSignal: AbortSignal;
+      initialCheckpoints?: ExecutorInitialCheckpointState;
+      latestConversationUserText?: (signal: AbortSignal) => Promise<string | null>;
+      cleanup?: () => Promise<void>;
+    }>;
+  },
+) {
+  // Capture host policy and transport before accepting requests.
+  const { apiUrl, fetch: transport, prepareExecutor, resolveProvider } = options;
+  const toolCallAdmissions = options.toolCallAdmissions === true;
+  const runtimeObservations = options.runtimeObservations === true;
+  return createManagedBrokerHandler({
+    broker: options.broker,
+    responseMode: options.responseMode,
+    signal: options.signal,
+    resolveIngressOptions: options.resolveIngressOptions,
+    onExecutionError: options.onExecutionError,
+    async prepare({ ingress, signal }) {
+      const run = ingress.executor.run;
+      const cursor = run.eventCursor;
+      const authority = ingress.privateAuthority;
+      const sourceProject = ingress.executor.sourceProject ?? run.project;
+      const source = ingress.executor.agentSource;
+      // Old admissions cannot supply guessed zero cursors or borrow a legacy projection.
+      if (!cursor || !authority.terminalAuthToken || source.type === "branch") {
+        throw new BrokerIngressError(503, "BROKER_UNAVAILABLE");
+      }
+      const sourceToken = authority.sourceAuthToken ??
+        (sourceProject.projectId === run.project.projectId ? authority.apiAuthToken : undefined);
+      if (!sourceToken) throw new BrokerIngressError(403, "BROKER_INGRESS_SCOPE_DENIED");
+      const lifecycle = await getCanonicalRunStatus({
+        apiUrl,
+        authToken: authority.apiAuthToken,
+        runId: run.runId,
+        canonicalRunId: cursor.canonicalRunId,
+        abortSignal: signal,
+        fetch: transport,
+      });
+      signal.throwIfAborted();
+      if (!["pending", "running", "waiting_for_tool"].includes(lifecycle.status)) {
+        throw new BrokerIngressError(409, "BROKER_RUN_NOT_ACTIVE");
+      }
+      const snapshot: ManagedBrokerRunSnapshot = {
+        ...cursor,
+        runId: run.runId,
+        conversationId: run.conversationId,
+        messageId: run.messageId,
+        status: lifecycle.status,
+      };
+      const prepared = await prepareExecutor({ ingress, signal });
+      let persistence: ReturnType<typeof createManagedBrokerPersistence> | undefined;
+      let cleanupPromise: Promise<void> | undefined;
+      const cleanup = () =>
+        cleanupPromise ??= (async () => {
+          const errors: unknown[] = [];
+          try {
+            await persistence?.cleanup();
+          } catch (error) {
+            errors.push(error);
+          }
+          try {
+            await prepared.cleanup?.();
+          } catch (error) {
+            errors.push(error);
+          }
+          if (errors.length) throw new AggregateError(errors, "Managed preparation cleanup failed");
+        })();
+      try {
+        signal.throwIfAborted();
+        prepared.executionSignal.throwIfAborted();
+        const { start } = prepared;
+        const execution = start.installation.grant.execution;
+        if (
+          !sameHostedExecutorOwner(start.installation.owner, ingress.executor.owner) ||
+          verifyHostedRuntimeSourceBinding(
+            start.installation.source,
+            ingress.executor.agentSource,
+          ) ||
+          start.installation.owner.scopeKind !== "project" ||
+          start.installation.owner.projectId !== sourceProject.projectId ||
+          start.installation.grant.agentId !== run.agentId ||
+          start.prepare.agentId !== run.agentId ||
+          (ingress.executor.agentEntrypoint &&
+            start.installation.agentEntrypoint?.path !== ingress.executor.agentEntrypoint.path) ||
+          execution.kind !== "canonical" || execution.projectId !== run.project.projectId ||
+          execution.runId !== run.runId || execution.conversationId !== run.conversationId ||
+          execution.messageId !== run.messageId ||
+          (execution.userId !== undefined && execution.userId !== run.requestedByUserId) ||
+          (execution.projectSlug !== undefined && execution.projectSlug !== run.project.projectSlug)
+        ) throw new BrokerIngressError(403, "BROKER_INGRESS_SCOPE_DENIED");
+        persistence = createManagedBrokerPersistence({
+          apiUrl,
+          runEventToken: authority.runEventToken,
+          completionAuthToken: authority.apiAuthToken,
+          terminalAuthToken: authority.terminalAuthToken,
+          run: snapshot,
+          modelId: start.prepare.modelId ?? start.installation.grant.defaultModelId,
+          resolveProvider,
+          fetch: transport,
+          ...(toolCallAdmissions
+            ? { toolCallAdmissions: { projectId: run.project.projectId } }
+            : {}),
+          ...(runtimeObservations
+            ? { runtimeObservations: { projectId: run.project.projectId } }
+            : {}),
+        });
+        const state = createManagedBrokerProjectState({
+          apiUrl,
+          authToken: sourceToken,
+          projectId: sourceProject.projectId,
+          releaseId: source.releaseId,
+          agentId: run.agentId,
+          fetch: transport,
+          latestConversationUserText: prepared.latestConversationUserText,
+        });
+        const { serverResolvedResumeToolCall: _adapterResume, ...prepare } = start.prepare;
+        const resume = ingress.executor.input.resumeToolCall;
+        return {
+          messages: prepared.messages,
+          executionSignal: prepared.executionSignal,
+          start: {
+            ...start,
+            prepare: parseRuntimePreparationData(getExecutorRuntimePrepareRequestSchema(), {
+              ...prepare,
+              ...(resume ? { serverResolvedResumeToolCall: resume } : {}),
+            }),
+            installation: {
+              ...start.installation,
+              grant: {
+                ...start.installation.grant,
+                execution: {
+                  ...execution,
+                  userId: run.requestedByUserId,
+                  projectSlug: run.project.projectSlug,
+                },
+              },
+            },
+            state,
+            persistence: { ...prepared.initialCheckpoints, ...persistence },
+            bindSessionOwnedWork: persistence.bindSessionOwnedWork,
+            model: { ...start.model, runEventSink: persistence.modelRunEventSink },
+            tools: { ...start.tools, admitToolCall: persistence.admitToolCall },
+          },
+          output: persistence.output,
+          cleanup,
+        };
+      } catch (error) {
+        try {
+          await cleanup();
+        } catch (cleanupError) {
+          throw new AggregateError(
+            [error, cleanupError],
+            "Managed preparation failed during cleanup",
+          );
+        }
+        throw error;
+      }
+    },
+  });
+}

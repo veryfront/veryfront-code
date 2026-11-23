@@ -744,6 +744,23 @@ direct `POST /api/ag-ui` requests with request-owned SSE. Its ingress must suppl
 project requests return HTTP 403 before preparation or allocation; projectless
 requests can still proceed.
 
+For signed canonical project runs, `createCanonicalManagedBrokerHandler` combines
+the signed ingress with API lifecycle reads, exact-run persistence, and immutable
+project steering. It requires the admission's signed canonical UUID and append
+cursors and an independent terminal credential. Missing admission state and
+terminal runs are refused before executor preparation. Source reads use the
+source credential and captured release; event and completion writes use the
+consuming run's separate authority. Tool-call admission and runtime observations
+remain explicit deployment opt-ins.
+
+The deployment must still supply `prepareExecutor` with its trusted executor
+image, allocator, model and tool grants, initial checkpoints and execution
+lifetime. The adapter checks source owner, selected entrypoint, agent, run,
+conversation, message, project and actor bindings before allocation. It preserves
+the signed resume decision and owns persistence cleanup. This adapter alone does
+not register a serving process, advertise the publication protocol or enable
+account-chat execution.
+
 Configure each direct
 adapter's owner in trusted service configuration; project owners reject requests
 for other projects before preparation or allocation. Their `prepare` callbacks
