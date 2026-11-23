@@ -126,6 +126,29 @@ describe("parseMergeArgs", () => {
     assertEquals(result.success, false);
   });
 
+  it("rejects a project selector that has no value", () => {
+    for (
+      const argv of [
+        ["merge", "feature", "--project"],
+        ["merge", "feature", "--project", "--force"],
+        ["merge", "feature", "-p", "--force"],
+        ["merge", "feature", "-p"],
+        ["merge", "feature", "--project", ""],
+        ["merge", "feature", "--project="],
+      ]
+    ) {
+      const result = parseMergeArgs(parseCliArgs(argv));
+      assertEquals(result.success, false, argv.join(" "));
+    }
+  });
+
+  it("keeps a numeric project reference", () => {
+    const result = parseMergeArgs(parseCliArgs(["merge", "feature", "--project", "123"]));
+    assertEquals(result.success, true);
+    if (!result.success) return;
+    assertEquals(result.data.project, "123");
+  });
+
   it("reads --project and -p from the command line without taking the branch", () => {
     for (const flag of ["--project", "-p"]) {
       const result = parseMergeArgs(parseCliArgs(["merge", "feature", flag, "support-desk"]));

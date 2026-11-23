@@ -17,6 +17,7 @@ import {
   resolveLinkedProjectConfigWithAuth,
 } from "#cli/shared/config";
 import { CommonArgs, createArgParser } from "#cli/shared/args";
+import type { ParsedArgs } from "#cli/shared/types";
 import { confirmPrompt, logInfo, logSuccess } from "#cli/utils";
 import { createSpinner } from "#cli/ui";
 import { BRANCH_NOT_FOUND } from "veryfront/errors";
@@ -54,10 +55,7 @@ export const MergeArgsSchema = lazySchema(getMergeArgsSchema);
  */
 export type MergeOptions = InferSchema<ReturnType<typeof getMergeArgsSchema>>;
 
-/**
- * Parse CLI arguments into validated MergeOptions
- */
-export const parseMergeArgs = createArgParser(MergeArgsSchema, {
+const parseMergeOptions = createArgParser(MergeArgsSchema, {
   branch: { keys: [], type: "string", positional: 0 },
   into: CommonArgs.into,
   // Only the documented names: the command-line parser reads a flag's arity
@@ -66,6 +64,31 @@ export const parseMergeArgs = createArgParser(MergeArgsSchema, {
   dryRun: CommonArgs.dryRun,
   force: CommonArgs.force,
 });
+
+const PROJECT_SELECTOR_KEYS = ["project", "p"] as const;
+
+/**
+ * Parse CLI arguments into validated MergeOptions
+ *
+ * A project selector with no value reaches this parser as `true`, which the
+ * string coercion would turn into a project named "true". It must be a usage
+ * error instead: merge writes to the project it resolves.
+ */
+export function parseMergeArgs(args: ParsedArgs): ReturnType<typeof parseMergeOptions> {
+  for (const key of PROJECT_SELECTOR_KEYS) {
+    const value = args[key];
+    if (value === undefined) continue;
+    const text = typeof value === "number" ? String(value) : value;
+    if (typeof text !== "string" || text.trim() === "") {
+      const error = Object.assign(
+        new Error("--project requires a project slug or ID"),
+        { issues: [] },
+      );
+      return { success: false, error };
+    }
+  }
+  return parseMergeOptions(args);
+}
 
 /**
  * Branch from the API

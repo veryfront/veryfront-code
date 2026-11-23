@@ -18,7 +18,7 @@ import { uploadsCommand } from "../../../../cli/commands/uploads/command.ts";
 import { projectCommand } from "../../../../cli/commands/project/command.ts";
 import { mergeCommand, parseMergeArgs } from "../../../../cli/commands/merge/command.ts";
 import { handleEnvCommand } from "../../../../cli/commands/env/handler.ts";
-import { parseArgsOrThrow } from "../../../../cli/shared/args.ts";
+import { parseArgsOrThrow, parseCliArgs } from "../../../../cli/shared/args.ts";
 
 const NO_LINKED_PROJECT_MESSAGE =
   "No project is linked to this folder. Pass `--project <slug>` (the slug is on the project's Settings page), or run `veryfront pull <slug>` to link one.";
@@ -196,6 +196,30 @@ describe("commands in a folder with no linked project", () => {
       // project and stops there.
       assertEquals(error.slug, "branch-not-found");
       assertEquals(requests, ["/projects/support-desk/branches"]);
+    });
+  });
+
+  it("merge rejects a --project selector with no value before any request", async () => {
+    await withUnlinkedFolder(async (projectDir, requests) => {
+      for (
+        const argv of [
+          ["merge", "feature", "--project"],
+          ["merge", "feature", "--project", "--force"],
+          ["merge", "feature", "-p", "--force"],
+          ["merge", "feature", "--project", ""],
+        ]
+      ) {
+        const name = argv.join(" ");
+        const error = await assertRejects(
+          () => mergeFromProjectDir({ ...parseCliArgs(argv), "project-dir": projectDir }),
+          VeryfrontError,
+          undefined,
+          name,
+        ) as VeryfrontError;
+        assertEquals(error.slug, "invalid-argument", name);
+        assertEquals(error.exitCode, 2, name);
+      }
+      assertEquals(requests, []);
     });
   });
 
