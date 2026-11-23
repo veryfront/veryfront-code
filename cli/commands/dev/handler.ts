@@ -17,6 +17,7 @@ import type { ParsedArgs } from "#cli/shared/types";
 import { refreshEnvironmentConfig } from "#cli/environment-config";
 import { loadAdditionalEnv, supportsEnvFiles } from "veryfront/utils/env-loader";
 import { INVALID_ARGUMENT } from "veryfront/errors";
+import { isTruthyEnvValue } from "veryfront/utils";
 
 const getDevArgsSchema = defineSchema((v) =>
   v.object({
@@ -25,6 +26,7 @@ const getDevArgsSchema = defineSchema((v) =>
     env: v.string().min(1).optional(),
     hmr: v.boolean().default(true),
     noHmr: v.boolean().default(false),
+    noSync: v.boolean().default(false),
     open: v.boolean().default(false),
     debug: v.boolean().default(false),
   })
@@ -38,13 +40,18 @@ const parseDevArgsBase = createArgParser(DevArgsSchema, {
   env: { keys: ["env"], type: "string" },
   hmr: { keys: ["hmr"], type: "boolean" },
   noHmr: { keys: ["no-hmr"], type: "boolean" },
+  noSync: { keys: ["no-sync"], type: "boolean" },
   open: { keys: ["open"], type: "boolean" },
   debug: { keys: ["debug", "d"], type: "boolean" },
 }, { rejectUnknown: true });
 
+/** Environment equivalent of `--no-sync`, for CI and scripted local runs. */
+export const DEV_NO_SYNC_ENV = "VERYFRONT_DEV_NO_SYNC";
+
 /**
  * Parses dev command arguments, honouring `PORT` / `VERYFRONT_PORT` as
- * lower-precedence defaults when no explicit `--port` / `-p` is given.
+ * lower-precedence defaults when no explicit `--port` / `-p` is given, and
+ * `VERYFRONT_DEV_NO_SYNC` as the environment form of `--no-sync`.
  */
 export function parseDevArgs(
   args: ParsedArgs,
@@ -60,6 +67,7 @@ export function parseDevArgs(
       port: args.port === undefined && args.p === undefined
         ? resolveEnvironmentPort(host, DEFAULT_DEV_SERVER_PORT)
         : result.data.port,
+      noSync: result.data.noSync || isTruthyEnvValue(host.env.get(DEV_NO_SYNC_ENV)),
     },
   };
 }
@@ -176,6 +184,7 @@ export async function handleDevCommand(args: ParsedArgs): Promise<void> {
     environment: opts.env,
     hmr: opts.hmr && !opts.noHmr,
     open: opts.open,
+    noSync: opts.noSync,
     // Clear stale ESM caches to prevent module resolution issues from previous
     // runs. devCommand does this only once it has resolved the dev port and
     // found it free. The caches are shared with any dev server already running

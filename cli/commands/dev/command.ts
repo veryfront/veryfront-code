@@ -61,6 +61,13 @@ import {
   resolveConnectedDevProject,
   stopDevServices,
 } from "./connected-dev.ts";
+import {
+  accountStatusHint,
+  announceNoSync,
+  connectedDevDisabled,
+  devSessionShortcuts,
+  guardSyncShortcuts,
+} from "./no-sync.ts";
 import { saveSharedProjectAssociation } from "../../shared/project-link.ts";
 import { chooseCloudProject } from "../../shared/cloud-project.ts";
 import { createCloudOnboardingTransport } from "../../shared/cloud-onboarding-transport.ts";
@@ -89,6 +96,11 @@ export interface DevOptions {
   environment?: string;
   hmr?: boolean;
   open?: boolean;
+  /**
+   * Start a Cloud-linked project local-only: no startup source sync and no
+   * Cloud connection. Set by `--no-sync` or `VERYFRONT_DEV_NO_SYNC`.
+   */
+  noSync?: boolean;
   /** Demo mode: don't exit process on shutdown, resolve done promise instead */
   demoMode?: boolean;
   /**
@@ -301,6 +313,7 @@ export function devCommand(options: DevOptions): Promise<DevCommandResult> {
         open = false,
         demoMode = false,
         clearLocalCaches = false,
+        noSync = false,
       } = options;
 
       const displayOptions = captureDevDisplayOptions();
@@ -347,12 +360,14 @@ export function devCommand(options: DevOptions): Promise<DevCommandResult> {
         projectDir,
         config?.projectSlug ?? config?.fs?.veryfront?.projectSlug ?? env.projectSlug,
       );
-      if (!linkedProjectSlug && !isProxyMode && isTTY() && isInteractive()) {
+      const connectedDisabled = connectedDevDisabled({ proxyMode: isProxyMode, noSync });
+      if (!linkedProjectSlug && !connectedDisabled && isTTY() && isInteractive()) {
         await chooseCloudProject(projectDir);
         linkedProjectSlug = await resolveLinkedProjectSlug(projectDir);
       }
       let preflightIdentity: AuthIdentity | null = null;
       let runtimeAuth = await applyQualifiedRuntimeAuth(projectDir, linkedProjectSlug);
+      const localOnly = announceNoSync({ noSync, proxyMode: isProxyMode, linkedProjectSlug });
       const connectedTarget = await prepareConnectedDev(
         linkedProjectSlug,
         options.environment ?? "preview",
@@ -408,7 +423,7 @@ export function devCommand(options: DevOptions): Promise<DevCommandResult> {
             };
           },
         },
-        isProxyMode,
+        connectedDisabled,
       );
       const studioBase = connectedTarget
         ? connectedDevStudioBaseUrl(
@@ -598,6 +613,7 @@ export function devCommand(options: DevOptions): Promise<DevCommandResult> {
               }?panels=runs`,
             }
             : undefined,
+          localOnlyProject: localOnly ? linkedProjectSlug : undefined,
         })
       ) console.log(line);
       if (isVerbose()) {
@@ -685,10 +701,10 @@ export function devCommand(options: DevOptions): Promise<DevCommandResult> {
 
       if (!demoMode) {
         const logs = createDevLogController();
-        keyboardHandler = createKeyboardHandler({
+        keyboardHandler = createKeyboardHandler(guardSyncShortcuts(noSync, {
           onHelp: () => {
             console.log();
-            console.log(shortcutsBlock(DEV_SHORTCUTS));
+            console.log(shortcutsBlock(devSessionShortcuts(DEV_SHORTCUTS, noSync)));
             console.log();
           },
           onOpen: () => void openBrowser(serverUrl),
@@ -702,7 +718,7 @@ export function devCommand(options: DevOptions): Promise<DevCommandResult> {
             await authReady;
             if (identity) {
               console.log(
-                `  ${dim(authStatus(identity))}${dim(", press s to select a project")}`,
+                `  ${dim(authStatus(identity))}${dim(accountStatusHint(noSync))}`,
               );
               return;
             }
@@ -770,7 +786,7 @@ export function devCommand(options: DevOptions): Promise<DevCommandResult> {
               `Pushed to ${pushOptions.branch} ${dim("- merge in Studio")}`,
             );
           },
-        });
+        }));
 
         keyboardHandler.start();
       }

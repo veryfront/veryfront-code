@@ -26,9 +26,9 @@ export async function prepareConnectedDev(
     resolve(projectSlug: string, environmentName: string): Promise<ConnectedDevTarget>;
     sync(target: ConnectedDevTarget): Promise<void>;
   },
-  proxyMode = false,
+  disabled = false,
 ): Promise<ConnectedDevTarget | undefined> {
-  if (proxyMode || !projectSlug) return undefined;
+  if (disabled || !projectSlug) return undefined;
   if (!await dependencies.authenticate()) {
     throw new Error(
       "Veryfront Cloud login is required for this linked project. Run veryfront login, then npm run dev again.",

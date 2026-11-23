@@ -47,3 +47,16 @@ Deno.test("the not-linked line says how to link and discloses the source sync", 
   // The dev prompt, not push, is the direct way to gateway inference in local dev.
   assertEquals(output.includes("veryfront push"), false);
 });
+
+Deno.test("a linked project started with --no-sync is shown as linked, not as unlinked", () => {
+  const output = devReadinessLines({
+    appUrl: "http://localhost:3000",
+    localOnlyProject: "example",
+  }).join("\n");
+  assertStringIncludes(output, "Linked to example, source sync off");
+  assertStringIncludes(output, "--no-sync");
+  assertStringIncludes(output, "VERYFRONT_DEV_NO_SYNC");
+  assertEquals(output.includes("Not linked"), false);
+  assertEquals(output.includes("Use Veryfront Cloud?"), false);
+  assertEquals(output.includes("✓ Connected"), false);
+});

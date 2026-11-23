@@ -465,6 +465,7 @@ export const BOOLEAN_FLAGS: ReadonlySet<string> = new Set([
   "no-input",
   "no-split",
   "no-ssg",
+  "no-sync",
   "no-tui",
   "okf-bundle",
   "open",

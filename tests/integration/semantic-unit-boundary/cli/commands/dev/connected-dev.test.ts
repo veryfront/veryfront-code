@@ -524,3 +524,26 @@ it("refuses connected readiness when source synchronization fails", async () => 
     "source sync conflict",
   );
 });
+
+it("a disabled connection starts a linked project local-only without login, sync or admission", async () => {
+  const calls: string[] = [];
+  const record = <T>(step: string, result: T) => () => {
+    calls.push(step);
+    return Promise.resolve(result);
+  };
+  const target = {
+    projectId: "p",
+    projectSlug: "demo",
+    environmentId: "e",
+    environmentName: "preview",
+  };
+
+  const result = await prepareConnectedDev("demo", "preview", {
+    authenticate: record("authenticate", true),
+    resolve: record("resolve", target),
+    sync: record("sync", undefined),
+  }, true);
+
+  assertEquals(result, undefined);
+  assertEquals(calls, []);
+});
