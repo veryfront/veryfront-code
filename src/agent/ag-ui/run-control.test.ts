@@ -740,6 +740,56 @@ describe("agent/ag-ui-run-control", () => {
       assertEquals(sessionManager.getRunStatus("run_1"), "running");
     });
 
+    it("does not report a finished newer start's receipt as the stopped execution", async () => {
+      const sessionManager = new RunResumeSessionManager<{ ok: boolean }>();
+      const signal = sessionManager.startRun({
+        runId: "run_1",
+        threadId: crypto.randomUUID(),
+        startedFromEventId: 30,
+      });
+      let settled = false;
+      const handler = createAgUiCancelHandler({
+        sessionManager,
+        authorizeRunControl: allowRunControl,
+        hasPendingExecution: () => !settled,
+        hasSettledExecution: () => settled,
+      });
+      const query = "started_before_event_id=20&confirm_stopped=true";
+
+      sessionManager.completeRun("run_1", signal);
+      assertEquals(sessionManager.getRunStatus("run_1"), null);
+      assertEquals((await fencedCancel(handler, query)).status, 204, "still settling");
+      settled = true;
+      assertEquals((await fencedCancel(handler, query)).status, 204, "settled");
+    });
+
+    it("confirms the stop of the generation the fence addresses", async () => {
+      const sessionManager = new RunResumeSessionManager<{ ok: boolean }>();
+      sessionManager.startRun({
+        runId: "run_1",
+        threadId: crypto.randomUUID(),
+        startedFromEventId: 10,
+      });
+      let settled = false;
+      const handler = createAgUiCancelHandler({
+        sessionManager,
+        authorizeRunControl: allowRunControl,
+        hasPendingExecution: () => !settled,
+        hasSettledExecution: () => settled,
+      });
+      const query = "started_before_event_id=20&confirm_stopped=true";
+
+      const accepted = await fencedCancel(handler, query);
+      assertEquals(accepted.status, 202);
+      assertEquals(await accepted.json(), { accepted: true, stopped: false });
+      const settling = await fencedCancel(handler, query);
+      assertEquals(await settling.json(), { accepted: true, stopped: false });
+      settled = true;
+      const stopped = await fencedCancel(handler, query);
+      assertEquals(stopped.status, 200);
+      assertEquals(await stopped.json(), { accepted: true, stopped: true });
+    });
+
     it("refuses a malformed fence without cancelling or remembering anything", async () => {
       for (const fence of ["", "0", "-1", "1.5", "abc", "9007199254740993"]) {
         const sessionManager = new RunResumeSessionManager<{ ok: boolean }>();

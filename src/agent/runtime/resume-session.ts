@@ -117,6 +117,8 @@ export class RunResumeSessionManager<T> {
    * settling yet. A start that reuses the run id supersedes it.
    */
   private readonly settlingCancelledSignals = new Map<string, AbortSignal>();
+  /** Dispatch event id of the latest start per run id, kept after the session ends. */
+  private readonly latestStartEventIds = new Map<string, number>();
   /** Signals of executions whose run id a later start has taken over. */
   private readonly supersededSignals = new WeakSet<AbortSignal>();
 
@@ -325,8 +327,25 @@ export class RunResumeSessionManager<T> {
     }
 
     this.sessions.set(input.runId, session);
+    this.rememberLatestStart(input.runId, input.startedFromEventId);
     this.touchSession(session);
     return session.abortController.signal;
+  }
+
+  /**
+   * Keep the dispatch event of the latest start per run id after its session
+   * ends. Execution receipts outlive the session and are keyed by run id alone,
+   * so a fenced cancel needs this to tell whose execution they describe.
+   */
+  private rememberLatestStart(runId: string, startedFromEventId: number | undefined): void {
+    this.latestStartEventIds.delete(runId);
+    if (startedFromEventId === undefined) return;
+    while (this.latestStartEventIds.size >= this.maxCancellationTombstones) {
+      const oldestRunId = this.latestStartEventIds.keys().next().value;
+      if (oldestRunId === undefined) break;
+      this.latestStartEventIds.delete(oldestRunId);
+    }
+    this.latestStartEventIds.set(runId, startedFromEventId);
   }
 
   prepareForSignal(runId: string, waitKey: string): void {
@@ -505,12 +524,13 @@ export class RunResumeSessionManager<T> {
   }
 
   /**
-   * Whether the session holding this run id was dispatched from this durable
-   * event id or later. A fenced cancel uses it to tell a newer start of the run
-   * apart from the generation it addressed.
+   * Whether the latest start of this run id was dispatched from this durable
+   * event id or later, including a start whose session has already ended. A
+   * fenced cancel uses it to tell a newer start of the run, and the execution
+   * receipts that start left behind, apart from the generation it addressed.
    */
   isRunStartedAtOrAfter(runId: string, eventId: number): boolean {
-    const startedFromEventId = this.sessions.get(runId)?.startedFromEventId;
+    const startedFromEventId = this.latestStartEventIds.get(runId);
     return startedFromEventId !== undefined && startedFromEventId >= eventId;
   }
 
@@ -628,6 +648,7 @@ export class RunResumeSessionManager<T> {
     }
     this.sessions.clear();
     this.cancellationTombstones.clear();
+    this.latestStartEventIds.clear();
     this.settlingCancelledSignals.clear();
   }
 }
