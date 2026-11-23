@@ -14,6 +14,7 @@ import { isVeryfrontCloudEnabled } from "#veryfront/platform/cloud/resolver.ts";
 import { resolveProviderOptionsWithDefaults } from "./default-provider-options.ts";
 import {
   resolveConfiguredAgentModel,
+  resolveDirectProviderRuntimeModel,
   resolveModelProviderOptionKey,
   resolveRuntimeModel,
   routesDirectWithoutCatalog,
@@ -279,20 +280,47 @@ export async function resolveAgentModelTransport(
   }
   const readCatalog = <T>(fn: () => T): T => privateCatalog ? privateCatalog.read(fn) : fn();
   const requestedModel = readCatalog(() => resolveConfiguredAgentModel(configuredModel));
-  const resolvedModelString = readCatalog(() => resolveRuntimeModel(configuredModel));
-  const usesVeryfrontCloud = startsWithCloudPrefix(resolvedModelString);
+  // Veryfront Cloud routing can refuse an explicit provider model outright (a
+  // retired hosted model, say). Whether that refusal stands is only known once
+  // the hook has run: a hook credential calls the provider directly, so the
+  // refusal is held until the hook returns without one.
+  let routingError: unknown;
+  let routedModelString: string;
+  try {
+    routedModelString = readCatalog(() => resolveRuntimeModel(configuredModel));
+  } catch (error) {
+    const directModel = input.config.resolveModelTransport
+      ? readCatalog(() => resolveDirectProviderRuntimeModel(configuredModel))
+      : undefined;
+    if (directModel === undefined) throw error;
+    routingError = error;
+    routedModelString = directModel;
+  }
+  const usesVeryfrontCloud = startsWithCloudPrefix(routedModelString);
   const privatelyResolvedModel = input.resolveModelRuntime && usesVeryfrontCloud
-    ? input.resolveModelRuntime(resolvedModelString)
+    ? input.resolveModelRuntime(routedModelString)
     : undefined;
   const transport = privatelyResolvedModel
     ? undefined
     : await input.config.resolveModelTransport?.({
       agentId: input.agentId,
       requestedModel,
-      resolvedModel: resolvedModelString,
+      resolvedModel: routedModelString,
       context: input.context,
       mode: input.mode,
     });
+  // A returned `credential` property asks for that credential, whatever its
+  // value. An unset one (a missing environment variable, say) must fail rather
+  // than fall back to the process key and call under another identity.
+  const credentialRequested = transport !== undefined && transport !== null &&
+    Object.hasOwn(transport, "credential");
+  if (routingError !== undefined && !credentialRequested) throw routingError;
+  // An explicit provider model routes through Veryfront Cloud only because the
+  // environment holds no key for it. A hook credential is that key, so the call
+  // goes to the provider it names.
+  const resolvedModelString = credentialRequested && usesVeryfrontCloud
+    ? readCatalog(() => resolveDirectProviderRuntimeModel(configuredModel)) ?? routedModelString
+    : routedModelString;
 
   const privateThinking = privatelyResolvedModel
     ? input.modelCallThinking ??
@@ -322,8 +350,7 @@ export async function resolveAgentModelTransport(
   // consumed here and never copied onto the returned transport, so it cannot
   // reach headers, traces or logs. It cannot apply to a runtime the hook built
   // itself, so that combination fails instead of dropping the credential.
-  const hookCredential = transport?.credential;
-  if (hookCredential !== undefined && transport?.model) {
+  if (credentialRequested && transport?.model) {
     throw toError(
       createError({
         type: "config",
@@ -334,8 +361,8 @@ export async function resolveAgentModelTransport(
     );
   }
   const languageModel = privatelyResolvedModel ?? transport?.model ??
-    (hookCredential !== undefined
-      ? resolveModelWithCredential(resolvedModelString, hookCredential)
+    (credentialRequested
+      ? resolveModelWithCredential(resolvedModelString, transport?.credential)
       : resolveModel(resolvedModelString));
   // A Veryfront Cloud model settles its protocol and capabilities on its first
   // async step. Settle it here, before anything reads them: the provider option

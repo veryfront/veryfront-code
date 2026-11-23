@@ -6,13 +6,16 @@ import { deleteEnv, setEnv } from "#veryfront/compat/process.ts";
 import { fromError } from "#veryfront/errors";
 import { clearModelProviders, registerModelProvider } from "#veryfront/provider";
 import type { ModelRuntime } from "#veryfront/provider";
-import type { AgentConfig, ResolvedModelTransport } from "../types.ts";
-import { resolveAgentModelTransport } from "./model-transport.ts";
+import type { AgentConfig, ResolvedModelTransport } from "../../../../../../src/agent/types.ts";
+import { resolveAgentModelTransport } from "../../../../../../src/agent/runtime/model-transport.ts";
 
 const ENV_KEYS = [
   "OPENAI_API_KEY",
   "OPENAI_BASE_URL",
   "ANTHROPIC_API_KEY",
+  "GOOGLE_API_KEY",
+  "GOOGLE_GENERATIVE_AI_API_KEY",
+  "MISTRAL_API_KEY",
   "VERYFRONT_API_TOKEN",
   "VERYFRONT_API_TOKEN_FILE",
   "VERYFRONT_PROJECT_SLUG",
@@ -55,13 +58,35 @@ function resolveFor(agentId: string, config: AgentConfig) {
   });
 }
 
+interface CapturedRequest {
+  url: string;
+  authorization: string;
+  headers: Headers;
+}
+
 /** Capture the `authorization` header of every provider request. */
 function captureAuthorization(status = 200): string[] {
   const seen: string[] = [];
+  captureRequests(status, (request) => seen.push(request.authorization));
+  return seen;
+}
+
+/** Capture every outgoing request and answer it as the OpenAI Responses API. */
+function captureRequests(
+  status = 200,
+  onRequest?: (request: CapturedRequest) => void,
+): CapturedRequest[] {
+  const seen: CapturedRequest[] = [];
   installMockFetch(
     (async (input: URL | Request | string, init?: RequestInit) => {
       const request = new Request(input, init);
-      seen.push(request.headers.get("authorization") ?? "");
+      const captured = {
+        url: request.url,
+        authorization: request.headers.get("authorization") ?? "",
+        headers: request.headers,
+      };
+      seen.push(captured);
+      onRequest?.(captured);
       if (status !== 200) {
         return new Response(
           JSON.stringify({ error: { message: "Incorrect API key provided" } }),
@@ -192,6 +217,130 @@ describe("resolveAgentModelTransport hook credential", () => {
         assertEquals(error.message.includes(credential.trim()), false);
       }
       assertEquals(seen, []);
+    });
+  }
+
+  it("rejects a returned credential property whose value is undefined", async () => {
+    setEnv("OPENAI_API_KEY", PROCESS_KEY);
+    const seen = captureAuthorization();
+
+    const error = await assertRejects(() =>
+      resolveFor("policies", agentConfig(MODEL, { credential: undefined }))
+    );
+
+    assertEquals(fromError(error)?.type, "config");
+    assertEquals(seen, []);
+  });
+
+  it("authenticates with the hook credential alone when no provider key is set", async () => {
+    const seen = captureAuthorization();
+
+    await callModel("policies", agentConfig(MODEL, { credential: "sk-agent-policies" }));
+
+    assertEquals(seen, ["Bearer sk-agent-policies"]);
+  });
+
+  // Without a provider key, Veryfront Cloud rewrites the first model and
+  // refuses the second as retired. A hook credential calls the provider either way.
+  for (const model of ["openai/gpt-5.4", MODEL]) {
+    it(`calls the provider directly when Veryfront Cloud would take keyless ${model}`, async () => {
+      setEnv("VERYFRONT_API_TOKEN", "vf_test_credential");
+      setEnv("VERYFRONT_PROJECT_SLUG", "credential-project");
+      const requests = captureRequests();
+
+      const transport = await resolveFor(
+        "policies",
+        agentConfig(model, { credential: "sk-agent-policies" }),
+      );
+      assertEquals(transport.resolvedModelString, model);
+      await transport.languageModel.doGenerate({
+        prompt: [{ role: "user", content: [{ type: "text", text: "hi" }] }],
+        headers: transport.headers,
+      });
+
+      const providerCalls = requests.filter((request) => request.url.includes("/responses"));
+      assertEquals(providerCalls.map((request) => request.authorization), [
+        "Bearer sk-agent-policies",
+      ]);
+      assertEquals(new URL(providerCalls[0]!.url).host, "api.openai.com");
+    });
+  }
+
+  it("keeps Veryfront Cloud routing when the hook returns no credential", async () => {
+    setEnv("VERYFRONT_API_TOKEN", "vf_test_credential");
+    setEnv("VERYFRONT_PROJECT_SLUG", "credential-project");
+    captureRequests();
+
+    const transport = await resolveFor(
+      "policies",
+      agentConfig("openai/gpt-5.4", { headers: { "x-a": "1" } }),
+    );
+
+    assertEquals(transport.resolvedModelString, "veryfront-cloud/openai/gpt-5.4");
+  });
+
+  it("keeps the Veryfront Cloud refusal when the hook returns no credential", async () => {
+    setEnv("VERYFRONT_API_TOKEN", "vf_test_credential");
+    setEnv("VERYFRONT_PROJECT_SLUG", "credential-project");
+    captureRequests();
+
+    const error = await assertRejects(() =>
+      resolveFor("policies", agentConfig(MODEL, { headers: { "x-a": "1" } }))
+    );
+
+    assert(error instanceof Error);
+    assert(error.message.includes("no longer available through Veryfront Cloud"));
+  });
+
+  it("still rejects a credential for an omitted model that Veryfront Cloud serves", async () => {
+    setEnv("VERYFRONT_API_TOKEN", "vf_test_credential");
+    setEnv("VERYFRONT_PROJECT_SLUG", "credential-project");
+    captureRequests();
+
+    const error = await assertRejects(() =>
+      resolveFor("policies", {
+        system: "You are a helpful assistant.",
+        resolveModelTransport: () => ({ credential: "sk-agent-policies" }),
+      })
+    );
+
+    assertEquals(fromError(error)?.type, "config");
+  });
+
+  for (
+    const [model, envKey, header, expected] of [
+      ["anthropic/claude-haiku-4-5", "ANTHROPIC_API_KEY", "x-api-key", "sk-agent-policies"],
+      ["google/gemini-2.5-flash", "GOOGLE_API_KEY", "x-goog-api-key", "sk-agent-policies"],
+      [
+        "mistral/mistral-small-latest",
+        "MISTRAL_API_KEY",
+        "authorization",
+        "Bearer sk-agent-policies",
+      ],
+    ] as const
+  ) {
+    it(`sends the hook credential to ${model.split("/")[0]} instead of the environment key`, async () => {
+      setEnv(envKey, PROCESS_KEY);
+      const requests = captureRequests();
+
+      const transport = await resolveFor(
+        "policies",
+        agentConfig(model, {
+          credential: "sk-agent-policies",
+          headers: { [header]: "sk-from-header" },
+        }),
+      );
+      // The mock answers in another provider's shape; only the request matters.
+      await transport.languageModel.doGenerate({
+        prompt: [{ role: "user", content: [{ type: "text", text: "hi" }] }],
+        headers: transport.headers,
+      }).catch(() => {});
+
+      assertEquals(requests.length, 1);
+      assertEquals(requests[0]!.headers.get(header), expected);
+      const sent = `${requests[0]!.url} ${JSON.stringify([...requests[0]!.headers])}`;
+      assertEquals(sent.includes(PROCESS_KEY), false);
+      assertEquals(sent.includes("sk-from-header"), false);
     });
   }
 

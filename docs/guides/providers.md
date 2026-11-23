@@ -505,9 +505,18 @@ provider's base URL variable.
 - A hook cannot return both `credential` and `model`.
 - The credential must be a non-empty string of visible ASCII characters without
   surrounding whitespace. An invalid value fails the call. It does not fall
-  back to the environment key.
+  back to the environment key. That includes a `credential` property whose
+  value is `undefined`, such as an unset environment variable in the example
+  above.
 - An `authorization` or API-key header in the hook's `headers` does not replace
   the credential.
+- A credential calls the provider directly. With Veryfront Cloud enabled and no
+  provider key in the environment, an explicit model such as
+  `openai/gpt-5.4-nano` normally routes through the AI Gateway; a hook
+  credential keeps that call on the provider instead. An omitted, `auto`, or
+  `veryfront-cloud/*` model cannot take a credential.
+- The hook does not run for calls that a platform-managed project run resolves
+  through Veryfront Cloud, so a credential has no effect there.
 
 ## Custom provider registration
 
