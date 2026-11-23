@@ -5,6 +5,7 @@ import { getAgent } from "#veryfront/agent";
 import { toolRegistry } from "#veryfront/tool";
 import { createMockAdapter } from "#veryfront/platform/adapters/mock.ts";
 import {
+  assert,
   assertEquals,
   assertExists,
   assertNotStrictEquals,
@@ -984,6 +985,40 @@ describe(
       // Both requests hold the result of one discovery, not one each.
       assertStrictEquals(secondWaiter!.value, firstWaiter!.value);
       assertEquals(secondDiscoveryCount, 1);
+    });
+
+    it("shares one hard failure between requests of the generation that failed", async () => {
+      agentRegistry.clearAll();
+      toolRegistryInternal.clearAll();
+      const projectSlug = "rejecting-fallback-same-generation";
+      const generation = createFallbackGeneration("/rejecting-same-generation", projectSlug, 1);
+      await writeAgentFile(generation.ctx, "fallback-agent", "ONLY");
+      // Every discovery of this source fails, and each attempt is counted.
+      let discoveryCount = 0;
+      generation.ctx.adapter.fs.exists = (path: string) => {
+        if (path === `${generation.ctx.projectDir}/skills`) {
+          discoveryCount++;
+          throw new Error("generation filesystem unavailable");
+        }
+        return Promise.resolve(false);
+      };
+
+      // All three read an empty slot, so one becomes the owner and two wait for it.
+      const requests = [
+        outcomeOf(ensureProjectDiscovery(generation.ctx)),
+        outcomeOf(ensureProjectDiscovery(generation.ctx)),
+        outcomeOf(ensureProjectDiscovery(generation.ctx)),
+      ];
+      await generation.fingerprintStarted;
+      generation.fingerprint.resolve(undefined);
+
+      const outcomes = await Promise.all(requests);
+      for (const outcome of outcomes) {
+        assert(outcome.error instanceof Error);
+        assertEquals(outcome.error.message.includes("generation filesystem unavailable"), true);
+      }
+      // The waiters do not repeat a discovery that already failed for their source.
+      assertEquals(discoveryCount, 1);
     });
 
     it("serializes two newer generations that waited on a failed older generation", async () => {

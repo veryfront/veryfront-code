@@ -143,11 +143,15 @@ function throwProjectDiscoveryFailure(ctx: HandlerContext, error: unknown): neve
  * that invocation, which reports it; the waiter re-reads the cache slot and
  * decides for its own source generation.
  */
-async function waitForDiscoveryOwner(record: DiscoveryRecord): Promise<void> {
+async function waitForDiscoveryOwner(
+  record: DiscoveryRecord,
+): Promise<{ failed: false } | { failed: true; error: unknown }> {
   try {
     await record.promise;
-  } catch {
+    return { failed: false };
+  } catch (error) {
     // Reported by the owner.
+    return { failed: true, error };
   }
 }
 
@@ -290,7 +294,12 @@ export async function ensureProjectDiscovery(
       // Without a concrete fingerprint, preserve generation isolation. Wait
       // for the invocation that won this cache slot, then re-evaluate this
       // adapter's own generation instead of overwriting an in-flight record.
-      await waitForDiscoveryOwner(currentExisting);
+      const owner = await waitForDiscoveryOwner(currentExisting);
+      if (owner.failed && currentExisting.sourceSnapshotVersion === sourceSnapshotVersion) {
+        // The same generation reads the same source: share the owner's failure
+        // instead of repeating a discovery that already failed.
+        throw owner.error;
+      }
       const settledExisting = discoveredProjects.get<DiscoveryRecord>(key);
       if (settledExisting !== currentExisting) {
         if (
