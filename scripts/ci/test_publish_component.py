@@ -282,3 +282,75 @@ class ReleaseReadinessTests(unittest.TestCase):
         facts=Facts();facts.release['assets'][0]['digest']=None
         with self.assertRaises(ValueError):
             publisher.witness_when_ready(VERSION,ENV,facts.public,facts.source,sleep=no_sleep)
+
+
+class DiagnosticTests(unittest.TestCase):
+    def test_http_phase_and_status_are_safe_and_preserve_exception_identity(self):
+        secret='secret-canary?token=do-not-log'
+        error=HTTPError('https://example.invalid/'+secret,403,secret,{},None)
+        def public(_):raise error
+        with self.assertRaises(HTTPError) as caught:
+            publisher.witness(VERSION,ENV,public,Facts().source)
+        self.assertIs(caught.exception,error)
+        detail=publisher.failure_diagnostic(error)
+        self.assertEqual(detail,{'phase':'registry-package','kind':'http','status':403})
+        self.assertNotIn(secret,json.dumps(detail))
+        error.close()
+
+    def test_validation_phase_and_unknown_errors_do_not_expose_messages(self):
+        facts=Facts();facts.release['assets'][0]['digest']=None
+        with self.assertRaises(ValueError) as caught:facts.witness()
+        self.assertEqual(publisher.failure_diagnostic(caught.exception),
+                         {'phase':'release-asset','kind':'validation'})
+        error=RuntimeError('secret-canary');error.witness_phase='secret-canary'
+        self.assertEqual(publisher.failure_diagnostic(error),{'phase':'unknown','kind':'unexpected'})
+
+    def test_source_subprocess_failure_is_distinct_and_bounded(self):
+        from unittest.mock import patch
+        from types import SimpleNamespace
+        result=SimpleNamespace(returncode=17,stdout=b'secret-canary',stderr=b'secret-canary')
+        with patch.object(publisher.subprocess,'run',return_value=result):
+            with self.assertRaises(ValueError) as caught:
+                publisher.source_json('repos/veryfront/veryfront-code/commits/'+'a'*40)
+        self.assertEqual(publisher.failure_diagnostic(caught.exception),
+                         {'phase':'source-read','kind':'subprocess','exit_code':17})
+
+    def test_timeouts_and_url_errors_do_not_expose_reasons(self):
+        from urllib.error import URLError
+        import subprocess
+        for error,kind in [(TimeoutError('secret-canary'),'timeout'),
+                           (subprocess.TimeoutExpired(['secret-canary'],60),'timeout'),
+                           (URLError('secret-canary'),'network')]:
+            with self.subTest(kind=kind):
+                self.assertEqual(publisher.failure_diagnostic(error),{'phase':'unknown','kind':kind})
+
+    def test_cli_failure_keeps_receipt_absent_and_logs_no_secret(self):
+        from unittest.mock import patch
+        import tempfile
+        import os
+        secret='secret-canary?token=hidden'
+        for error in [HTTPError('https://example.invalid/'+secret,429,secret,{},None),
+                      ValueError(secret),RuntimeError(secret)]:
+            output=io.StringIO()
+            with tempfile.TemporaryDirectory() as folder:
+                previous=os.getcwd()
+                try:
+                    os.chdir(folder)
+                    with patch.object(publisher,'witness_when_ready',side_effect=error),patch('sys.stderr',output):
+                        self.assertEqual(publisher.main([VERSION],ENV),1)
+                    self.assertFalse(Path('platform-component.json').exists())
+                finally:os.chdir(previous)
+            self.assertIn('no component receipt issued',output.getvalue())
+            self.assertNotIn(secret,output.getvalue())
+            if isinstance(error,HTTPError):error.close()
+
+    def test_post_input_validations_report_the_material_boundary(self):
+        cases=[('integrity','package-identity'),('commit','source-identity'),('ancestry','source-identity')]
+        for mode,label in cases:
+            facts=Facts();read_source=facts.source
+            if mode=='integrity':facts.package['dist']['integrity']='unchecked'
+            elif mode=='commit':read_source=lambda _: {'sha':'c'*40}
+            else:facts.ancestry['status']='diverged'
+            with self.subTest(mode=mode),self.assertRaises(ValueError) as caught:
+                publisher.witness(VERSION,ENV,facts.public,read_source)
+            self.assertEqual(publisher.failure_diagnostic(caught.exception),{'phase':label,'kind':'validation'})
