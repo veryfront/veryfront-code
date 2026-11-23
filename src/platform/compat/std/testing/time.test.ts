@@ -107,6 +107,26 @@ describe("platform/compat/std/testing/time", () => {
     assertEquals(fired, false);
   });
 
+  it("advances to the next scheduled timer and reports whether one was scheduled", () => {
+    using time = new FakeTime(0);
+    const fired: string[] = [];
+    setTimeout(() => fired.push("late"), 30);
+    setTimeout(() => fired.push("early"), 10);
+    const cleared = setTimeout(() => fired.push("cleared"), 20);
+    clearTimeout(cleared);
+
+    assertEquals(time.next(), true);
+    assertEquals(time.now, 10);
+    assertEquals(fired, ["early"]);
+
+    assertEquals(time.next(), true);
+    assertEquals(time.now, 30);
+    assertEquals(fired, ["early", "late"]);
+
+    assertEquals(time.next(), false);
+    assertEquals(time.now, 30);
+  });
+
   it("reports the faked clock through Date while keeping the real statics", () => {
     using time = new FakeTime(new Date("2026-01-01T00:00:00.000Z"));
 
