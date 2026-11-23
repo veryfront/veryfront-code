@@ -1,13 +1,16 @@
 import base64
+import contextlib
 from copy import deepcopy
 import hashlib
 import importlib.util
 import io
 import json
 from pathlib import Path
+import subprocess
+import sys
 import tarfile
 import unittest
-from urllib.error import HTTPError
+from urllib.error import HTTPError, URLError
 from urllib.request import Request
 
 spec=importlib.util.spec_from_file_location('component_publisher',Path(__file__).with_name('publish-component.py'))
@@ -275,10 +278,91 @@ class ReleaseReadinessTests(unittest.TestCase):
     def test_other_http_failures_and_invalid_materials_fail_immediately(self):
         from urllib.error import HTTPError
         def no_sleep(_):self.fail('Invalid release facts must not be retried')
-        for status in (401,403,429,500):
+        for status in (401,403,429):
             def public(url):raise HTTPError(url,status,'Refused',{},None)
             with self.subTest(status=status),self.assertRaises(HTTPError):
                 publisher.witness_when_ready(VERSION,ENV,public,Facts().source,sleep=no_sleep)
         facts=Facts();facts.release['assets'][0]['digest']=None
         with self.assertRaises(ValueError):
             publisher.witness_when_ready(VERSION,ENV,facts.public,facts.source,sleep=no_sleep)
+
+    def test_transient_server_and_transport_failures_are_retried(self):
+        failures={'server':lambda url:HTTPError(url,502,'Bad Gateway',{},None),
+                  'transport':lambda url:URLError('connection reset'),
+                  'timeout':lambda url:TimeoutError('timed out')}
+        for name,failure in failures.items():
+            facts=Facts();attempts=[];elapsed=[0];log=io.StringIO()
+            def public(url):
+                attempts.append(url)
+                if len(attempts)==1:raise failure(url)
+                return facts.public(url)
+            def sleep(seconds):elapsed[0]+=seconds
+            with self.subTest(failure=name),contextlib.redirect_stderr(log):
+                result=publisher.witness_when_ready(VERSION,ENV,public,facts.source,
+                    clock=lambda:elapsed[0],sleep=sleep)
+                self.assertEqual(result['release']['package_source_revision'],SOURCE)
+                self.assertEqual(elapsed[0],5)
+                self.assertIn('Retrying after a transient read failure',log.getvalue())
+
+    def test_persistent_server_failure_is_refused_after_bounded_retries(self):
+        elapsed=[0];attempts=[]
+        def public(url):
+            attempts.append(url)
+            raise HTTPError(url,503,'Unavailable',{},None)
+        def sleep(seconds):elapsed[0]+=seconds
+        with contextlib.redirect_stderr(io.StringIO()),self.assertRaises(HTTPError):
+            publisher.witness_when_ready(VERSION,ENV,public,Facts().source,
+                clock=lambda:elapsed[0],sleep=sleep)
+        self.assertEqual(len(attempts),5)
+        self.assertEqual(elapsed[0],75)
+
+    def test_transient_retries_stay_inside_the_publication_deadline(self):
+        elapsed=[0];attempts=[]
+        def public(url):
+            attempts.append(url)
+            if len(attempts)<=29:raise HTTPError(url,404,'Not Found',{},None)
+            raise HTTPError(url,502,'Bad Gateway',{},None)
+        def sleep(seconds):elapsed[0]+=seconds
+        with contextlib.redirect_stderr(io.StringIO()),self.assertRaises(HTTPError):
+            publisher.witness_when_ready(VERSION,ENV,public,Facts().source,
+                clock=lambda:elapsed[0],sleep=sleep)
+        self.assertLessEqual(elapsed[0],900)
+
+class RefusalReportTests(unittest.TestCase):
+    def reason(self,facts):
+        try:facts.witness()
+        except Exception as error:return publisher.refusal_reason(error)
+        self.fail('The witness must refuse these facts')
+
+    def test_refusal_names_the_failed_check(self):
+        def git_head(f):f.package['gitHead']='main'
+        def ancestry(f):f.ancestry={'status':'diverged','base_commit':{'sha':SOURCE}}
+        def digest(f):f.release['assets'][0]['digest']=None
+        def draft(f):f.release['draft']=True
+        for mutate,expected in [(git_head,'package gitHead and integrity format'),
+                                (ancestry,'package gitHead is an ancestor of the CI commit'),
+                                (digest,'release asset veryfront-linux-x64 id, size and digest'),
+                                (draft,'release record identity')]:
+            facts=Facts();mutate(facts)
+            with self.subTest(case=mutate.__name__):self.assertEqual(self.reason(facts),'failed check: '+expected)
+        facts=SuspendedFacts().build();facts.blobs[701]=facts.tgz[:-1]+bytes([facts.tgz[-1]^1])
+        self.assertEqual(self.reason(facts),'failed check: release asset veryfront-'+VERSION+'.tgz digest')
+
+    def test_http_refusal_reports_status_and_route_without_query_or_body(self):
+        error=HTTPError('https://release-assets.githubusercontent.com/x?sig=secret#part',503,'Unavailable',{},
+                        io.BytesIO(b'private body'))
+        self.assertEqual(publisher.refusal_reason(error),'HTTP 503 from https://release-assets.githubusercontent.com/x')
+
+    def test_other_failures_report_their_type_without_their_message(self):
+        self.assertEqual(publisher.refusal_reason(URLError('private detail')),'URLError')
+        self.assertEqual(publisher.refusal_reason(KeyError('private detail')),'KeyError')
+        self.assertEqual(publisher.refusal_reason(TimeoutError('Code release material was not published within fifteen minutes')),
+                         'TimeoutError')
+
+    def test_refused_run_prints_the_failed_check(self):
+        script=Path(__file__).with_name('publish-component.py')
+        result=subprocess.run([sys.executable,'-I',str(script),'not-a-version'],capture_output=True,text=True,
+                              env={},timeout=60,check=False)
+        self.assertEqual(result.returncode,1)
+        self.assertEqual(result.stderr.strip(),
+                         'Code release witness refused (failed check: version format); no component receipt issued')
