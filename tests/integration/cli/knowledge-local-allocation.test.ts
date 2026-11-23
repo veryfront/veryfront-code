@@ -35,6 +35,15 @@ import {
   createUploadSource,
 } from "../../../cli/commands/knowledge/command.test-helpers.ts";
 
+import { KNOWLEDGE_OUTPUT_CLAIM_DIRECTORY } from "../../../cli/commands/knowledge/source-policy.ts";
+
+/** Seed historical documents without the later compatible-writer ownership hints. */
+async function discardFixtureSourceHints(outputDir: string): Promise<void> {
+  await Deno.remove(join(outputDir, KNOWLEDGE_OUTPUT_CLAIM_DIRECTORY, "v1", "sources"), {
+    recursive: true,
+  });
+}
+
 describe("local allocation sessions", () => {
   it("recovers a Linux child claim with explicit CLI permissions and no allow-all", async () => {
     if (Deno.build.os !== "linux") return;
@@ -175,6 +184,7 @@ describe("local allocation sessions", () => {
       const input = { filePath, outputDir, resource: "source", sourceKey: "source-key" };
       await runKnowledgeParser({ ...input, slug: "original-2" });
       await runKnowledgeParser({ ...input, slug: "original-10" });
+      await discardFixtureSourceHints(outputDir);
       const first = await runKnowledgeParser(input);
       assertEquals(first.slug, "original-2");
       await Deno.writeTextFile(filePath, "# Revised\n\nRevised body");
@@ -516,6 +526,7 @@ describe("local allocation sessions", () => {
               JSON.stringify(filePath)
             }\ngenerated:\n  by: "veryfront/0.1.1289-rc"\n---\n\n# Article\n\nOriginal.`,
           );
+          await discardFixtureSourceHints(outputDir);
           const second = await Deno.readTextFile(join(outputDir, "article-2.md"));
           assertEquals(
             (await runKnowledgeParser({
@@ -1020,6 +1031,7 @@ describe("local allocation sessions", () => {
           });
           files.push({ filePath, resource, sourceKey: `key-${i}` });
         }
+        await discardFixtureSourceHints(outputDir);
         let probes = 0;
         Deno.lstat = async (path) => {
           if (String(path).startsWith(outputDir)) probes++;
@@ -1151,6 +1163,7 @@ describe("local allocation sessions", () => {
       await runKnowledgeParser({ ...input, slug: "shared-2" });
       await runKnowledgeParser({ ...input, slug: "shared-3" });
       await runKnowledgeParser({ filePath, outputDir, resource: "a", slug: "shared" });
+      await discardFixtureSourceHints(outputDir);
       const fresh = new KnowledgeAllocationSession();
       assertEquals(
         (await runKnowledgeParser(input, { allocationSession: fresh })).slug,
@@ -1842,6 +1855,7 @@ console.log(JSON.stringify({requested,fresh}));
         await runKnowledgeParser({ ...input, outputDir, slug: `shared-${index + 2}` });
         files.push(input);
       }
+      await discardFixtureSourceHints(outputDir);
       let reads = 0;
       Deno.readTextFile = (path, options) => {
         if (String(path).startsWith(`${outputDir}/`) && String(path).endsWith(".md")) reads += 1;
@@ -3422,3 +3436,80 @@ for (const relativePath of ["topic.md", "assets/proof.png"]) {
     });
   }
 }
+
+for (const exact of ["slug", "okf"] as const) {
+  it(`observes ${exact} publication from another allocation session`, async () => {
+    const root = await makeTempDir({ prefix: "knowledge-exact-source-hint-" });
+    try {
+      const outputDir = join(root, "out");
+      const other = join(root, "other.md"), filePath = join(root, "source.md");
+      await Deno.writeTextFile(other, "# Other\n");
+      await Deno.writeTextFile(filePath, "# Alpha\n\nBody");
+      const session = new KnowledgeAllocationSession();
+      await runKnowledgeParser({ filePath: other, outputDir }, { allocationSession: session });
+      const input = { filePath, outputDir, resource: "source", sourceKey: "source-key" };
+      if (exact === "okf") {
+        await Deno.writeTextFile(
+          filePath,
+          [
+            "\uFEFF---",
+            "type: Topic",
+            "title: Alpha",
+            "resource: source",
+            "generated:",
+            "  by: veryfront/0.1.1289-rc",
+            "  source_key: source-key",
+            "---",
+            "# Alpha",
+            "Body",
+          ].join("\n"),
+        );
+      }
+      const pinned = await runKnowledgeParser({
+        ...input,
+        ...(exact === "slug" ? { slug: "pinned" } : { okfRelativePath: "pinned.md" }),
+      }, { allocationSession: new KnowledgeAllocationSession() });
+      const updated = await runKnowledgeParser(input, { allocationSession: session });
+      assertEquals(updated.sandbox_output_path, pinned.sandbox_output_path);
+    } finally {
+      await Deno.remove(root, { recursive: true });
+    }
+  });
+}
+
+it("prefers the last compatible exact publication for duplicate source owners", async () => {
+  const root = await makeTempDir({ prefix: "knowledge-exact-hint-preference-" });
+  try {
+    const filePath = join(root, "input.md"), outputDir = join(root, "out");
+    await Deno.writeTextFile(filePath, "# Alpha\n\nBody");
+    const input = { filePath, outputDir, resource: "source", sourceKey: "source-key" };
+    await runKnowledgeParser({ ...input, slug: "pinned-2" });
+    await runKnowledgeParser({ ...input, slug: "pinned-10" });
+    assertEquals((await runKnowledgeParser(input)).slug, "pinned-10");
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
+it("reports exact ownership-hint failures and releases its output reservation", async () => {
+  const root = await makeTempDir({ prefix: "knowledge-exact-hint-failure-" });
+  const rename = Deno.rename;
+  try {
+    const filePath = join(root, "input.md"), outputDir = join(root, "out");
+    await Deno.writeTextFile(filePath, "# Alpha\n\nBody");
+    const input = { filePath, outputDir, sourceKey: "source-key", slug: "pinned" };
+    Deno.rename = async (from, to) => {
+      if (String(from).endsWith(".prepared") && String(to).includes("/sources/")) {
+        throw new Deno.errors.PermissionDenied("Ownership hint denied");
+      }
+      await rename(from, to);
+    };
+    await assertRejects(() => runKnowledgeParser(input), Error, "Ownership hint denied");
+    assert((await Deno.readTextFile(join(outputDir, "pinned.md"))).includes("Body"));
+    Deno.rename = rename;
+    assertEquals((await runKnowledgeParser(input)).slug, "pinned");
+  } finally {
+    Deno.rename = rename;
+    await Deno.remove(root, { recursive: true });
+  }
+});

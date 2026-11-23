@@ -1787,6 +1787,25 @@ export class KnowledgeAllocationSession {
 /** Keep allocation callers on the shared, generation-aware claim protocol. */
 const acquireKnowledgeCandidate = acquireKnowledgeTargetOutputClaim;
 
+function knowledgeOwnerFromContent(path: string, content: string): string | undefined {
+  const metadata = inspectOkfDocument(path, content).metadata;
+  const storedKey = readKnowledgeIngestSourceKey(metadata);
+  const generated = metadata.generated;
+  if (generated !== null && typeof generated === "object" && "source_key" in generated) {
+    return storedKey === undefined ? undefined : JSON.stringify(["sourceKey", storedKey]);
+  }
+  if (metadata.resource === undefined) {
+    const local = readProvableLegacyLocalKnowledgeSource(metadata);
+    return local === undefined ? undefined : JSON.stringify(["legacy-local", local]);
+  }
+  const legacyGenerated = generated !== null && typeof generated === "object" &&
+    "by" in generated && typeof generated.by === "string" &&
+    /^veryfront\/\d/.test(generated.by);
+  return legacyGenerated && typeof metadata.resource === "string"
+    ? JSON.stringify(["resource", metadata.resource])
+    : undefined;
+}
+
 /** Exact paths share candidate reservations but deliberately permit sequential replacement. */
 async function writeExactKnowledgeOutput(
   outputDir: string,
@@ -1829,6 +1848,19 @@ async function writeExactKnowledgeOutput(
     if (mode !== null) await Deno.chmod(stage, mode & 0o777);
     signal?.throwIfAborted();
     await Deno.rename(stage, path);
+    // Automatic allocation only discovers top-level Markdown documents. Publish the
+    // same ownership hint for exact writers so already-primed sessions see them.
+    if (typeof content === "string" && name.endsWith(".md") && !name.includes("/")) {
+      const owner = knowledgeOwnerFromContent(name, content);
+      if (owner !== undefined) {
+        await withKnowledgeSourceClaim(
+          outputDir,
+          owner,
+          signal,
+          (index) => index.record(owner, candidate),
+        );
+      }
+    }
   } finally {
     try {
       await Deno.remove(stage).catch((error) => {
@@ -1873,24 +1905,7 @@ async function writeKnowledgeFile(
     owner === source || owner === legacySource ||
     (legacyLocalSource !== undefined && owner === legacyLocalSource);
   const reservationOwner = await computeHash(source);
-  const ownerFromContent = (path: string, content: string): string | undefined => {
-    const metadata = inspectOkfDocument(path, content).metadata;
-    const storedKey = readKnowledgeIngestSourceKey(metadata);
-    const generated = metadata.generated;
-    if (generated !== null && typeof generated === "object" && "source_key" in generated) {
-      return storedKey === undefined ? undefined : sourceIdentity("", storedKey);
-    }
-    if (metadata.resource === undefined) {
-      const local = readProvableLegacyLocalKnowledgeSource(metadata);
-      return local === undefined ? undefined : JSON.stringify(["legacy-local", local]);
-    }
-    const legacyGenerated = generated !== null && typeof generated === "object" &&
-      "by" in generated && typeof generated.by === "string" &&
-      /^veryfront\/\d/.test(generated.by);
-    return legacyGenerated && typeof metadata.resource === "string"
-      ? sourceIdentity(metadata.resource)
-      : undefined;
-  };
+
   const canonicalSource = localPath !== undefined
     ? JSON.stringify(["local", localPath])
     : identity.sourceKey === undefined
@@ -1961,7 +1976,7 @@ async function writeKnowledgeFile(
             observe(attempt, undefined, false);
             return;
           }
-          observe(attempt, ownerFromContent(path, await Deno.readTextFile(path)), false);
+          observe(attempt, knowledgeOwnerFromContent(path, await Deno.readTextFile(path)), false);
         } catch (error) {
           if (error instanceof Deno.errors.NotFound) forgetAbsent(attempt);
           else if (
@@ -2035,7 +2050,7 @@ async function writeKnowledgeFile(
           return true;
         };
         const inspectOwner = (content: string) => {
-          const owner = ownerFromContent(path, content);
+          const owner = knowledgeOwnerFromContent(path, content);
           remember(owner);
           return {
             matches: matchesOwner(owner),
@@ -2075,7 +2090,7 @@ async function writeKnowledgeFile(
             forgetAbsent(attempt);
             if (reselectLostHint()) continue;
             try {
-              const owner = ownerFromContent(path, markdown);
+              const owner = knowledgeOwnerFromContent(path, markdown);
               if (globalIdentity && owner !== undefined) await sourceIndex.record(owner, candidate);
               signal?.throwIfAborted();
               await publishKnowledgeOutput({
@@ -2115,7 +2130,7 @@ async function writeKnowledgeFile(
             continue;
           }
           signal?.throwIfAborted();
-          const owner = ownerFromContent(path, markdown);
+          const owner = knowledgeOwnerFromContent(path, markdown);
           if (globalIdentity && owner !== undefined) await sourceIndex.record(owner, candidate);
           signal?.throwIfAborted();
           const published = await publishKnowledgeOutput({
@@ -2169,9 +2184,9 @@ async function writeKnowledgeFile(
           if (stat.nlink !== 1n) {
             if (stat.nlink !== 2n) return undefined;
             const stage = await readProvenKnowledgeOutputStage(outputDir, candidate);
-            return stage === undefined ? undefined : ownerFromContent(path, stage.content);
+            return stage === undefined ? undefined : knowledgeOwnerFromContent(path, stage.content);
           }
-          return ownerFromContent(path, await Deno.readTextFile(path));
+          return knowledgeOwnerFromContent(path, await Deno.readTextFile(path));
         } catch (error) {
           if (
             error instanceof Deno.errors.NotFound ||
