@@ -16,10 +16,13 @@
  *
  * Runs as part of `deno task verify`.
  *
- * Usage: deno run --allow-read scripts/docs/validate-api-reference.ts
+ * Usage: deno run --allow-read scripts/docs/validate-api-reference.ts [root]
+ *
+ * Reported paths are relative to the root, so a failure log does not expose
+ * the filesystem layout of the machine that ran the check.
  */
 
-const ROOT = Deno.cwd();
+const ROOT = (Deno.args[0] ?? Deno.cwd()).replace(/\/+$/, "");
 
 /** Slugs that own only deep imports and have no top-level barrel JSDoc. */
 const SYNTHETIC_PARENTS = new Set<string>();
@@ -145,9 +148,9 @@ function main(): void {
   }
 
   for (const slug of requiredSlugs) {
-    const referencePath = `${ROOT}/docs/api-reference/veryfront/${slug}.md`;
+    const referencePath = `docs/api-reference/veryfront/${slug}.md`;
     try {
-      Deno.statSync(referencePath);
+      Deno.statSync(`${ROOT}/${referencePath}`);
     } catch {
       missingReferencePages.push({
         identifier: slug === "index" ? "veryfront" : `veryfront/${slug}`,
@@ -156,9 +159,9 @@ function main(): void {
     }
   }
 
-  const referenceDir = `${ROOT}/docs/api-reference/veryfront`;
+  const referenceDir = "docs/api-reference/veryfront";
   try {
-    for (const entry of Deno.readDirSync(referenceDir)) {
+    for (const entry of Deno.readDirSync(`${ROOT}/${referenceDir}`)) {
       if (!entry.isFile || !entry.name.endsWith(".md")) continue;
       const slug = entry.name.replace(/\.md$/, "");
       const path = `${referenceDir}/${entry.name}`;
@@ -169,7 +172,7 @@ function main(): void {
         });
       }
 
-      const content = Deno.readTextFileSync(path);
+      const content = Deno.readTextFileSync(`${ROOT}/${path}`);
       const lines = content.split("\n");
       for (const [index, text] of lines.entries()) {
         const description = extractReferenceDescription(text);
