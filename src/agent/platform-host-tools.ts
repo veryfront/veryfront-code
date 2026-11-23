@@ -53,6 +53,14 @@ function defineData(target: HostToolSet | HostToolDefinition, key: string, value
   reflectApply(objectDefineProperty, Object, [target, key, dataDescriptor(value)]);
 }
 
+function defineGetter(target: HostToolDefinition, key: string, get: () => unknown): void {
+  const descriptor = objectCreate(null) as PropertyDescriptor;
+  descriptor.configurable = true;
+  descriptor.enumerable = true;
+  descriptor.get = get;
+  reflectApply(objectDefineProperty, Object, [target, key, descriptor]);
+}
+
 function copyOwnDataTools(target: HostToolSet, source: HostToolSet): void {
   const keys = ownKeys(source);
   for (let index = 0; index < keys.length; index++) {
@@ -70,8 +78,22 @@ function cloneHostToolDefinitionWithId(
   const keys = ownKeys(definition);
   for (let index = 0; index < keys.length; index++) {
     const key = keys[index]!;
-    const value = ownDataValue(definition, key);
-    if (value !== undefined) defineData(wrapper, key, value);
+    const descriptor = reflectApply(objectGetOwnPropertyDescriptor, Object, [definition, key]) as
+      | PropertyDescriptor
+      | undefined;
+    if (descriptor === undefined) continue;
+    if (hasOwn(descriptor, "value")) {
+      if (descriptor.value !== undefined) defineData(wrapper, key, descriptor.value);
+      continue;
+    }
+    // Trusted definitions may compute fields on read: load_skill advertises its
+    // static provider schema through an `inputSchemaJson` getter whose read also
+    // refreshes reference authorization. Dropping it makes callers fall back to
+    // the union validation schema, whose root has no `properties`.
+    const getter = descriptor.get;
+    if (getter !== undefined) {
+      defineGetter(wrapper, key, () => reflectApply(getter, definition, []));
+    }
   }
   defineData(wrapper, "id", id);
   return wrapper;
