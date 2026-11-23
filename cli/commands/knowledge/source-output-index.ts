@@ -4,9 +4,25 @@ import { computeHash } from "veryfront/utils";
 import { acquireKnowledgeOutputClaim } from "./output-claim.ts";
 import { KNOWLEDGE_OUTPUT_CLAIM_DIRECTORY } from "./source-policy.ts";
 
+export interface SourceOutputHint {
+  owner: string;
+  candidate: string;
+  fileName?: string;
+}
+
+export function isKnowledgeSourceOutputCandidate(stem: string): boolean {
+  return Boolean(stem) && stem !== "." && stem !== ".." && !/[/\\\0]/.test(stem) &&
+    stem.length <= 255;
+}
+
+function validFileName(stem: string, fileName: string): boolean {
+  return isKnowledgeSourceOutputCandidate(fileName) && fileName.toLowerCase().endsWith(".md") &&
+    fileName.slice(0, -3) === stem;
+}
+
 export interface SourceOutputIndex {
-  read(owners: string[]): Promise<Array<{ owner: string; candidate: string }>>;
-  record(owner: string, candidate: string): Promise<void>;
+  read(owners: string[]): Promise<SourceOutputHint[]>;
+  record(owner: string, candidate: string, fileName?: string): Promise<void>;
 }
 
 /** Serialize a source across title families; hints never replace fresh output validation. */
@@ -28,7 +44,7 @@ export async function withKnowledgeSourceClaim<T>(
   try {
     return await write({
       read: async (owners) => {
-        const hints: Array<{ owner: string; candidate: string }> = [];
+        const hints: SourceOutputHint[] = [];
         for (const sourceOwner of new Set(owners)) {
           const hash = await computeHash(sourceOwner);
           const path = join(directory, `${hash}.json`);
@@ -47,11 +63,18 @@ export async function withKnowledgeSourceClaim<T>(
               !("candidate" in value) || typeof value.candidate !== "string"
             ) continue;
             const stem = value.candidate;
+            if (!isKnowledgeSourceOutputCandidate(stem)) continue;
             if (
-              !stem || stem === "." || stem === ".." || /[/\\\0]/.test(stem) ||
-              stem.length > 255
+              "fileName" in value &&
+              (typeof value.fileName !== "string" || !validFileName(stem, value.fileName))
             ) continue;
-            hints.push({ owner: sourceOwner, candidate: stem });
+            hints.push({
+              owner: sourceOwner,
+              candidate: stem,
+              ...("fileName" in value && typeof value.fileName === "string"
+                ? { fileName: value.fileName }
+                : {}),
+            });
           } catch (error) {
             if (
               error instanceof SyntaxError || error instanceof Deno.errors.NotFound ||
@@ -62,14 +85,25 @@ export async function withKnowledgeSourceClaim<T>(
         }
         return hints;
       },
-      record: async (sourceOwner, stem) => {
+      record: async (sourceOwner, stem, fileName) => {
+        if (
+          !isKnowledgeSourceOutputCandidate(stem) ||
+          fileName !== undefined && !validFileName(stem, fileName)
+        ) {
+          throw new Error("Invalid knowledge source output hint");
+        }
         await Deno.mkdir(directory, { recursive: true });
         const hash = await computeHash(sourceOwner);
         const prepared = join(directory, `${crypto.randomUUID()}.prepared`);
         try {
           await Deno.writeTextFile(
             prepared,
-            JSON.stringify({ version: 1, owner: hash, candidate: stem }),
+            JSON.stringify({
+              version: 1,
+              owner: hash,
+              candidate: stem,
+              ...(fileName !== undefined && fileName !== `${stem}.md` ? { fileName } : {}),
+            }),
             {
               createNew: true,
             },

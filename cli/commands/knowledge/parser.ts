@@ -1,5 +1,10 @@
 import { lstat as inspectLink } from "node:fs/promises";
-import { type SourceOutputIndex, withKnowledgeSourceClaim } from "./source-output-index.ts";
+import {
+  isKnowledgeSourceOutputCandidate,
+  type SourceOutputHint,
+  type SourceOutputIndex,
+  withKnowledgeSourceClaim,
+} from "./source-output-index.ts";
 import {
   acquireKnowledgeTargetOutputClaim,
   knowledgeOutputClaimPath,
@@ -1504,7 +1509,10 @@ const MAX_TITLE_SLUG_LENGTH = 80;
 function slugifyTitle(title: string): string {
   const slug = slugifyKnowledgeValue(title.replace(/^\d+[.)]\s+/, ""))
     .slice(0, MAX_TITLE_SLUG_LENGTH).replace(/-+$/, "") || "document";
-  return escapeReservedKnowledgeSlug(slug);
+  const portable = /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])$/i.test(slug)
+    ? `${slug}-document`
+    : slug;
+  return escapeReservedKnowledgeSlug(portable);
 }
 
 interface KnowledgeTitleAllocation {
@@ -1549,6 +1557,15 @@ function observeKnowledgeCandidate(
   while (state.observed.has(state.next)) state.next += 1;
 }
 
+/** Nonstandard extension spellings retain a separate internal identity, never a path. */
+function knowledgeCandidateKey(fileName: string): string {
+  return fileName.endsWith(".md") ? fileName.slice(0, -3) : `\0${fileName}`;
+}
+
+function knowledgeCandidateFileName(candidate: string): string {
+  return candidate.startsWith("\0") ? candidate.slice(1) : `${candidate}.md`;
+}
+
 interface KnowledgeDirectoryAllocation {
   titles: Map<string, KnowledgeTitleAllocation>;
   tail: Promise<void>;
@@ -1586,10 +1603,11 @@ export class KnowledgeAllocationSession {
       selectedSlug: string,
       cachedOwner: (candidate: string) => { owner: string | undefined } | undefined,
       publishedCandidate?: string,
+      selectedOutputName?: string,
     ) => Promise<T>,
     identity?: {
       owners: string[][];
-      hints?: () => Promise<Array<{ owner: string; candidate: string }>>;
+      hints?: () => Promise<SourceOutputHint[]>;
       readOwner: (candidate: string) => Promise<string | undefined>;
     },
     guard?: (write: () => Promise<T>) => Promise<T>,
@@ -1607,7 +1625,10 @@ export class KnowledgeAllocationSession {
             entries = [];
           }
           for (const entry of entries) {
-            if (!entry.name.endsWith(".md")) continue;
+            if (
+              !entry.name.toLowerCase().endsWith(".md") ||
+              !isKnowledgeSourceOutputCandidate(entry.name.slice(0, -3))
+            ) continue;
             const stem = entry.name.slice(0, -3);
             const names = [stem];
             const suffix = /^(.*)-([1-9]\d*)$/.exec(stem);
@@ -1625,6 +1646,8 @@ export class KnowledgeAllocationSession {
           return families;
         };
         const recordCandidate = (candidate: string, owner: string) => {
+          const fileName = knowledgeCandidateFileName(candidate);
+          const stem = fileName.slice(0, -3);
           const prior = directory.sourceOwners?.get(candidate);
           if (prior !== undefined && prior !== owner) {
             directory.sourceCandidates?.get(prior)?.delete(candidate);
@@ -1635,11 +1658,17 @@ export class KnowledgeAllocationSession {
             candidates.add(candidate);
             directory.sourceCandidates.set(owner, candidates);
           }
+          const exactState = candidate.startsWith("\0")
+            ? directory.titles.get(candidate)
+            : undefined;
+          if (exactState) {
+            observeKnowledgeCandidate(exactState, 1, owner, exactState.observed.has(1));
+          }
           const families: Array<{ name: string; attempt: number }> = [{
-            name: candidate,
+            name: stem,
             attempt: 1,
           }];
-          const suffix = /^(.*)-([1-9]\d*)$/.exec(candidate);
+          const suffix = /^(.*)-([1-9]\d*)$/.exec(stem);
           if (
             suffix?.[1] !== undefined && Number.isSafeInteger(Number(suffix[2])) &&
             Number(suffix[2]) >= 2
@@ -1647,7 +1676,7 @@ export class KnowledgeAllocationSession {
             families.push({ name: suffix[1], attempt: Number(suffix[2]) });
           }
           const entry: Deno.DirEntry = {
-            name: `${candidate}.md`,
+            name: fileName,
             isFile: true,
             isDirectory: false,
             isSymlink: false,
@@ -1659,7 +1688,9 @@ export class KnowledgeAllocationSession {
               entries.set(entry.name, entry);
               directory.listing.set(family.name, entries);
             }
-            const affected = directory.titles.get(family.name);
+            const affected = candidate.startsWith("\0")
+              ? undefined
+              : directory.titles.get(family.name);
             if (affected) {
               observeKnowledgeCandidate(
                 affected,
@@ -1671,6 +1702,7 @@ export class KnowledgeAllocationSession {
           }
         };
         let publishedCandidate: string | undefined;
+        let selectedOutputName: string | undefined;
         if (identity && identity.owners.length) {
           if (!directory.sourceOwners) {
             const owners = new Map<string, string | undefined>();
@@ -1680,7 +1712,8 @@ export class KnowledgeAllocationSession {
             }
             for (const [name, entry] of names) {
               if (entry.isFile && !entry.isSymlink) {
-                owners.set(name.slice(0, -3), await identity.readOwner(name.slice(0, -3)));
+                const candidate = knowledgeCandidateKey(name);
+                owners.set(candidate, await identity.readOwner(candidate));
               }
             }
             directory.sourceOwners = owners;
@@ -1694,9 +1727,12 @@ export class KnowledgeAllocationSession {
           }
           const published = new Map<string, string>();
           for (const hint of await identity.hints?.() ?? []) {
-            if (await identity.readOwner(hint.candidate) === hint.owner) {
-              recordCandidate(hint.candidate, hint.owner);
-              published.set(hint.owner, hint.candidate);
+            const candidate = hint.fileName === undefined
+              ? hint.candidate
+              : knowledgeCandidateKey(hint.fileName);
+            if (await identity.readOwner(candidate) === hint.owner) {
+              recordCandidate(candidate, hint.owner);
+              published.set(hint.owner, candidate);
             }
           }
           ownerSelection: for (const group of identity.owners) {
@@ -1735,13 +1771,22 @@ export class KnowledgeAllocationSession {
                 }
                 continue;
               }
-              if (!Number.isFinite(attempt(candidate))) slug = candidate;
-              if (preferred.has(candidate)) publishedCandidate = candidate;
+              if (candidate.startsWith("\0")) {
+                selectedOutputName = knowledgeCandidateFileName(candidate);
+                slug = selectedOutputName.slice(0, -3);
+                publishedCandidate = slug;
+              } else {
+                if (!Number.isFinite(attempt(candidate))) slug = candidate;
+                if (preferred.has(candidate)) publishedCandidate = candidate;
+              }
               break ownerSelection;
             }
           }
         }
-        let state = directory.titles.get(slug);
+        const stateKey = selectedOutputName === undefined
+          ? slug
+          : knowledgeCandidateKey(selectedOutputName);
+        let state = directory.titles.get(stateKey);
         if (!state) {
           state = {
             observed: new Map(),
@@ -1751,18 +1796,34 @@ export class KnowledgeAllocationSession {
             owners: new Map(),
             discoveryComplete: false,
           };
-          directory.titles.set(slug, state);
+          directory.titles.set(stateKey, state);
         }
         return write(
           state,
-          async () => [...((await loadListing()).get(slug)?.values() ?? [])],
-          recordCandidate,
+          async () =>
+            [...((await loadListing()).get(slug)?.values() ?? [])].filter((entry) =>
+              selectedOutputName === undefined
+                ? entry.name.endsWith(".md")
+                : entry.name === selectedOutputName
+            ),
+          (candidate, owner) =>
+            recordCandidate(
+              selectedOutputName !== undefined && candidate === slug
+                ? knowledgeCandidateKey(selectedOutputName)
+                : candidate,
+              owner,
+            ),
           slug,
-          (candidate) =>
-            directory.sourceOwners?.has(candidate)
-              ? { owner: directory.sourceOwners.get(candidate) }
-              : undefined,
+          (candidate) => {
+            const key = selectedOutputName !== undefined && candidate === slug
+              ? knowledgeCandidateKey(selectedOutputName)
+              : candidate;
+            return directory.sourceOwners?.has(key)
+              ? { owner: directory.sourceOwners.get(key) }
+              : undefined;
+          },
           publishedCandidate,
+          selectedOutputName,
         );
       };
       return await (guard ? guard(allocate) : allocate());
@@ -1817,7 +1878,7 @@ async function writeExactKnowledgeOutput(
   const name = relative(outputDir, path).replaceAll("\\", "/");
   // Markdown shares its stem with default allocation. NUL cannot occur in a filename,
   // so asset claims cannot collide with any Markdown stem, including extensionless assets.
-  const candidate = name.endsWith(".md") ? name.slice(0, -3) : `\0asset\0${name}`;
+  const candidate = name.toLowerCase().endsWith(".md") ? name.slice(0, -3) : `\0asset\0${name}`;
   const bytes = typeof content === "string" ? new TextEncoder().encode(content) : content;
   const claim = await acquireKnowledgeTargetOutputClaim(
     outputDir,
@@ -1850,14 +1911,17 @@ async function writeExactKnowledgeOutput(
     await Deno.rename(stage, path);
     // Automatic allocation only discovers top-level Markdown documents. Publish the
     // same ownership hint for exact writers so already-primed sessions see them.
-    if (typeof content === "string" && name.endsWith(".md") && !name.includes("/")) {
+    if (
+      typeof content === "string" && name.toLowerCase().endsWith(".md") && !name.includes("/") &&
+      isKnowledgeSourceOutputCandidate(candidate)
+    ) {
       const owner = knowledgeOwnerFromContent(name, content);
       if (owner !== undefined) {
         await withKnowledgeSourceClaim(
           outputDir,
           owner,
           signal,
-          (index) => index.record(owner, candidate),
+          (index) => index.record(owner, candidate, name),
         );
       }
     }
@@ -1916,7 +1980,15 @@ async function writeKnowledgeFile(
   return await session.allocate(
     outputDir,
     slug,
-    async (state, listSiblings, recordWrite, selectedSlug, cachedOwner, publishedCandidate) => {
+    async (
+      state,
+      listSiblings,
+      recordWrite,
+      selectedSlug,
+      cachedOwner,
+      publishedCandidate,
+      selectedOutputName,
+    ) => {
       slug = selectedSlug;
       const observe = (attempt: number, owner: string | undefined, occupied = true) =>
         observeKnowledgeCandidate(state, attempt, owner, occupied);
@@ -1992,10 +2064,11 @@ async function writeKnowledgeFile(
         const siblings: Array<{ attempt: number; path: string }> = [];
         for (const entry of await listSiblings()) {
           if (!entry.isFile || entry.isSymlink) continue;
-          const suffix = entry.name.startsWith(`${slug}-`) && entry.name.endsWith(".md")
-            ? entry.name.slice(slug.length + 1, -3)
-            : undefined;
-          const attempt = entry.name === `${slug}.md`
+          const suffix =
+            entry.name.startsWith(`${slug}-`) && entry.name.toLowerCase().endsWith(".md")
+              ? entry.name.slice(slug.length + 1, -3)
+              : undefined;
+          const attempt = entry.name.slice(0, -3) === slug
             ? 1
             : suffix && /^[1-9]\d*$/.test(suffix) && Number.isSafeInteger(Number(suffix)) &&
                 Number(suffix) >= 2
@@ -2040,7 +2113,12 @@ async function writeKnowledgeFile(
           observe(attempt, owner);
         };
         const candidate = attempt === 1 ? slug : `${slug}-${attempt}`;
-        const path = join(outputDir, `${candidate}.md`);
+        const path = join(
+          outputDir,
+          selectedOutputName !== undefined && attempt === 1
+            ? selectedOutputName
+            : `${candidate}.md`,
+        );
         const priorOwner = state.owners.get(attempt);
         const reselectLostHint = () => {
           if (!matchesOwner(priorOwner)) return false;
@@ -2061,7 +2139,7 @@ async function writeKnowledgeFile(
         const lock = await acquireKnowledgeCandidate(
           outputDir,
           candidate,
-          `${candidate}.md`,
+          basename(path),
           reservationOwner,
           publicationHash,
         );
@@ -2091,7 +2169,9 @@ async function writeKnowledgeFile(
             if (reselectLostHint()) continue;
             try {
               const owner = knowledgeOwnerFromContent(path, markdown);
-              if (globalIdentity && owner !== undefined) await sourceIndex.record(owner, candidate);
+              if (globalIdentity && owner !== undefined) {
+                await sourceIndex.record(owner, candidate, basename(path));
+              }
               signal?.throwIfAborted();
               await publishKnowledgeOutput({
                 path,
@@ -2131,7 +2211,9 @@ async function writeKnowledgeFile(
           }
           signal?.throwIfAborted();
           const owner = knowledgeOwnerFromContent(path, markdown);
-          if (globalIdentity && owner !== undefined) await sourceIndex.record(owner, candidate);
+          if (globalIdentity && owner !== undefined) {
+            await sourceIndex.record(owner, candidate, basename(path));
+          }
           signal?.throwIfAborted();
           const published = await publishKnowledgeOutput({
             path,
@@ -2177,13 +2259,16 @@ async function writeKnowledgeFile(
         ]],
       readOwner: async (candidate) => {
         signal?.throwIfAborted();
-        const path = join(outputDir, `${candidate}.md`);
+        const path = join(outputDir, knowledgeCandidateFileName(candidate));
         try {
           const stat = await inspectLink(path, { bigint: true });
           if (!stat.isFile() || stat.isSymbolicLink()) return undefined;
           if (stat.nlink !== 1n) {
             if (stat.nlink !== 2n) return undefined;
-            const stage = await readProvenKnowledgeOutputStage(outputDir, candidate);
+            const stage = await readProvenKnowledgeOutputStage(
+              outputDir,
+              knowledgeCandidateFileName(candidate).slice(0, -3),
+            );
             return stage === undefined ? undefined : knowledgeOwnerFromContent(path, stage.content);
           }
           return knowledgeOwnerFromContent(path, await Deno.readTextFile(path));
@@ -2784,7 +2869,9 @@ export async function runKnowledgeParsers(input: {
         slug,
         preferred_slug: preferredSlug,
         sandbox_output_path: outputPath,
-        suggested_project_path: `knowledge/${slug}.md`,
+        suggested_project_path: `knowledge/${
+          relative(input.outputDir, outputPath).replaceAll("\\", "/")
+        }`,
         description,
         title,
         summary: buildSummary(definition.sourceType, parsed.stats),

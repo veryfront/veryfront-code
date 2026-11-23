@@ -35,6 +35,7 @@ import {
   createUploadSource,
 } from "../../../cli/commands/knowledge/command.test-helpers.ts";
 
+import { withKnowledgeSourceClaim } from "../../../cli/commands/knowledge/source-output-index.ts";
 import { KNOWLEDGE_OUTPUT_CLAIM_DIRECTORY } from "../../../cli/commands/knowledge/source-policy.ts";
 
 /** Seed historical documents without the later compatible-writer ownership hints. */
@@ -3510,6 +3511,236 @@ it("reports exact ownership-hint failures and releases its output reservation", 
     assertEquals((await runKnowledgeParser(input)).slug, "pinned");
   } finally {
     Deno.rename = rename;
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
+it("reuses preserved Markdown extension spellings across compatible sessions", async () => {
+  const root = await makeTempDir({ prefix: "knowledge-extension-owner-" });
+  try {
+    let fixture = 0;
+    for (const extension of ["md", "MD", "mD", "Md"]) {
+      for (const shared of [false, true]) {
+        const outputDir = join(root, `output-${fixture++}`);
+        const filePath = join(root, "source.md"), other = join(root, "other.md");
+        await Deno.writeTextFile(filePath, "# Original\n\nBody");
+        await Deno.writeTextFile(other, "# Other\n\nUnrelated");
+        const session = new KnowledgeAllocationSession();
+        await runKnowledgeParser({ filePath: other, outputDir }, { allocationSession: session });
+        const sourceKey = "extension-owner";
+        const input = { filePath, sourceKey, resource: "extension-source" };
+        const seed = await runKnowledgeParser({ ...input, outputDir: join(root, "seed") });
+        const retained = await runKnowledgeParser({
+          filePath: seed.sandbox_output_path,
+          outputDir,
+          okfRelativePath: `retained.${extension}`,
+        });
+        if (!shared) await discardFixtureSourceHints(outputDir);
+        await Deno.writeTextFile(filePath, "# Changed\n\nUpdated body");
+        const result = await runKnowledgeParser({ ...input, outputDir }, {
+          allocationSession: shared ? session : new KnowledgeAllocationSession(),
+        });
+        assertEquals(result.sandbox_output_path, retained.sandbox_output_path);
+        assertEquals(result.suggested_project_path, `knowledge/retained.${extension}`);
+        assert((await Deno.readTextFile(retained.sandbox_output_path)).includes("Updated body"));
+      }
+    }
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
+it("validates filename-aware source hints and retains legacy hint records", async () => {
+  const root = await makeTempDir({ prefix: "knowledge-filename-hint-" });
+  try {
+    const owner = JSON.stringify(["sourceKey", "owner"]);
+    const hash = await computeHash(owner);
+    const path = join(root, KNOWLEDGE_OUTPUT_CLAIM_DIRECTORY, "v1", "sources", `${hash}.json`);
+    await withKnowledgeSourceClaim(root, "test-source", undefined, async (index) => {
+      await index.record(owner, "retained");
+      assertEquals(await index.read([owner]), [{ owner, candidate: "retained" }]);
+      await index.record(owner, "retained", "retained.MD");
+      assertEquals(await index.read([owner]), [{
+        owner,
+        candidate: "retained",
+        fileName: "retained.MD",
+      }]);
+      assert(!await Deno.readTextFile(path).then((text) => text.includes("\\u0000")));
+      for (
+        const fileName of [
+          "../retained.MD",
+          "other/retained.MD",
+          "other\\retained.MD",
+          "\0retained.MD",
+          ".",
+          "..",
+          "retained.png",
+          "different.MD",
+        ]
+      ) {
+        await assertRejects(
+          () => index.record(owner, "retained", fileName),
+          Error,
+          "Invalid knowledge source output hint",
+        );
+        await Deno.writeTextFile(
+          path,
+          JSON.stringify({ version: 1, owner: hash, candidate: "retained", fileName }),
+        );
+        assertEquals(await index.read([owner]), []);
+      }
+      await Deno.writeTextFile(
+        path,
+        JSON.stringify({ version: 1, owner: hash, candidate: "\0retained" }),
+      );
+      assertEquals(await index.read([owner]), []);
+    });
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
+it("keeps distinct native Markdown extension spellings and their owners separate", async () => {
+  const root = await makeTempDir({ prefix: "knowledge-distinct-extensions-" });
+  try {
+    const probe = join(root, "probe.md"), alias = join(root, "probe.MD");
+    await Deno.writeTextFile(probe, "lower");
+    await Deno.writeTextFile(alias, "upper");
+    if (await Deno.readTextFile(probe) === "upper") return; // Native case aliases cannot coexist.
+    const outputDir = join(root, "out");
+    const session = new KnowledgeAllocationSession();
+    const inputs = [];
+    for (const extension of ["md", "MD"]) {
+      const filePath = join(root, `input-${extension}.md`);
+      await Deno.writeTextFile(filePath, `# Original ${extension}\n\nBody ${extension}`);
+      const input = { filePath, resource: extension, sourceKey: extension };
+      const seed = await runKnowledgeParser({
+        ...input,
+        outputDir: join(root, `seed-${extension}`),
+      });
+      await runKnowledgeParser({
+        filePath: seed.sandbox_output_path,
+        outputDir,
+        okfRelativePath: `retained.${extension}`,
+      });
+      inputs.push({ input, extension });
+    }
+    for (const { input, extension } of inputs) {
+      await Deno.writeTextFile(input.filePath, `# Changed ${extension}\n\nUpdated ${extension}`);
+      const result = await runKnowledgeParser({ ...input, outputDir }, {
+        allocationSession: session,
+      });
+      assertEquals(result.sandbox_output_path, join(outputDir, `retained.${extension}`));
+      assert(
+        (await Deno.readTextFile(result.sandbox_output_path)).includes(`Updated ${extension}`),
+      );
+    }
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
+it("prefers the last exact filename for a shared owner across extension spellings", async () => {
+  const root = await makeTempDir({ prefix: "knowledge-extension-preference-" });
+  try {
+    const filePath = join(root, "input.md"), outputDir = join(root, "out");
+    await Deno.writeTextFile(filePath, "# Original\n\nBody");
+    const input = { filePath, resource: "source", sourceKey: "owner" };
+    const seed = await runKnowledgeParser({ ...input, outputDir: join(root, "seed") });
+    for (const extension of ["md", "MD"]) {
+      await runKnowledgeParser({
+        filePath: seed.sandbox_output_path,
+        outputDir,
+        okfRelativePath: `retained.${extension}`,
+      });
+    }
+    const result = await runKnowledgeParser({ ...input, outputDir });
+    assertEquals(result.sandbox_output_path, join(outputDir, "retained.MD"));
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
+it("refreshes an observed exact extension owner after a compatible replacement", async () => {
+  const root = await makeTempDir({ prefix: "knowledge-extension-replaced-owner-" });
+  try {
+    const outputDir = join(root, "out"), filePath = join(root, "input.md");
+    const session = new KnowledgeAllocationSession();
+    for (const sourceKey of ["first", "second"]) {
+      await Deno.writeTextFile(filePath, `# Title ${sourceKey}\n\nBody ${sourceKey}`);
+      const input = { filePath, resource: sourceKey, sourceKey };
+      const seed = await runKnowledgeParser({ ...input, outputDir: join(root, "seed") });
+      await runKnowledgeParser({
+        filePath: seed.sandbox_output_path,
+        outputDir,
+        okfRelativePath: "retained.MD",
+      });
+      const result = await runKnowledgeParser({ ...input, outputDir }, {
+        allocationSession: session,
+      });
+      assertEquals(result.sandbox_output_path, join(outputDir, "retained.MD"));
+    }
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
+it("preserves source-owned hidden exact Markdown paths without indexing their stems", async () => {
+  const root = await makeTempDir({ prefix: "knowledge-hidden-exact-" });
+  try {
+    const filePath = join(root, "input.md");
+    await Deno.writeTextFile(filePath, "# Hidden\n\nBody");
+    const seed = await runKnowledgeParser({
+      filePath,
+      outputDir: join(root, "seed"),
+      sourceKey: "owner",
+    });
+    const bytes = await Deno.readFile(seed.sandbox_output_path);
+    let fixture = 0;
+    for (const name of [".md", "..md", "...md", ".MD", "..MD", "...MD"]) {
+      const outputDir = join(root, `out-${fixture++}`);
+      const result = await runKnowledgeParser({
+        filePath: seed.sandbox_output_path,
+        outputDir,
+        okfRelativePath: name,
+      });
+      assertEquals(result.sandbox_output_path, join(outputDir, name));
+      assertEquals(await Deno.readFile(result.sandbox_output_path), bytes);
+      await assertRejects(
+        () => Deno.stat(join(outputDir, KNOWLEDGE_OUTPUT_CLAIM_DIRECTORY, "v1", "sources")),
+        Deno.errors.NotFound,
+      );
+    }
+  } finally {
+    await Deno.remove(root, { recursive: true });
+  }
+});
+
+it("retains keyless lowercase outputs beside distinct uppercase siblings", async () => {
+  const root = await makeTempDir({ prefix: "knowledge-keyless-case-slots-" });
+  try {
+    const probe = join(root, "probe.md"), alias = join(root, "probe.MD");
+    await Deno.writeTextFile(probe, "lower");
+    await Deno.writeTextFile(alias, "upper");
+    if (await Deno.readTextFile(probe) === "upper") return;
+    const filePath = join(root, "source.md"), other = join(root, "foreign.md");
+    await Deno.writeTextFile(filePath, "# Shared\n\nOriginal");
+    await Deno.writeTextFile(other, "# Foreign\n\nForeign body");
+    const foreign = await runKnowledgeParser({
+      filePath: other,
+      outputDir: join(root, "foreign"),
+      resource: "foreign",
+    });
+    const foreignBytes = await Deno.readFile(foreign.sandbox_output_path);
+    for (const slug of ["shared", "shared-2"]) {
+      const outputDir = join(root, slug);
+      const first = await runKnowledgeParser({ filePath, outputDir, resource: "original", slug });
+      await Deno.writeFile(join(outputDir, `${slug}.MD`), foreignBytes);
+      const refreshed = await runKnowledgeParser({ filePath, outputDir, resource: "original" });
+      assertEquals(refreshed.sandbox_output_path, first.sandbox_output_path);
+      assertEquals(await Deno.readFile(join(outputDir, `${slug}.MD`)), foreignBytes);
+    }
+  } finally {
     await Deno.remove(root, { recursive: true });
   }
 });
