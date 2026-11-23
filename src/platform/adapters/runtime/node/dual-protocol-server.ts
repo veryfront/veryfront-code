@@ -13,6 +13,7 @@ const socketHasInstance = Function.prototype[Symbol.hasInstance];
 const setAdd = Set.prototype.add;
 const setDelete = Set.prototype.delete;
 const setForEach = Set.prototype.forEach;
+const defineProperty = Object.defineProperty;
 
 function isSocket(value: unknown): value is Socket {
   return apply(socketHasInstance, Socket, [value]);
@@ -34,10 +35,22 @@ type SniffedSocket = Socket & { _handle?: { _consumed?: boolean } | null };
  * handler runs. Marking the handle keeps node:http on socket `data` events,
  * which deliver the unshifted prefix first. The h2c session already reads
  * through `data` events.
+ *
+ * The flag is defined as an own data property through a captured intrinsic:
+ * plain assignment would run any `_consumed` setter that project code
+ * installed on the shared handle prototype, exposing the raw connection.
+ * Verified against the node:http bundled with Deno 2.9.7; re-check this
+ * contract (and its wire regression) whenever the pinned Deno changes.
  */
 function keepJsStreamReader(socket: SniffedSocket): void {
   const handle = socket._handle;
-  if (handle) handle._consumed = true;
+  if (!handle) return;
+  defineProperty(handle, "_consumed", {
+    value: true,
+    writable: true,
+    enumerable: true,
+    configurable: true,
+  });
 }
 
 /**
