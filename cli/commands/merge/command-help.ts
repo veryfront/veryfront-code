@@ -11,6 +11,10 @@ export const mergeHelp: CommandHelp = {
       description: "Target branch to merge into (default: main)",
     },
     {
+      flag: "--project, -p <slug>",
+      description: "Project slug or ID (default: the project linked to this folder)",
+    },
+    {
       flag: "-f, --force",
       description: "Merge without confirmation",
     },

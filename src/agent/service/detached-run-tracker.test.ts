@@ -1,6 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { FakeTime } from "#std/testing/time";
 import {
   createDetachedRunShutdownLifecycle,
   createDetachedRunTracker,
@@ -80,6 +81,22 @@ describe("agent/detached-run-tracker", () => {
       drained: true,
       pendingRunIds: [],
     });
+  });
+
+  it("releases the drain poll timer when an execution settles before the poll tick", async () => {
+    const tracker = createDetachedRunTracker();
+    const execution = deferred();
+    tracker.registerExecution("run_1", execution.promise);
+
+    // Fake time owns every timer the drain starts, so the test can ask whether
+    // one is still scheduled: the runtime's leak sanitizer does not report a
+    // pending timer on every Deno version.
+    using time = new FakeTime();
+    const draining = tracker.waitForDrain({ timeoutMs: 60_000, pollIntervalMs: 30_000 });
+    await execution.resolve();
+
+    assertEquals(await draining, { drained: true, pendingRunIds: [] });
+    assertEquals(time.next(), false, "the poll timer must not outlive the drain");
   });
 
   it("keeps newer executions registered when an older execution settles", async () => {

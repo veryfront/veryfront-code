@@ -39,9 +39,13 @@ Veryfront Project
 
 Usage:
   veryfront project delete [slug] [options]
+  veryfront project runs <command> [options]
 
 Subcommands:
   delete   Delete a cloud project and everything it owns
+  runs     Inspect and control project runs
+
+Run "veryfront project --help" for the runs commands and every option.
 `);
 }
 

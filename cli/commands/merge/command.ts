@@ -11,8 +11,13 @@ import { defineSchema, lazySchema } from "veryfront/schemas";
 import type { InferSchema } from "veryfront/extensions/schema";
 import { cliLogger } from "#cli/utils";
 import { cwd } from "veryfront/platform";
-import { type ApiClient, createApiClient, resolveConfigWithAuth } from "#cli/shared/config";
+import {
+  type ApiClient,
+  createApiClient,
+  resolveLinkedProjectConfigWithAuth,
+} from "#cli/shared/config";
 import { CommonArgs, createArgParser } from "#cli/shared/args";
+import type { ParsedArgs } from "#cli/shared/types";
 import { confirmPrompt, logInfo, logSuccess } from "#cli/utils";
 import { createSpinner } from "#cli/ui";
 import { BRANCH_NOT_FOUND } from "veryfront/errors";
@@ -37,6 +42,7 @@ export const getMergeArgsSchema = defineSchema((v) =>
   v.object({
     branch: v.string().min(1, "Branch name is required"),
     into: v.string().min(1).optional(),
+    project: v.string().min(1).optional(),
     dryRun: v.boolean().default(false),
     force: v.boolean().default(false),
   })
@@ -49,15 +55,40 @@ export const MergeArgsSchema = lazySchema(getMergeArgsSchema);
  */
 export type MergeOptions = InferSchema<ReturnType<typeof getMergeArgsSchema>>;
 
-/**
- * Parse CLI arguments into validated MergeOptions
- */
-export const parseMergeArgs = createArgParser(MergeArgsSchema, {
+const parseMergeOptions = createArgParser(MergeArgsSchema, {
   branch: { keys: [], type: "string", positional: 0 },
   into: CommonArgs.into,
+  // Only the documented names: the command-line parser reads a flag's arity
+  // for merge from the command help.
+  project: { keys: ["project", "p"], type: "string" },
   dryRun: CommonArgs.dryRun,
   force: CommonArgs.force,
 });
+
+const PROJECT_SELECTOR_KEYS = ["project", "p"] as const;
+
+/**
+ * Parse CLI arguments into validated MergeOptions
+ *
+ * A project selector with no value reaches this parser as `true`, which the
+ * string coercion would turn into a project named "true". It must be a usage
+ * error instead: merge writes to the project it resolves.
+ */
+export function parseMergeArgs(args: ParsedArgs): ReturnType<typeof parseMergeOptions> {
+  for (const key of PROJECT_SELECTOR_KEYS) {
+    const value = args[key];
+    if (value === undefined) continue;
+    const text = typeof value === "number" ? String(value) : value;
+    if (typeof text !== "string" || text.trim() === "") {
+      const error = Object.assign(
+        new Error("--project requires a project slug or ID"),
+        { issues: [] },
+      );
+      return { success: false, error };
+    }
+  }
+  return parseMergeOptions(args);
+}
 
 /**
  * Branch from the API
@@ -308,7 +339,13 @@ export async function mergeCommand(options: MergeOptions): Promise<void> {
   let spinner = createSpinner("Resolving configuration...");
 
   const projectDir = cwd();
-  const config = await resolveConfigWithAuth(projectDir);
+  // Without --project, a slug guessed from the folder or package name stops
+  // here: merging into a project that only shares the folder's name is not
+  // something to do by chance.
+  const resolved = await resolveLinkedProjectConfigWithAuth(projectDir, options.project);
+  // The id of the project linked to this folder does not describe a project
+  // named with --project.
+  const config = options.project === undefined ? resolved : { ...resolved, projectId: undefined };
   const client = createApiClient(config);
 
   spinner.update(`Looking up branch "${branch}"...`);

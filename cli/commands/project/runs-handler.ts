@@ -130,7 +130,10 @@ async function reportRunsFailure(
   signal?: AbortSignal,
 ): Promise<void> {
   const problem = runsProblemOf(error);
-  if (!problem && !(stream && (isJsonMode() || ndjson))) throw error;
+  // Every machine-readable failure keeps the "project runs" command id, so a
+  // local or network failure is reported here like an API Problem. Only human
+  // output defers to the CLI error boundary.
+  if (!problem && !isJsonMode() && !(stream && ndjson)) throw error;
   const vfError = wrapUnknownError(error);
   const exitCode = runsExitCode(problem, vfError.exitCode);
   const usage = exitCode === 2;

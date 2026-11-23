@@ -273,7 +273,32 @@ describe("project runs CLI output and host credentials", () => {
       apiToken: "repository-token",
     });
     assertEquals(result.code, 1);
-    assert(result.stderr.includes("Set the API endpoint explicitly"));
+    const envelope = JSON.parse(result.stdout);
+    assertEquals(envelope.success, false);
+    assertEquals(envelope.command, "project runs");
+    assert(envelope.error.message.includes("Set the API endpoint explicitly"));
+    assert(!result.stdout.includes("scoped-test-token"));
     assert(!result.stderr.includes("scoped-test-token"));
+  });
+
+  it("labels a non-stream network failure with the project runs command id", async () => {
+    const result = await cli("get-network");
+    assertEquals(result.code, 1, result.stderr);
+    const envelope = JSON.parse(result.stdout);
+    assertEquals(envelope.success, false);
+    assertEquals(envelope.command, "project runs");
+    assertEquals(envelope.error.code, "RUNTIME_ERROR");
+    assertEquals(envelope.error.slug, "command-failed");
+    assert(!result.stdout.includes("scoped-test-token"));
+  });
+
+  it("labels a missing-credential failure with the project runs command id", async () => {
+    const result = await cli("get-no-credential");
+    assert(result.code !== 0, result.stderr);
+    const envelope = JSON.parse(result.stdout);
+    assertEquals(envelope.success, false);
+    assertEquals(envelope.command, "project runs");
+    assertEquals(envelope.error.registrySlug, "authentication-required");
+    assertEquals(envelope.error.message, "Run veryfront login or supply a credential file.");
   });
 });

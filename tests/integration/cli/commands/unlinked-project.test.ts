@@ -1,6 +1,6 @@
 /**
- * `files`, `knowledge`, `uploads` and `project delete` in a folder that is
- * not linked to a project: with no `--project`, the folder or package name is only a guess,
+ * `files`, `knowledge`, `uploads`, `project delete`, `merge` and `env token`
+ * in a folder that is not linked to a project: with no `--project`, the folder or package name is only a guess,
  * so each command stops before it calls the API.
  */
 import "#veryfront/schemas/_test-setup.ts";
@@ -16,6 +16,9 @@ import { filesCommand } from "../../../../cli/commands/files/command.ts";
 import { knowledgeCommand } from "../../../../cli/commands/knowledge/command.ts";
 import { uploadsCommand } from "../../../../cli/commands/uploads/command.ts";
 import { projectCommand } from "../../../../cli/commands/project/command.ts";
+import { mergeCommand, parseMergeArgs } from "../../../../cli/commands/merge/command.ts";
+import { handleEnvCommand } from "../../../../cli/commands/env/handler.ts";
+import { parseArgsOrThrow, parseCliArgs } from "../../../../cli/shared/args.ts";
 
 const NO_LINKED_PROJECT_MESSAGE =
   "No project is linked to this folder. Pass `--project <slug>` (the slug is on the project's Settings page), or run `veryfront pull <slug>` to link one.";
@@ -82,6 +85,17 @@ async function writeProjectLink(projectDir: string): Promise<void> {
   );
 }
 
+/** `merge` has no `--project-dir`: it reads the project from the working directory. */
+const mergeFromProjectDir: Command = async ({ "project-dir": projectDir, ...args }) => {
+  const originalDirectory = Deno.cwd();
+  Deno.chdir(String(projectDir));
+  try {
+    await mergeCommand(parseArgsOrThrow(parseMergeArgs, "merge", args));
+  } finally {
+    Deno.chdir(originalDirectory);
+  }
+};
+
 function unlinkedCases(projectDir: string): Array<[string, Command, ParsedArgs]> {
   const from = join(projectDir, "page.tsx");
   return [
@@ -98,6 +112,9 @@ function unlinkedCases(projectDir: string): Array<[string, Command, ParsedArgs]>
     ["uploads put", uploadsCommand, { _: ["uploads", "put", "guide.pdf"], from }],
     ["uploads delete", uploadsCommand, { _: ["uploads", "delete", "guide.pdf"] }],
     ["project delete", projectCommand, { _: ["project", "delete"], force: true }],
+    ["merge", mergeFromProjectDir, { _: ["merge", "feature"], force: true }],
+    ["merge --dry-run", mergeFromProjectDir, { _: ["merge", "feature"], "dry-run": true }],
+    ["env token", (args) => handleEnvCommand(args), { _: ["env", "token"], env: "preview" }],
   ];
 }
 
@@ -160,6 +177,63 @@ describe("commands in a folder with no linked project", () => {
         "/projects/support-desk/files",
         "/projects/support-desk/uploads",
       ]);
+    });
+  });
+
+  it("merge looks up the branch in the --project project when no project is linked", async () => {
+    await withUnlinkedFolder(async (projectDir, requests) => {
+      const error = await assertRejects(
+        () =>
+          mergeFromProjectDir({
+            _: ["merge", "feature"],
+            "project-dir": projectDir,
+            project: "support-desk",
+            force: true,
+          }),
+        VeryfrontError,
+      ) as VeryfrontError;
+      // The mocked API lists no branches, so the lookup reaches the named
+      // project and stops there.
+      assertEquals(error.slug, "branch-not-found");
+      assertEquals(requests, ["/projects/support-desk/branches"]);
+    });
+  });
+
+  it("merge rejects a --project selector with no value before any request", async () => {
+    await withUnlinkedFolder(async (projectDir, requests) => {
+      for (
+        const argv of [
+          ["merge", "feature", "--project"],
+          ["merge", "feature", "--project", "--force"],
+          ["merge", "feature", "-p", "--force"],
+          ["merge", "feature", "--project", ""],
+        ]
+      ) {
+        const name = argv.join(" ");
+        const error = await assertRejects(
+          () => mergeFromProjectDir({ ...parseCliArgs(argv), "project-dir": projectDir }),
+          VeryfrontError,
+          undefined,
+          name,
+        ) as VeryfrontError;
+        assertEquals(error.slug, "invalid-argument", name);
+        assertEquals(error.exitCode, 2, name);
+      }
+      assertEquals(requests, []);
+    });
+  });
+
+  it("env token mints for the --project project when no project is linked", async () => {
+    await withUnlinkedFolder(async (projectDir, requests) => {
+      await assertRejects(() =>
+        handleEnvCommand({
+          _: ["env", "token"],
+          env: "preview",
+          "project-dir": projectDir,
+          project: "support-desk",
+        })
+      );
+      assertEquals(requests[0], "/projects/support-desk");
     });
   });
 

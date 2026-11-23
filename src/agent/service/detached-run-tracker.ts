@@ -135,7 +135,15 @@ export function createDetachedRunTracker<TResumeValue = unknown>(
 
         const executions = [...activeExecutions.values()].flatMap((pending) => [...pending]);
         if (executions.length > 0) {
-          await Promise.race([Promise.allSettled(executions), sleep(pollIntervalMs)]);
+          // Release the poll timer when the executions settle first: a pending
+          // timer would outlive the drain it belongs to.
+          const pollTimer = new AbortController();
+          const poll = sleep(pollIntervalMs, pollTimer.signal).catch(() => undefined);
+          try {
+            await Promise.race([Promise.allSettled(executions), poll]);
+          } finally {
+            pollTimer.abort();
+          }
           continue;
         }
 

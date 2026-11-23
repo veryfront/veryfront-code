@@ -11,6 +11,7 @@ import {
 } from "../test/test-semantic-audit-migration.ts";
 
 const MIGRATION_FILE_PATH = "scripts/test/test-semantic-audit-migration.ts";
+const DISCOVERY_FAILURE_PREFIX = "semantic audit discovery failed:";
 
 export function formatSemanticAuditFailure(
   errors: readonly string[],
@@ -28,6 +29,14 @@ export function formatSemanticAuditFailure(
       `Regenerate ${MIGRATION_FILE_PATH} to remove the stale dispositions.`,
     ].join("\n");
   }
+  // No inventory was audited when discovery failed, so the advice about the
+  // migration inventory does not apply.
+  if (errors.some((error) => error.startsWith(DISCOVERY_FAILURE_PREFIX))) {
+    return [
+      "Semantic unit-boundary audit failed:",
+      ...errors.map((error) => `  ${error}`),
+    ].join("\n");
+  }
   return [
     "Semantic unit-boundary audit failed:",
     ...errors.map((error) => `  ${error}`),
@@ -41,10 +50,25 @@ async function main(): Promise<void> {
     boolean: ["json"],
     default: { json: false },
   });
-  const result = await collectSemanticAuditCandidates({
-    root: ".",
-    dispositions: TEST_SEMANTIC_AUDIT_MIGRATION_ENTRIES,
-  });
+  // A test-layout discovery failure stays fatal, but it is reported like any
+  // other audit error so that --json still prints one parseable report.
+  let result: Pick<
+    Awaited<ReturnType<typeof collectSemanticAuditCandidates>>,
+    "consideredFiles" | "candidates" | "errors"
+  >;
+  try {
+    result = await collectSemanticAuditCandidates({
+      root: ".",
+      dispositions: TEST_SEMANTIC_AUDIT_MIGRATION_ENTRIES,
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    result = {
+      consideredFiles: 0,
+      candidates: [],
+      errors: [`${DISCOVERY_FAILURE_PREFIX} ${message}`],
+    };
+  }
   let baselineErrors: readonly string[];
   try {
     baselineErrors = compareSemanticDispositionBaseline(

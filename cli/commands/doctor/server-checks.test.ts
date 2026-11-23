@@ -9,6 +9,7 @@ import { withTempDir } from "#veryfront/testing";
 import { writeTextFile } from "#veryfront/compat/fs.ts";
 import { join } from "#veryfront/compat/path";
 import { clearConfigCache } from "#veryfront/config";
+import { DEFAULT_DEV_PORT } from "#cli/shared/constants";
 import {
   checkRSCCounters,
   checkRSCEndpoints,
@@ -16,9 +17,17 @@ import {
   isRscDiagnosticsEnabled,
 } from "./server-checks.ts";
 
-async function withUnreachableFetch<T>(fn: () => Promise<T>): Promise<T> {
+/**
+ * Replaces `fetch` so a probe never reaches a real listener: whatever answers
+ * on the default dev port of the host must not decide a test's outcome.
+ * `urls` records every probe the stub refused.
+ */
+async function withUnreachableFetch<T>(fn: () => Promise<T>, urls: string[] = []): Promise<T> {
   const originalFetch = globalThis.fetch;
-  globalThis.fetch = (() => Promise.reject(new Error("unreachable"))) as typeof fetch;
+  globalThis.fetch = ((input: string | URL | Request) => {
+    urls.push(input instanceof Request ? input.url : String(input));
+    return Promise.reject(new Error("unreachable"));
+  }) as typeof fetch;
 
   try {
     return await fn();
@@ -78,10 +87,13 @@ describe("doctor/server-checks", () => {
     });
 
     it("returns array of DiagnosticResult objects", async () => {
-      // Note: This test will likely fail to connect since no server is running
-      // The function should handle this gracefully with warnings
-      const results = await checkRSCEndpoints();
+      const urls: string[] = [];
+      const results = await withUnreachableFetch(() => checkRSCEndpoints(), urls);
 
+      assertEquals(urls, [
+        `http://127.0.0.1:${DEFAULT_DEV_PORT}/_veryfront/rsc/manifest`,
+        `http://127.0.0.1:${DEFAULT_DEV_PORT}/_veryfront/rsc/stream`,
+      ]);
       assertExists(results);
       assertEquals(Array.isArray(results), true);
       assertEquals(results.length > 0, true);
@@ -137,9 +149,10 @@ describe("doctor/server-checks", () => {
     });
 
     it("returns a DiagnosticResult object", async () => {
-      // Note: This test will likely fail to connect since no server is running
-      const result = await checkRSCCounters();
+      const urls: string[] = [];
+      const result = await withUnreachableFetch(() => checkRSCCounters(), urls);
 
+      assertEquals(urls, [`http://127.0.0.1:${DEFAULT_DEV_PORT}/_metrics`]);
       assertExists(result);
       assertExists(result.name);
       assertExists(result.status);

@@ -127,6 +127,20 @@ export class FakeTime {
   }
 
   /**
+   * Advance the clock to the next scheduled timer and run what comes due then.
+   * Returns `false`, leaving the clock alone, when no timer is scheduled.
+   */
+  next(): boolean {
+    let due: number | undefined;
+    for (const timer of this.#timers.values()) {
+      if (due === undefined || timer.due < due) due = timer.due;
+    }
+    if (due === undefined) return false;
+    this.tick(Math.max(0, due - this.#now));
+    return true;
+  }
+
+  /**
    * Let already-pending jobs settle on the real event loop, then advance the
    * clock exactly as {@linkcode FakeTime.tick} does. Work the newly fired timers
    * start is deliberately left in flight.
