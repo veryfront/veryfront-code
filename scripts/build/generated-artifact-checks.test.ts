@@ -296,6 +296,14 @@ describe("generated artifact checks", () => {
       assertEquals(result.code, 0, new TextDecoder().decode(result.stderr));
       assertEquals(await Deno.readTextFile(path), equivalent);
 
+      await Deno.writeTextFile(path, `${equivalent}throw new Error("drift");\n`);
+      const wrapperDrift = await runTemplateManifestGenerator(root, []);
+      assertEquals(wrapperDrift.code, 0, new TextDecoder().decode(wrapperDrift.stderr));
+      assert(
+        !(await Deno.readTextFile(path)).includes("drift"),
+        "wrapper drift around an equivalent payload must be regenerated",
+      );
+
       await Deno.writeTextFile(path, "export {};\n");
       const stale = await runTemplateManifestGenerator(root, []);
       assertEquals(stale.code, 0, new TextDecoder().decode(stale.stderr));
