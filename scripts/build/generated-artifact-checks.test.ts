@@ -283,6 +283,31 @@ describe("generated artifact checks", () => {
     }
   });
 
+  it("keeps equivalent compressed manifest bytes when generating", async () => {
+    const root = await createTemplateManifestFixture();
+    const path = join(root, "templates/manifest.generated.ts");
+    try {
+      // Another Deno release encodes the same manifest with different gzip
+      // bytes; regenerating must not turn that into a working-tree change.
+      const equivalent = changeGzipOsByte(await Deno.readTextFile(path));
+      await Deno.writeTextFile(path, equivalent);
+
+      const result = await runTemplateManifestGenerator(root, []);
+      assertEquals(result.code, 0, new TextDecoder().decode(result.stderr));
+      assertEquals(await Deno.readTextFile(path), equivalent);
+
+      await Deno.writeTextFile(path, "export {};\n");
+      const stale = await runTemplateManifestGenerator(root, []);
+      assertEquals(stale.code, 0, new TextDecoder().decode(stale.stderr));
+      assert(
+        (await Deno.readTextFile(path)).includes("COMPRESSED_TEMPLATE_MANIFEST_BASE64"),
+        "a stale manifest must be regenerated",
+      );
+    } finally {
+      await Deno.remove(root, { recursive: true });
+    }
+  });
+
   it("checks compressed manifest content without rewriting its encoding", async () => {
     const root = await createTemplateManifestFixture();
     const path = join(root, "templates/manifest.generated.ts");

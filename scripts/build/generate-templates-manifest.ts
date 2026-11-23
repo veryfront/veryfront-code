@@ -368,7 +368,15 @@ async function main(): Promise<void> {
     console.log(`   ${templateCount} templates, ${fileCount} files`);
   } else {
     await Deno.writeTextFile(outputPath, output);
-    await Deno.writeTextFile(compressedOutputPath, compressedOutput);
+    // Keep equivalent committed bytes: gzip output differs between Deno
+    // releases, and rewriting it would leave a tracked change that fails the
+    // sealed npm build on any Deno other than the one that wrote it.
+    const existingCompressed = await decompressGeneratedManifest(
+      await Deno.readTextFile(compressedOutputPath).catch(() => null),
+    );
+    if (existingCompressed !== output) {
+      await Deno.writeTextFile(compressedOutputPath, compressedOutput);
+    }
     console.log(`✅ Generated ${outputPath} and ${compressedOutputPath}`);
     console.log(`   ${templateCount} templates, ${fileCount} files`);
   }
