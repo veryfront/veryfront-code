@@ -2,7 +2,13 @@ import { join } from "veryfront/platform/path";
 import { createFileSystem } from "veryfront/platform";
 import { type EnvironmentConfig, getEnvironmentConfig } from "veryfront/config";
 import { cliLogger } from "#cli/utils";
-import { CONFIG_DIR_NAME, TOKEN_FILE_NAME, TOKEN_FILE_PERMISSIONS } from "../shared/constants.ts";
+import {
+  CONFIG_DIR_NAME,
+  getApiUrl,
+  isSameApiEndpoint,
+  TOKEN_FILE_NAME,
+  TOKEN_FILE_PERMISSIONS,
+} from "../shared/constants.ts";
 
 // Captured before project code runs: `readToken` trims the stored login token
 // it reads from disk, so a project that replaces `String.prototype.trim` — or
@@ -19,6 +25,8 @@ const subtleCrypto = globalThis.crypto.subtle;
 const subtleDigest = subtleCrypto.digest;
 
 const LOGIN_CHECK_FILE_NAME = "login-check.json";
+/** Records which API the stored login was saved for. */
+const TOKEN_API_FILE_NAME = "token-api.json";
 /** How long a login the API accepted is trusted before startup checks it again. */
 export const LOGIN_CHECK_TTL_MS = 15 * 60_000;
 
@@ -58,19 +66,66 @@ export async function saveToken(token: string, env?: EnvironmentConfig): Promise
 
   await fs.writeTextFile(tokenPath, `${token}\n`);
   await fs.chmod(tokenPath, TOKEN_FILE_PERMISSIONS);
+
+  const apiPath = getTokenApiPath(env);
+  try {
+    await fs.writeTextFile(apiPath, JSON.stringify({ apiUrl: getApiUrl(env) }));
+    await fs.chmod(apiPath, TOKEN_FILE_PERMISSIONS);
+  } catch (error) {
+    // Without the record the login is treated like one saved before it existed.
+    cliLogger.debug("Failed to record the stored login's API:", error);
+    try {
+      if (await fs.exists(apiPath)) await fs.remove(apiPath);
+    } catch {
+      // Nothing more to do: a stale record only keeps a rejected login.
+    }
+  }
 }
 
 /** Remove the stored login, and the record of its last accepted check with it. */
 export async function deleteToken(env?: EnvironmentConfig): Promise<void> {
   const fs = createFileSystem();
 
-  for (const path of [getTokenPath(env), getLoginCheckPath(env)]) {
+  for (const path of [getTokenPath(env), getLoginCheckPath(env), getTokenApiPath(env)]) {
     try {
       if (await fs.exists(path)) await fs.remove(path);
     } catch (error) {
       cliLogger.debug("Failed to delete login file:", error);
     }
   }
+}
+
+/**
+ * Remove the stored login after `apiUrl` rejected it, unless the login was
+ * saved for a different API: one host not recognising a login says nothing
+ * about whether the host it belongs to still accepts it. A login saved before
+ * its API was recorded is removed as before. Returns whether it was removed.
+ */
+export async function deleteTokenRejectedBy(
+  apiUrl: string,
+  env?: EnvironmentConfig,
+): Promise<boolean> {
+  const savedFor = await readTokenApiUrl(env);
+  if (savedFor !== null && !isSameApiEndpoint(savedFor, apiUrl)) return false;
+  await deleteToken(env);
+  return true;
+}
+
+async function readTokenApiUrl(env?: EnvironmentConfig): Promise<string | null> {
+  try {
+    const path = getTokenApiPath(env);
+    const fs = createFileSystem();
+    if (!(await fs.exists(path))) return null;
+    const record = JSON.parse(await fs.readTextFile(path));
+    return typeof record?.apiUrl === "string" ? record.apiUrl : null;
+  } catch (error) {
+    cliLogger.debug("Failed to read the stored login's API:", error);
+    return null;
+  }
+}
+
+function getTokenApiPath(env?: EnvironmentConfig): string {
+  return join(getConfigDir(env), TOKEN_API_FILE_NAME);
 }
 
 export async function hasToken(env?: EnvironmentConfig): Promise<boolean> {

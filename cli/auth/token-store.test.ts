@@ -8,6 +8,7 @@ import {
 } from "#veryfront/config/environment-config.ts";
 import {
   deleteToken,
+  deleteTokenRejectedBy,
   getTokenLocation,
   LOGIN_CHECK_TTL_MS,
   readToken,
@@ -100,6 +101,44 @@ describe("Token Store", () => {
 
     it("should not throw when deleting non-existent token", async () => {
       await deleteToken(testEnv);
+    });
+  });
+
+  describe("deleteTokenRejectedBy", () => {
+    const PROD = "https://api.prod.example.test/api";
+    const STAGING = "https://api.staging.example.test/api";
+
+    it("keeps a login saved for a different API", async () => {
+      await saveToken(testToken, { ...testEnv, apiUrl: PROD });
+
+      assertEquals(await deleteTokenRejectedBy(STAGING, testEnv), false);
+      assertEquals(await readToken(testEnv), testToken);
+    });
+
+    it("removes a login the API it was saved for rejects", async () => {
+      await saveToken(testToken, { ...testEnv, apiUrl: PROD });
+
+      assertEquals(
+        await deleteTokenRejectedBy("https://API.prod.example.test:443/api/", testEnv),
+        true,
+      );
+      assertEquals(await readToken(testEnv), null);
+    });
+
+    it("removes a login saved before its API was recorded", async () => {
+      await saveToken(testToken, { ...testEnv, apiUrl: PROD });
+      await Deno.remove(getTokenLocation(testEnv).replace(/token$/, "token-api.json"));
+
+      assertEquals(await deleteTokenRejectedBy(STAGING, testEnv), true);
+      assertEquals(await readToken(testEnv), null);
+    });
+
+    it("forgets the recorded API on logout", async () => {
+      await saveToken(testToken, { ...testEnv, apiUrl: PROD });
+      await deleteToken(testEnv);
+      await Deno.writeTextFile(getTokenLocation(testEnv), `${testToken}\n`);
+
+      assertEquals(await deleteTokenRejectedBy(STAGING, testEnv), true);
     });
   });
 
