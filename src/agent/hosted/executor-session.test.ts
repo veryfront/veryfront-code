@@ -200,15 +200,18 @@ describe("hosted executor session", () => {
   for (
     const cause of [
       "request cancellation",
+      "execution cancellation",
       "lease expiration",
       "lease expiration after stream",
     ] as const
   ) {
     it(`retains canonical SSE finalization ownership through real session ${cause}`, async () => {
       const controller = new AbortController();
+      const executionController = new AbortController();
+      let preparationSignal: AbortSignal | undefined;
       const boundSource = { type: "release" as const, releaseId: request.source.releaseId };
       const f = fixture({
-        preparationSignal: controller.signal,
+        preparationSignal: AbortSignal.any([controller.signal, executionController.signal]),
         request: { ...request, owner: { scopeKind: "project", projectId } },
       });
       const session = f.start();
@@ -310,13 +313,18 @@ describe("hosted executor session", () => {
       );
       const handler = createManagedBrokerHandler({
         responseMode: "sse",
-        broker: { start: () => Promise.resolve(runtime) },
+        broker: {
+          start: (input) => {
+            preparationSignal = input.session.preparationSignal;
+            return Promise.resolve(runtime);
+          },
+        },
         resolveIngressOptions: () => ({ ...ingressOptions(signed.publicKeyPem), boundSource }),
         prepare: () =>
           Promise.resolve({
             start: managedStart({ agentId: "builder" }),
             messages: [],
-            executionSignal: controller.signal,
+            executionSignal: executionController.signal,
             output: {
               write: persistence.output.write,
               finish: async (input) => {
@@ -346,7 +354,10 @@ describe("hosted executor session", () => {
           clearTimeout(timer);
         }
         if (cause === "request cancellation") controller.abort();
-        else if (cause === "lease expiration") f.time.advanceBy(1000);
+        else if (cause === "execution cancellation") {
+          executionController.abort();
+          assertEquals(preparationSignal?.aborted, true);
+        } else if (cause === "lease expiration") f.time.advanceBy(1000);
         await assertRejects(() => session.runOwned(() => Promise.resolve()));
         const wire = await reading;
         if (cause === "lease expiration after stream") {
@@ -355,7 +366,11 @@ describe("hosted executor session", () => {
         }
         await handler.close();
         assertEquals(finishes, [false]);
-        assertEquals(terminalWrites, [cause === "request cancellation" ? "cancelled" : "failed"]);
+        assertEquals(terminalWrites, [
+          cause === "request cancellation" || cause === "execution cancellation"
+            ? "cancelled"
+            : "failed",
+        ]);
       } finally {
         controller.abort();
         await reading?.catch(() => {});

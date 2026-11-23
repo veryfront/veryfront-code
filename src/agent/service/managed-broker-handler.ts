@@ -428,7 +428,10 @@ function createManagedBrokerIngressHandler<TIngress>(options: {
         );
         const start = bindBrokerOwnedHostedKnowledgeCredential({
           ...inference.start,
-          session: { ...prepared.start.session, preparationSignal: signal },
+          session: {
+            ...prepared.start.session,
+            preparationSignal: AbortSignal.any([signal, prepared.executionSignal]),
+          },
         }, ingress);
         inheritHostedAgentPauseCapability(start, prepared.start);
         const runtime = await options.broker.start(start, {
@@ -478,7 +481,7 @@ function createManagedBrokerIngressHandler<TIngress>(options: {
             return await createSseResponse({
               runtime,
               messages: prepared.messages,
-              requestSignal: request.signal,
+              requestSignal: AbortSignal.any([request.signal, prepared.executionSignal]),
               output: prepared.output,
               finishOutput: sseFinalization?.finish,
               runId,
