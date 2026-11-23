@@ -22,13 +22,17 @@ export function connectedDevDisabled(options: { proxyMode: boolean; noSync: bool
   return options.proxyMode || options.noSync;
 }
 
-/** A proxy or unlinked project never synced, so only a linked one is told. */
-export function announcesNoSync(options: {
-  noSync: boolean;
-  proxyMode: boolean;
-  linkedProjectSlug: string | undefined;
-}): boolean {
-  return options.noSync && !options.proxyMode && Boolean(options.linkedProjectSlug);
+/**
+ * Say once at startup that source sync is off. A proxy or unlinked project
+ * never synced, so only a linked one is told. Returns whether it was said.
+ */
+export function announceNoSync(
+  options: { noSync: boolean; proxyMode: boolean; linkedProjectSlug: string | undefined },
+  log: (line: string) => void = console.log,
+): boolean {
+  if (!options.noSync || options.proxyMode || !options.linkedProjectSlug) return false;
+  log(`  ${NO_SYNC_NOTICE}`);
+  return true;
 }
 
 /** The shortcuts a session lists: the project, pull and push keys go when sync is off. */
@@ -42,9 +46,9 @@ export function devSessionShortcuts(shortcuts: readonly Shortcut[], noSync: bool
  * neither. The keys answer with a notice instead of doing nothing.
  */
 export function guardSyncShortcuts(
-  options: KeyboardOptions,
   noSync: boolean,
-  notify: () => void,
+  options: KeyboardOptions,
+  notify: () => void = () => console.log(`  ${NO_SYNC_SHORTCUT_NOTICE}`),
 ): KeyboardOptions {
   if (!noSync) return options;
   return { ...options, onSync: notify, onPull: notify, onPush: notify };

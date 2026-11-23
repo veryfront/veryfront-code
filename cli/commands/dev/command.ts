@@ -18,11 +18,7 @@ import { brand, dim, error as errorColor, warning } from "#cli/ui";
 import { exitProcess, isTTY, isVerbose, registerTerminationSignals } from "#cli/utils";
 import { DEV_SHORTCUTS, shortcutsBlock } from "../../ui/components/shortcuts.ts";
 import { applyQualifiedRuntimeAuth, resolveLinkedProjectSlug } from "#cli/shared/runtime-auth";
-import {
-  createKeyboardHandler,
-  type KeyboardHandler,
-  type KeyboardOptions,
-} from "../../ui/keyboard.ts";
+import { createKeyboardHandler, type KeyboardHandler } from "../../ui/keyboard.ts";
 import { openBrowser } from "../../auth/browser.ts";
 import { createMCPServer, type MCPDevServer } from "../../mcp/server.ts";
 import { withSpan } from "veryfront/observability/otlp-setup";
@@ -66,12 +62,10 @@ import {
   stopDevServices,
 } from "./connected-dev.ts";
 import {
-  announcesNoSync,
+  announceNoSync,
   connectedDevDisabled,
   devSessionShortcuts,
   guardSyncShortcuts,
-  NO_SYNC_NOTICE,
-  NO_SYNC_SHORTCUT_NOTICE,
 } from "./no-sync.ts";
 import { saveSharedProjectAssociation } from "../../shared/project-link.ts";
 import { chooseCloudProject } from "../../shared/cloud-project.ts";
@@ -372,9 +366,7 @@ export function devCommand(options: DevOptions): Promise<DevCommandResult> {
       }
       let preflightIdentity: AuthIdentity | null = null;
       let runtimeAuth = await applyQualifiedRuntimeAuth(projectDir, linkedProjectSlug);
-      if (announcesNoSync({ noSync, proxyMode: isProxyMode, linkedProjectSlug })) {
-        console.log(`  ${NO_SYNC_NOTICE}`);
-      }
+      announceNoSync({ noSync, proxyMode: isProxyMode, linkedProjectSlug });
       const connectedTarget = await prepareConnectedDev(
         linkedProjectSlug,
         options.environment ?? "preview",
@@ -707,7 +699,7 @@ export function devCommand(options: DevOptions): Promise<DevCommandResult> {
 
       if (!demoMode) {
         const logs = createDevLogController();
-        const sessionOptions: KeyboardOptions = {
+        keyboardHandler = createKeyboardHandler(guardSyncShortcuts(noSync, {
           onHelp: () => {
             console.log();
             console.log(shortcutsBlock(devSessionShortcuts(DEV_SHORTCUTS, noSync)));
@@ -724,9 +716,7 @@ export function devCommand(options: DevOptions): Promise<DevCommandResult> {
             await authReady;
             if (identity) {
               console.log(
-                `  ${dim(authStatus(identity))}${
-                  noSync ? "" : dim(", press s to select a project")
-                }`,
+                `  ${dim(authStatus(identity))}${dim(", press s to select a project")}`,
               );
               return;
             }
@@ -794,14 +784,7 @@ export function devCommand(options: DevOptions): Promise<DevCommandResult> {
               `Pushed to ${pushOptions.branch} ${dim("- merge in Studio")}`,
             );
           },
-        };
-        keyboardHandler = createKeyboardHandler(
-          guardSyncShortcuts(
-            sessionOptions,
-            noSync,
-            () => console.log(`  ${dim(NO_SYNC_SHORTCUT_NOTICE)}`),
-          ),
-        );
+        }));
 
         keyboardHandler.start();
       }

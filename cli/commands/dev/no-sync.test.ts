@@ -2,10 +2,11 @@ import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { DEV_SHORTCUTS } from "../../ui/components/shortcuts.ts";
 import {
-  announcesNoSync,
+  announceNoSync,
   connectedDevDisabled,
   devSessionShortcuts,
   guardSyncShortcuts,
+  NO_SYNC_NOTICE,
 } from "./no-sync.ts";
 
 describe("dev --no-sync session", () => {
@@ -16,11 +17,17 @@ describe("dev --no-sync session", () => {
   });
 
   it("announces skipped sync only for a linked project that would have synced", () => {
+    const lines: string[] = [];
+    const log = (line: string) => lines.push(line);
     const linked = { noSync: true, proxyMode: false, linkedProjectSlug: "demo" };
-    assertEquals(announcesNoSync(linked), true);
-    assertEquals(announcesNoSync({ ...linked, noSync: false }), false);
-    assertEquals(announcesNoSync({ ...linked, proxyMode: true }), false);
-    assertEquals(announcesNoSync({ ...linked, linkedProjectSlug: undefined }), false);
+
+    assertEquals(announceNoSync({ ...linked, noSync: false }, log), false);
+    assertEquals(announceNoSync({ ...linked, proxyMode: true }, log), false);
+    assertEquals(announceNoSync({ ...linked, linkedProjectSlug: undefined }, log), false);
+    assertEquals(lines, []);
+
+    assertEquals(announceNoSync(linked, log), true);
+    assertEquals(lines, [`  ${NO_SYNC_NOTICE}`]);
   });
 
   it("lists every shortcut in a syncing session", () => {
@@ -35,13 +42,13 @@ describe("dev --no-sync session", () => {
   function pressSyncKeys(noSync: boolean): string[] {
     const calls: string[] = [];
     const guarded = guardSyncShortcuts(
+      noSync,
       {
         onSync: () => calls.push("select"),
         onPull: () => calls.push("pull"),
         onPush: () => calls.push("push"),
         onQuit: () => calls.push("quit"),
       },
-      noSync,
       () => calls.push("notice"),
     );
     guarded.onSync?.();
