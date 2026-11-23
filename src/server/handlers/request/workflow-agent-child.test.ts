@@ -11,8 +11,10 @@ import {
   assertRejects,
   assertThrows,
 } from "#veryfront/testing/assert.ts";
-import { describe, it } from "#veryfront/testing/bdd.ts";
+import { afterEach, beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
 import { observeFetchRequestInit } from "#veryfront/testing/mock-fetch.ts";
+import { __resetVeryfrontCloudCatalogForTests } from "#veryfront/provider/veryfront-cloud/catalog-client.ts";
+import { seedServedCatalogForTests } from "#veryfront/provider/veryfront-cloud/catalog-client.test-helpers.ts";
 import { agent } from "#veryfront/agent/factory.ts";
 import { tool } from "#veryfront/tool";
 import { defineSchema } from "#veryfront/schemas";
@@ -133,6 +135,13 @@ const invocation = {
 };
 
 describe("workflow agent child protocol", () => {
+  beforeEach(() => {
+    __resetVeryfrontCloudCatalogForTests();
+    seedServedCatalogForTests();
+  });
+  afterEach(() => {
+    __resetVeryfrontCloudCatalogForTests();
+  });
   it("binds node start replay to the attempt while retaining one child invocation key", async () => {
     const starts: string[] = [];
     const children: string[] = [];

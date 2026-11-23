@@ -16,12 +16,12 @@ import {
   listRemoteFiles,
   putRemoteFileFromLocal,
 } from "./command.ts";
-import type { ApiClient } from "#cli/shared/config";
+import type { ApiClient, ApiReadOptions } from "#cli/shared/config";
 import type { ParsedArgs } from "#cli/shared/types";
 
 function createMockClient(overrides: {
   get?: (path: string, params?: Record<string, string>) => Promise<unknown>;
-  put?: (path: string, body?: unknown) => Promise<unknown>;
+  put?: (path: string, body?: unknown, options?: ApiReadOptions) => Promise<unknown>;
   delete?: (path: string) => Promise<unknown>;
 } = {}): ApiClient {
   return {
@@ -30,8 +30,8 @@ function createMockClient(overrides: {
       return result as T;
     },
     post: <T>(): Promise<T> => Promise.resolve({} as T),
-    put: async <T>(path: string, body?: unknown): Promise<T> => {
-      const result = await (overrides.put?.(path, body) ?? Promise.resolve({ path }));
+    put: async <T>(path: string, body?: unknown, options?: ApiReadOptions): Promise<T> => {
+      const result = await (overrides.put?.(path, body, options) ?? Promise.resolve({ path }));
       return result as T;
     },
     patch: <T>(): Promise<T> => Promise.resolve({} as T),
@@ -139,6 +139,59 @@ describe("putRemoteFileFromLocal", () => {
       await Deno.remove(tempDir, { recursive: true });
     }
   });
+  it("sends create-only and update-only guards without automatic retries", async () => {
+    const tempDir = await makeTempDir();
+    const localPath = `${tempDir}/proof.md`;
+    await Deno.writeTextFile(localPath, "# Proof\n");
+    const calls: Array<{ body: unknown; options?: ApiReadOptions }> = [];
+    try {
+      const unsupportedGuard = new Error("Unrecognized key: required_version_id");
+      const client = createMockClient({
+        put: (_path, body, options) => {
+          calls.push({ body, options });
+          if (calls.length === 2) return Promise.reject(unsupportedGuard);
+          return Promise.resolve({ path: "knowledge/proof.md" });
+        },
+      });
+      await putRemoteFileFromLocal(
+        client,
+        "my-project",
+        "knowledge/proof.md",
+        localPath,
+        undefined,
+        undefined,
+        undefined,
+        { absent: true },
+      );
+      const error = await assertRejects(() =>
+        putRemoteFileFromLocal(
+          client,
+          "my-project",
+          "knowledge/proof.md",
+          localPath,
+          undefined,
+          undefined,
+          undefined,
+          { versionId: "v-1" },
+        )
+      );
+      assertEquals(error, unsupportedGuard);
+
+      assertEquals(calls, [
+        {
+          body: { content: "# Proof\n", expected_absent: true },
+          options: { retryPolicy: "none" },
+        },
+        {
+          body: { content: "# Proof\n", required_version_id: "v-1" },
+          options: { retryPolicy: "none" },
+        },
+      ]);
+    } finally {
+      await Deno.remove(tempDir, { recursive: true });
+    }
+  });
+
   it("rejects an empty explicit branch before reading or uploading", async () => {
     let writes = 0;
     const client = createMockClient({
