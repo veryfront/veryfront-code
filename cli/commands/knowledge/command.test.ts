@@ -8179,3 +8179,46 @@ for (const sourceKind of ["local", "upload"] as const) {
     }
   });
 }
+
+for (const relativePath of ["topic.md", "assets/proof.png"]) {
+  for (const code of ["ENOENT", "EACCES"]) {
+    it(`handles native ${code} during exact OKF ${relativePath} stage cleanup`, async () => {
+      const root = await makeTempDir({ prefix: "veryfront-okf-native-cleanup-" });
+      const outputDir = join(root, "out");
+      const filePath = join(root, relativePath);
+      const bytes = relativePath.endsWith(".md")
+        ? new TextEncoder().encode("\uFEFF---\ntype: Topic\ncustom: preserved\n---\nBody\n")
+        : new Uint8Array([137, 80, 78, 71, 0, 255]);
+      const remove = Deno.remove;
+      const failure = Object.assign(new Error(`Native cleanup ${code}`), { code });
+      let cleanups = 0;
+      try {
+        await Deno.mkdir(dirname(filePath), { recursive: true });
+        await Deno.writeFile(filePath, bytes);
+        Deno.remove = async (path, options) => {
+          if (String(path).endsWith(".output")) {
+            cleanups++;
+            throw failure;
+          }
+          await remove(path, options);
+        };
+        const parse = () =>
+          runKnowledgeParser({ filePath, outputDir, okfRelativePath: relativePath });
+        if (code === "ENOENT") {
+          const result = await parse();
+          assertEquals(result.success, true);
+          // Released reservations permit the next exact-path writer to replace it.
+          await parse();
+          assertEquals(cleanups, 2);
+        } else {
+          await assertRejects(parse, Error, failure.message);
+          assertEquals(cleanups, 1);
+        }
+        assertEquals(await Deno.readFile(join(outputDir, relativePath)), bytes);
+      } finally {
+        Deno.remove = remove;
+        await remove(root, { recursive: true });
+      }
+    });
+  }
+}

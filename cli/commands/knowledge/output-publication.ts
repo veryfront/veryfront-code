@@ -1,6 +1,6 @@
 import { dirname, join } from "veryfront/platform/path";
 
-function missing(error: unknown): boolean {
+export function isMissingKnowledgeOutput(error: unknown): boolean {
   return error instanceof Deno.errors.NotFound ||
     error instanceof Error && "code" in error && error.code === "ENOENT";
 }
@@ -41,7 +41,7 @@ export async function publishKnowledgeOutput(input: {
     return true;
   } finally {
     await Deno.remove(stage).catch((error) => {
-      if (!missing(error)) throw error;
+      if (!isMissingKnowledgeOutput(error)) throw error;
     });
   }
 }

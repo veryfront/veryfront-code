@@ -7,7 +7,7 @@ import {
   readProvenKnowledgeOutputStage,
   releaseKnowledgeTargetOutputClaim,
 } from "./output-claim.ts";
-import { publishKnowledgeOutput } from "./output-publication.ts";
+import { isMissingKnowledgeOutput, publishKnowledgeOutput } from "./output-publication.ts";
 import { basename, dirname, extname, join, normalize, relative } from "veryfront/platform/path";
 import { importFirstPartyExtensionModule } from "veryfront/extensions/first-party-import";
 import type {
@@ -1819,7 +1819,7 @@ async function writeExactKnowledgeOutput(
       }
       mode = existing.mode;
     } catch (error) {
-      if (!(error instanceof Deno.errors.NotFound)) throw error;
+      if (!isMissingKnowledgeOutput(error)) throw error;
     }
     await Deno.writeFile(stage, bytes, {
       createNew: true,
@@ -1832,7 +1832,7 @@ async function writeExactKnowledgeOutput(
   } finally {
     try {
       await Deno.remove(stage).catch((error) => {
-        if (!(error instanceof Deno.errors.NotFound)) throw error;
+        if (!isMissingKnowledgeOutput(error)) throw error;
       });
     } finally {
       await releaseKnowledgeTargetOutputClaim(claim);
