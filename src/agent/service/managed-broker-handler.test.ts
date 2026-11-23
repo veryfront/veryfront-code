@@ -1114,6 +1114,7 @@ async function handler(
   const outputPauses: (true | undefined)[] = [];
   const outputFinishErrors: unknown[] = [];
   const outputFinishMetadata: unknown[] = [];
+  const executionErrors: unknown[] = [];
   const outputRelease = Promise.withResolvers<void>();
   const outputEntered = Promise.withResolvers<void>();
   let prepareSignal: AbortSignal | undefined;
@@ -1187,11 +1188,10 @@ async function handler(
         },
       };
     },
-    onExecutionError: options.throwingObserver
-      ? () => {
-        throw new Error("observer");
-      }
-      : undefined,
+    onExecutionError: (error) => {
+      executionErrors.push(error);
+      if (options.throwingObserver) throw new Error("observer");
+    },
   });
   return {
     first,
@@ -1207,6 +1207,7 @@ async function handler(
     outputPauses,
     outputFinishErrors,
     outputFinishMetadata,
+    executionErrors,
     releaseOutput: outputRelease.resolve,
     outputEntered: outputEntered.promise,
     abortExecution: () => executionController.abort(),
@@ -1226,6 +1227,40 @@ async function handler(
 }
 
 describe("managed broker handler", () => {
+  for (
+    const [option, diagnostic] of [
+      ["writeFailure", "SSE output write failed"],
+      ["outputFailure", "Output flush failed"],
+      ["streamOpenFailure", "synthetic stream setup failed"],
+      ["streamFailure", "synthetic stream failure"],
+    ] as const
+  ) {
+    it(`redacts ${option} from public SSE while preserving broker diagnostics`, async () => {
+      const f = await handler("sse", { [option]: true });
+      try {
+        const response = await f.managed.handle(f.first.request);
+        f.fixture.release();
+        const wire = await response.text();
+        assert(wire.includes("event: RunError"));
+        assert(!wire.includes(diagnostic));
+        assert(wire.includes("EXECUTOR_AGENT_STREAM_FAILED"));
+        assert(
+          f.executionErrors.some((error) => error instanceof Error && error.message === diagnostic),
+        );
+        if (option !== "outputFailure") {
+          assert(
+            f.outputFinishErrors.some((error) =>
+              error instanceof Error && error.message === diagnostic
+            ),
+          );
+        }
+      } finally {
+        f.fixture.release();
+        await f.managed.close();
+      }
+    });
+  }
+
   it("persists SSE output and usage before acknowledging canonical completion", async () => {
     const f = await handler("sse", { finishWithUsage: true });
     try {

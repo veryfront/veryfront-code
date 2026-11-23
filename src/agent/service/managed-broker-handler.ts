@@ -483,6 +483,7 @@ function createManagedBrokerIngressHandler<TIngress>(options: {
               messages: prepared.messages,
               requestSignal: AbortSignal.any([request.signal, prepared.executionSignal]),
               output: prepared.output,
+              onExecutionError: (error) => options.onExecutionError?.(error, runId),
               finishOutput: sseFinalization?.finish,
               runId,
               ...parsed.stream,
@@ -635,6 +636,7 @@ async function createSseResponse(input: {
   requestSignal: AbortSignal;
   output?: ManagedBrokerOutput;
   finishOutput?: (outcome: ManagedOutputOutcome) => Promise<void>;
+  onExecutionError?: (error: unknown) => void;
   runId: string;
   threadId: string;
   agentId: string;
@@ -642,6 +644,15 @@ async function createSseResponse(input: {
   onSettled(): Promise<void>;
   trackExecution(execution: Promise<void>): void;
 }): Promise<Response> {
+  const reportFailure = (error: unknown) => {
+    try {
+      input.onExecutionError?.(error);
+    } catch { /* Observability cannot own settlement. */ }
+  };
+  const publicFailure = (error: unknown) =>
+    new ExecutorAgentError(
+      error instanceof ExecutorAgentError ? error.code : "EXECUTOR_AGENT_STREAM_FAILED",
+    );
   const completion = Promise.withResolvers<void>();
   let natural = false;
   let failure: unknown;
@@ -689,6 +700,7 @@ async function createSseResponse(input: {
             throw terminalFailure;
           }
         } catch (error) {
+          reportFailure(error);
           finalizationFailed = true;
           finalizationError = error;
           invalidateHostedAgentPauseSettlement(input.runtime, error);
@@ -712,6 +724,7 @@ async function createSseResponse(input: {
         try {
           await input.onSettled();
         } catch (error) {
+          reportFailure(error);
           if (finalizationFailed) {
             throw new AggregateError(
               [finalizationError, error],
@@ -772,8 +785,9 @@ async function createSseResponse(input: {
       natural = failure === undefined;
     } catch (error) {
       failure ??= error;
+      reportFailure(error);
       invalidateHostedAgentPauseSettlement(input.runtime, error);
-      throw error;
+      throw publicFailure(error);
     } finally {
       completion.resolve();
     }
@@ -789,8 +803,12 @@ async function createSseResponse(input: {
         await finish("canceled");
       },
       async waitForFinish() {
-        await completion.promise;
-        await finish(natural && !input.requestSignal.aborted ? "completed" : "canceled");
+        try {
+          await completion.promise;
+          await finish(natural && !input.requestSignal.aborted ? "completed" : "canceled");
+        } catch (error) {
+          throw publicFailure(error);
+        }
       },
     },
   });
