@@ -1,6 +1,7 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { FakeTime } from "#std/testing/time";
 import {
   createDetachedRunShutdownLifecycle,
   createDetachedRunTracker,
@@ -87,36 +88,15 @@ describe("agent/detached-run-tracker", () => {
     const execution = deferred();
     tracker.registerExecution("run_1", execution.promise);
 
-    // Count the timers the drain starts and releases itself: the runtime's
-    // leak sanitizer does not report a pending timer on every Deno version.
-    const originalSetTimeout = globalThis.setTimeout;
-    const originalClearTimeout = globalThis.clearTimeout;
-    const pendingTimers = new Set<ReturnType<typeof setTimeout>>();
-    globalThis.setTimeout = ((handler: () => void, delay?: number) => {
-      const id: ReturnType<typeof setTimeout> = originalSetTimeout(() => {
-        pendingTimers.delete(id);
-        handler();
-      }, delay);
-      pendingTimers.add(id);
-      return id;
-    }) as typeof setTimeout;
-    globalThis.clearTimeout = ((id?: ReturnType<typeof setTimeout>) => {
-      if (id !== undefined) pendingTimers.delete(id);
-      originalClearTimeout(id);
-    }) as typeof clearTimeout;
+    // Fake time owns every timer the drain starts, so the test can ask whether
+    // one is still scheduled: the runtime's leak sanitizer does not report a
+    // pending timer on every Deno version.
+    using time = new FakeTime();
+    const draining = tracker.waitForDrain({ timeoutMs: 60_000, pollIntervalMs: 30_000 });
+    await execution.resolve();
 
-    try {
-      const draining = tracker.waitForDrain({ timeoutMs: 60_000, pollIntervalMs: 30_000 });
-      assertEquals(pendingTimers.size, 1, "the drain polls while the execution is pending");
-      await execution.resolve();
-
-      assertEquals(await draining, { drained: true, pendingRunIds: [] });
-      assertEquals(pendingTimers.size, 0, "the poll timer must not outlive the drain");
-    } finally {
-      globalThis.setTimeout = originalSetTimeout;
-      globalThis.clearTimeout = originalClearTimeout;
-      for (const id of pendingTimers) originalClearTimeout(id);
-    }
+    assertEquals(await draining, { drained: true, pendingRunIds: [] });
+    assertEquals(time.next(), false, "the poll timer must not outlive the drain");
   });
 
   it("keeps newer executions registered when an older execution settles", async () => {
