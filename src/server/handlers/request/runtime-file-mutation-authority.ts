@@ -3,6 +3,9 @@ const Apply = Reflect.apply;
 const SourcePath = /^\/projects\/[^/]+\/files\/[^/?#]+(?:\?[^#]*)?$/;
 const AssetPath = /^\/projects\/[^/]+\/knowledge\/assets\/[^/?#]+(?:\?[^#]*)?$/;
 const MovePath = /^\/projects\/[^/]+\/files\/move$/;
+// Canonical move: one encoded file segment, then the literal action. The legacy
+// route above stays until the API removes it.
+const CanonicalMovePath = /^\/projects\/[^/]+\/files\/[^/?#]+\/move$/;
 const CommitPath = /^\/projects\/[^/]+\/commit$/;
 const DraftPath = /^\/projects\/[^/]+\/branches\/[^/]+\/files\/[^/]+\/draft$/;
 const IndexPath = /^\/projects\/[^/]+\/branches\/[^/]+\/files\/[^/]+\/index$/;
@@ -15,6 +18,7 @@ export function isRuntimeFileMutationRequest(method: string, path: string): bool
       (method === "PUT" && Apply(RegExpExec, AssetPath, [path]) !== null);
   }
   return method === "POST" && (Apply(RegExpExec, MovePath, [path]) !== null ||
+    Apply(RegExpExec, CanonicalMovePath, [path]) !== null ||
     Apply(RegExpExec, CommitPath, [path]) !== null ||
     Apply(RegExpExec, IndexPath, [path]) !== null);
 }
