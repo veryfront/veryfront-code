@@ -1,3 +1,6 @@
+import { sealIngressCredentials } from "#veryfront/security/http/ingress-credentials.ts";
+import { BrokerIngressError } from "./broker-ingress.ts";
+import type { ManagedAgentIngressResult } from "./managed-hosted-ingress.ts";
 import { managedStart } from "../../../tests/fixtures/managed-executor-start.ts";
 import {
   createRunBoundAgentManualPause,
@@ -32,6 +35,84 @@ import { agUiSseEventTypes, parseAgUiSseResponse } from "../ag-ui/sse-parser.ts"
 const projectId = "00000000-0000-4000-8000-000000000005";
 const userId = "00000000-0000-4000-8000-000000000006";
 const path = "/api/control-plane/runs/run-1/stream";
+
+describe("sealed direct broker admission", () => {
+  for (const kind of ["durable", "ag-ui"] as const) {
+    for (const reflected of [false, true]) {
+      it(`retains ${kind} private credentials through its request copy (reflected=${reflected})`, async () => {
+        let prepared = 0;
+        const config = {
+          owner: { scopeKind: "project" as const, projectId },
+          broker: { start: () => Promise.reject(new Error("Must not allocate")) },
+          ingress: {
+            authenticate: () => Promise.resolve({ userId, authToken: "private-auth" }),
+            verifyProjectAccess: () => Promise.resolve({ success: true as const }),
+            verifyRunEventAppendToken: async (input: { token: string }) => {
+              assertEquals(input.token, "private-event-token");
+              return true;
+            },
+          },
+          prepare: ({ ingress }: { ingress: ManagedAgentIngressResult }) => {
+            prepared++;
+            if (kind === "durable") {
+              assertEquals(
+                typeof ingress.broker.createInferenceModelResolver({
+                  apiBaseUrl: "https://api.example.test",
+                }),
+                "function",
+              );
+              assertEquals("inferenceAuthToken" in ingress.broker.getParsedRequest(), false);
+              assertEquals(
+                JSON.stringify(ingress.executor).includes("private-inference-token"),
+                false,
+              );
+            }
+            return Promise.reject(new BrokerIngressError(503, "BROKER_UNAVAILABLE"));
+          },
+        };
+        const managed = kind === "durable"
+          ? createManagedDurableBrokerHandler(config)
+          : createManagedAgUiBrokerHandler({ ...config, defaultAgentId: "builder" });
+        const text = reflected ? "private-event-token" : "Hello";
+        const body = kind === "durable"
+          ? {
+            messages: [{ id: "m", role: "user", parts: [{ type: "text", text }] }],
+            context: {
+              projectId,
+              branchId: "branch-1",
+              conversationId: "00000000-0000-4000-8000-000000000001",
+            },
+            durableRootRun: { runId: "run-1", messageId: "00000000-0000-4000-8000-000000000002" },
+          }
+          : {
+            threadId: "00000000-0000-4000-8000-000000000001",
+            runId: "run-1",
+            messages: [{ id: "m", role: "user", content: text }],
+            tools: [],
+            context: [{ description: "veryfront.projectId", value: JSON.stringify(projectId) }],
+          };
+        try {
+          const request = sealIngressCredentials(
+            new Request(`https://broker.test/api/${kind === "durable" ? "runs" : "ag-ui"}`, {
+              method: "POST",
+              headers: {
+                "content-type": "application/json",
+                "x-veryfront-run-event-token": "private-event-token",
+                "x-veryfront-inference-token": "private-inference-token",
+              },
+              body: JSON.stringify(body),
+            }),
+          );
+          const response = await managed.handle(request);
+          assertEquals(response.status, reflected ? 403 : 503);
+          assertEquals(prepared, reflected ? 0 : 1);
+        } finally {
+          await managed.close();
+        }
+      });
+    }
+  }
+});
 
 describe("broker-owned inference dispatch", () => {
   for (const kind of ["durable", "ag-ui"] as const) {

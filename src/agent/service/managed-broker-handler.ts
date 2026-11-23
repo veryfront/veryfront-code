@@ -1,4 +1,8 @@
 import {
+  inheritIngressCredentials,
+  readIngressCredential,
+} from "#veryfront/security/http/ingress-credentials.ts";
+import {
   createHostedAgentManualPause,
   hasHostedAgentPauseStopped,
   inheritHostedAgentPauseCapability,
@@ -210,7 +214,10 @@ export function createManagedAgUiBrokerHandler(options: {
       signal.throwIfAborted();
       // Preserve the streaming body explicitly: Bun otherwise leaves the cloned body unread.
       const ingress = await parseManagedAgUiAgentIngress(
-        new Request(request, { signal, body: request.body, duplex: "half" } as RequestInit),
+        inheritIngressCredentials(
+          request,
+          new Request(request, { signal, body: request.body, duplex: "half" } as RequestInit),
+        ),
         options.ingress,
       );
       signal.throwIfAborted();
@@ -308,13 +315,16 @@ export function createManagedDurableBrokerHandler(options: {
       if (request.method !== "POST" || new URL(request.url).pathname !== "/api/runs") {
         return Response.json({ errorCode: "BROKER_INGRESS_TARGET_MISMATCH" }, { status: 400 });
       }
-      if (!request.headers.get("x-veryfront-run-event-token")?.trim()) {
+      if (!readIngressCredential(request, "x-veryfront-run-event-token")?.trim()) {
         return Response.json({ errorCode: "BROKER_INGRESS_AUTH_REQUIRED" }, { status: 401 });
       }
       signal.throwIfAborted();
       // Preserve the streaming body explicitly: Bun otherwise leaves the cloned body unread.
       const ingress = await parseManagedDurableAgentIngress(
-        new Request(request, { signal, body: request.body, duplex: "half" } as RequestInit),
+        inheritIngressCredentials(
+          request,
+          new Request(request, { signal, body: request.body, duplex: "half" } as RequestInit),
+        ),
         options.ingress,
       );
       signal.throwIfAborted();
