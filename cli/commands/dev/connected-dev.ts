@@ -18,16 +18,6 @@ export interface ConnectedDevTarget {
   environmentName: string;
 }
 
-/**
- * Whether a linked project starts local-only. Proxy projects never take the
- * Cloud connection, and `--no-sync` opts out of it: without the startup sync,
- * connected admission would read declarations the local source no longer
- * matches, so the opt-out skips the connection rather than only the push.
- */
-export function connectedDevDisabled(options: { proxyMode: boolean; noSync: boolean }): boolean {
-  return options.proxyMode || options.noSync;
-}
-
 export async function prepareConnectedDev(
   projectSlug: string | undefined,
   environmentName: string,

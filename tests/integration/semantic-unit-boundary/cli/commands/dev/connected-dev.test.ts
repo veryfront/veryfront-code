@@ -13,7 +13,6 @@ import {
 import { FakeTime } from "#std/testing/time";
 import {
   connectedDevApiBaseUrl,
-  connectedDevDisabled,
   connectedDevStudioBaseUrl,
   createConnectedDevControlPlane,
   prepareConnectedDev,
@@ -526,54 +525,25 @@ it("refuses connected readiness when source synchronization fails", async () => 
   );
 });
 
-const LINKED_TARGET = {
-  projectId: "p",
-  projectSlug: "demo",
-  environmentId: "e",
-  environmentName: "preview",
-};
-
-it("a push conflict stops a linked server before it starts", async () => {
-  await assertRejects(
-    () =>
-      prepareConnectedDev("demo", "preview", {
-        authenticate: () => Promise.resolve(true),
-        resolve: () => Promise.resolve(LINKED_TARGET),
-        sync: () =>
-          Promise.reject(
-            new Error("[push-conflict] Push rejected because remote files changed"),
-          ),
-      }),
-    Error,
-    "push-conflict",
-  );
-});
-
-it("--no-sync starts a linked project local-only without login, sync or admission", async () => {
+it("a disabled connection starts a linked project local-only without login, sync or admission", async () => {
   const calls: string[] = [];
+  const record = <T>(step: string, result: T) => () => {
+    calls.push(step);
+    return Promise.resolve(result);
+  };
+  const target = {
+    projectId: "p",
+    projectSlug: "demo",
+    environmentId: "e",
+    environmentName: "preview",
+  };
+
   const result = await prepareConnectedDev("demo", "preview", {
-    authenticate: () => {
-      calls.push("authenticate");
-      return Promise.resolve(true);
-    },
-    resolve: () => {
-      calls.push("resolve");
-      return Promise.resolve(LINKED_TARGET);
-    },
-    sync: () => {
-      calls.push("sync");
-      return Promise.reject(
-        new Error("[push-conflict] Push rejected because remote files changed"),
-      );
-    },
-  }, connectedDevDisabled({ proxyMode: false, noSync: true }));
+    authenticate: record("authenticate", true),
+    resolve: record("resolve", target),
+    sync: record("sync", undefined),
+  }, true);
 
   assertEquals(result, undefined);
   assertEquals(calls, []);
-});
-
-it("keeps a linked project connected unless proxy mode or --no-sync is set", () => {
-  assertEquals(connectedDevDisabled({ proxyMode: false, noSync: false }), false);
-  assertEquals(connectedDevDisabled({ proxyMode: true, noSync: false }), true);
-  assertEquals(connectedDevDisabled({ proxyMode: false, noSync: true }), true);
 });

@@ -26,7 +26,7 @@ export const devHelp: CommandHelp = {
     {
       flag: "--no-sync",
       description:
-        "Do not sync source to Cloud; start a linked project without the Cloud connection (also VERYFRONT_DEV_NO_SYNC=1)",
+        "Start a linked project local-only, without source sync (also VERYFRONT_DEV_NO_SYNC=1)",
     },
     {
       flag: "--open",
@@ -55,7 +55,8 @@ export const devHelp: CommandHelp = {
     "",
     "A project linked to Veryfront Cloud pushes its local source at startup and",
     "stops when the push conflicts with remote changes. Use --no-sync to start",
-    "local-only instead: nothing is pushed, and connected agent runs and the",
-    "Studio link are unavailable for that session.",
+    "local-only instead: nothing is pushed or pulled, the project, pull and push",
+    "shortcuts are off, and connected agent runs and the Studio link are",
+    "unavailable for that session. A stored login still serves model calls.",
   ],
 };
