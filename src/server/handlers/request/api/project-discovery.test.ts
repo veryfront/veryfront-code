@@ -1116,7 +1116,7 @@ describe(
           Error,
           "Runtime discovery failed: older generation filesystem unavailable",
         );
-        let secondFailure: Promise<Error>;
+        let secondFailure: Promise<unknown>;
         if (phase === "fingerprint") {
           await first.fingerprintStarted;
           first.fingerprint.resolve(undefined);
