@@ -69,7 +69,11 @@ export async function saveToken(token: string, env?: EnvironmentConfig): Promise
 
   const apiPath = getTokenApiPath(env);
   try {
-    await fs.writeTextFile(apiPath, JSON.stringify({ apiUrl: getApiUrl(env) }));
+    const record: TokenApiRecord = {
+      apiUrl: getApiUrl(env),
+      tokenSha256: await tokenFingerprint(token),
+    };
+    await fs.writeTextFile(apiPath, JSON.stringify(record));
     await fs.chmod(apiPath, TOKEN_FILE_PERMISSIONS);
   } catch (error) {
     // Without the record the login is treated like one saved before it existed.
@@ -77,7 +81,7 @@ export async function saveToken(token: string, env?: EnvironmentConfig): Promise
     try {
       if (await fs.exists(apiPath)) await fs.remove(apiPath);
     } catch {
-      // Nothing more to do: a stale record only keeps a rejected login.
+      // A record left behind names the previous token, so it is ignored.
     }
   }
 }
@@ -98,26 +102,51 @@ export async function deleteToken(env?: EnvironmentConfig): Promise<void> {
 /**
  * Remove the stored login after `apiUrl` rejected it, unless the login was
  * saved for a different API: one host not recognising a login says nothing
- * about whether the host it belongs to still accepts it. A login saved before
- * its API was recorded is removed as before. Returns whether it was removed.
+ * about whether the host it belongs to still accepts it. A login whose API
+ * was never recorded for it (saved by an older CLI, or replaced since the
+ * record was written) is removed as before. Returns whether it was removed.
  */
 export async function deleteTokenRejectedBy(
   apiUrl: string,
   env?: EnvironmentConfig,
 ): Promise<boolean> {
-  const savedFor = await readTokenApiUrl(env);
-  if (savedFor !== null && !isSameApiEndpoint(savedFor, apiUrl)) return false;
+  const token = await readToken(env);
+  if (token !== null && await isTokenSavedForOtherApi(token, apiUrl, env)) return false;
   await deleteToken(env);
   return true;
 }
 
-async function readTokenApiUrl(env?: EnvironmentConfig): Promise<string | null> {
+/**
+ * Whether the stored login `token` was recorded as saved for an API other
+ * than `apiUrl`. False when nothing is recorded for this very token: the
+ * record names the token by its fingerprint, so a record left behind by a
+ * writer that replaced the token without updating it never vouches for the
+ * new one.
+ */
+export async function isTokenSavedForOtherApi(
+  token: string,
+  apiUrl: string,
+  env?: EnvironmentConfig,
+): Promise<boolean> {
+  const savedFor = await readTokenApiUrl(token, env);
+  return savedFor !== null && !isSameApiEndpoint(savedFor, apiUrl);
+}
+
+/** `token-api.json`: the API a stored login was saved for, and which login. */
+interface TokenApiRecord {
+  apiUrl: string;
+  /** SHA-256 of the stored token, so the record never holds the token itself. */
+  tokenSha256: string;
+}
+
+async function readTokenApiUrl(token: string, env?: EnvironmentConfig): Promise<string | null> {
   try {
     const path = getTokenApiPath(env);
     const fs = createFileSystem();
     if (!(await fs.exists(path))) return null;
     const record = JSON.parse(await fs.readTextFile(path));
-    return typeof record?.apiUrl === "string" ? record.apiUrl : null;
+    if (typeof record?.apiUrl !== "string" || typeof record.tokenSha256 !== "string") return null;
+    return record.tokenSha256 === await tokenFingerprint(token) ? record.apiUrl : null;
   } catch (error) {
     cliLogger.debug("Failed to read the stored login's API:", error);
     return null;
@@ -137,8 +166,17 @@ export function getTokenLocation(env?: EnvironmentConfig): string {
 }
 
 /** A hash naming one login at one API, so the check file never holds the token. */
-async function loginFingerprint(apiUrl: string, token: string): Promise<string> {
-  const bytes = applyIntrinsic(textEncode, textEncoder, [`${apiUrl}\n${token}`]);
+function loginFingerprint(apiUrl: string, token: string): Promise<string> {
+  return sha256Hex(`${apiUrl}\n${token}`);
+}
+
+/** A hash naming one login, so the API record never holds the token. */
+function tokenFingerprint(token: string): Promise<string> {
+  return sha256Hex(token);
+}
+
+async function sha256Hex(text: string): Promise<string> {
+  const bytes = applyIntrinsic(textEncode, textEncoder, [text]);
   const digest = await (applyIntrinsic(subtleDigest, subtleCrypto, ["SHA-256", bytes]) as Promise<
     ArrayBuffer
   >);
