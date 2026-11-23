@@ -141,6 +141,13 @@ export async function withRequestTimeout(
     }
 
     if (isControlPlaneExecuteIngressError(e, pathname, method)) {
+      logger.warn("Project run execute refused", {
+        reasonCode: e instanceof InternalAgentRequestBodyTooLargeError
+          ? "body_too_large"
+          : "control_plane_rejected",
+        phase: "ingress",
+        status: e.status,
+      });
       return {
         response: Response.json({ error: e.message }, { status: e.status }),
         settled,

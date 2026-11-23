@@ -1,3 +1,4 @@
+import { __subscribeLogRecordEmitter } from "#veryfront/utils/logger/logger.ts";
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
@@ -10,6 +11,42 @@ import { InternalAgentRequestBodyTooLargeError } from "#veryfront/internal-agent
 
 describe("timeout-manager", () => {
   describe("withRequestTimeout", () => {
+    for (
+      const failure of [
+        new ControlPlaneRequestError(400, "private exception detail"),
+        new ControlPlaneRequestError(401, "private signature detail"),
+        new InternalAgentRequestBodyTooLargeError(),
+      ]
+    ) {
+      it(`logs a safe reason when execute ingress refuses ${failure.status}`, async () => {
+        const entries: Array<{ level: string; context?: Record<string, unknown> }> = [];
+        const unsubscribe = __subscribeLogRecordEmitter((entry) => {
+          if (entry.message === "Project run execute refused") entries.push(entry);
+        });
+        try {
+          const { response, error } = await withRequestTimeout(
+            async () => {
+              throw failure;
+            },
+            "/api/control-plane/runs/private-run-id/execute",
+            "POST",
+          );
+          assertEquals(response.status, failure.status);
+          assertEquals(error, undefined);
+          assertEquals(entries.map(({ level, context }) => ({ level, context })), [{
+            level: "warn",
+            context: {
+              reasonCode: failure.status === 413 ? "body_too_large" : "control_plane_rejected",
+              phase: "ingress",
+              status: failure.status,
+            },
+          }]);
+        } finally {
+          unsubscribe();
+        }
+      });
+    }
+
     it("does not report expected execute ingress rejections as application faults", async () => {
       for (
         const failure of [

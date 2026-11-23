@@ -1385,6 +1385,57 @@ describe("workflow capability transport boundary", () => {
 
 describe("server/handlers/request/project-run-execute.handler", () => {
   for (
+    const [scenario, reasonCode, phase, status] of [
+      ["invalid_input", "invalid_input", "parse_request", 400],
+      ["unsupported_protocol", "control_plane_rejected", "parse_request", 400],
+      ["invalid_json", "unexpected_refusal", "parse_request", 400],
+      ["missing_signature", "control_plane_rejected", "verify_signature", 401],
+      ["setup_failure", "unexpected_refusal", "setup_execution", 400],
+    ] as const
+  ) {
+    it(`logs a safe reason when execute refuses ${scenario}`, async () => {
+      const entries: Array<{ level: string; context?: Record<string, unknown> }> = [];
+      const unsubscribe = __subscribeLogRecordEmitter((entry) => {
+        if (entry.message === "Project run execute refused") entries.push(entry);
+      });
+      try {
+        const signed = await signedRequest("/api/control-plane/runs/run_refused/execute", {
+          runId: "run_refused",
+          projectId: "proj-1",
+          kind: "task",
+          target: scenario === "invalid_input" ? "invalid-private-target" : "task:eval",
+          ...(scenario === "unsupported_protocol" ? { schema_snapshot_protocol: 2 } : {}),
+          input: { secret: "private-input-must-not-be-logged" },
+        });
+        const request = scenario === "invalid_json"
+          ? new Request(signed.request.url, { method: "POST", body: "private-invalid-json" })
+          : signed.request;
+        if (scenario === "missing_signature") {
+          request.headers.delete("x-veryfront-control-plane-jws");
+        }
+        const handler = new ProjectRunExecuteHandler(createDeps({
+          ...(scenario === "setup_failure"
+            ? {
+              now: () => {
+                throw new Error("private-setup-error");
+              },
+            }
+            : {}),
+        }));
+        const result = await handler.handle(request, createCtx(signed.publicKeyPem));
+        assertExists(result.response);
+        assertEquals(result.response.status, status);
+        assertEquals(entries.map(({ level, context }) => ({ level, context })), [{
+          level: "warn",
+          context: { reasonCode, phase, status },
+        }]);
+      } finally {
+        unsubscribe();
+      }
+    });
+  }
+
+  for (
     const target of [
       "knowledge-ingest",
       "release-asset-build",

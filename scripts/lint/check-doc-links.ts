@@ -4,7 +4,10 @@ import { existsSync } from "@std/fs";
 
 import { markdownProse } from "./markdown-prose.ts";
 
-const repoRoot = new URL("../../", import.meta.url).pathname;
+// An optional first argument checks another root instead of this repository.
+const repoRoot = Deno.args[0]
+  ? `${Deno.args[0].replace(/\/+$/, "")}/`
+  : new URL("../../", import.meta.url).pathname;
 
 // Check markdown files in these directories
 const dirsToCheck = [
@@ -48,7 +51,9 @@ async function checkFile(path: string): Promise<void> {
       if (!stat.isFile && !stat.isDirectory) throw new Error("not file or dir");
       checked++;
     } catch {
-      console.error(`Broken link in ${path}: ${href}`);
+      // Relative to the root: a failure log must not expose the layout of the
+      // machine that ran the check.
+      console.error(`Broken link in ${path.slice(repoRoot.length)}: ${href}`);
       broken++;
     }
   }

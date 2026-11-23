@@ -233,13 +233,34 @@ export function createAgUiCancelHandler<T = unknown>(
     const parkedAfterEventId = parkCancellation
       ? parsePositiveEventId(new URL(request.url).searchParams.get("parked_after_event_id"))
       : undefined;
+    // An ordinary cancel can name the generation it means. A newer start that
+    // reused the run id is then neither stopped nor refused. A fence that is
+    // present but unreadable is rejected: treating it as absent would cancel
+    // and refuse every generation, which is what the caller asked to avoid.
+    const startedBeforeParam = parkCancellation
+      ? null
+      : new URL(request.url).searchParams.get("started_before_event_id");
+    const startedBeforeEventId = parsePositiveEventId(startedBeforeParam);
+    if (startedBeforeParam !== null && startedBeforeEventId === undefined) {
+      return Response.json({ error: "Invalid started_before_event_id" }, { status: 400 });
+    }
+    const fenceEventId = parkedAfterEventId ?? startedBeforeEventId;
     const accepted = options.sessionManager.cancelRunWithAuthority(authority, {
       rememberCancellation: !parkCancellation,
-      ...(parkedAfterEventId !== undefined
-        ? { onlyIfStartedBeforeEventId: parkedAfterEventId }
-        : {}),
+      ...(fenceEventId !== undefined ? { onlyIfStartedBeforeEventId: fenceEventId } : {}),
+      // A park keeps stopping a session without generation metadata. An
+      // ordinary fenced cancel cannot tell such a session from a newer start.
+      ...(startedBeforeEventId !== undefined ? { cancelUnknownGeneration: false } : {}),
     });
     if (!parkCancellation && confirmStopped) {
+      // Run-id-only receipts cannot confirm a newer execution against an older fence.
+      if (
+        !accepted && startedBeforeEventId !== undefined &&
+        !options.sessionManager.wasLatestStartBefore(runId, startedBeforeEventId)
+      ) {
+        return new Response(null, { status: 204 });
+      }
+
       const stopped = options.hasSettledExecution?.(runId) === true;
       const owned = accepted || options.hasPendingExecution?.(runId) === true || stopped;
       if (owned) {
