@@ -245,32 +245,31 @@ Deno.test("uploadEvalReportToProjectFiles uses ordinary runtime API client witho
     config: { eval_id: "eval:deep-research" },
   };
   let uploads = 0;
-  _setEnvironmentConfigForTesting({ apiBaseUrl: "http://self-hosted-api.example.test:8787" });
-  const path = await withMockFetch((url, init) => {
-    const options = observeFetchRequestInit(init);
-    assertStringIncludes(String(url), "http://self-hosted-api.example.test:8787/");
-    assertEquals(options.method, "PUT");
-    assertEquals(new Headers(options.headers).get("x-veryfront-run-event-token"), null);
-    uploads++;
-    return Promise.resolve(
-      Response.json({
-        path: "evals/reports/deep-research/run_eval_report_http_without_writer.json",
-      }),
-    );
-  }, async () => {
-    try {
-      return await uploadEvalReportToProjectFiles({
+  // The host configures its own HTTP API; the ordinary client accepts it.
+  const path = await withEnv({
+    VERYFRONT_API_BASE_URL: "http://self-hosted-api.example.test:8787",
+    VERYFRONT_API_URL: "",
+  }, () =>
+    withMockFetch((url, init) => {
+      const options = observeFetchRequestInit(init);
+      assertStringIncludes(String(url), "http://self-hosted-api.example.test:8787/");
+      assertEquals(options.method, "PUT");
+      assertEquals(new Headers(options.headers).get("x-veryfront-run-event-token"), null);
+      uploads++;
+      return Promise.resolve(
+        Response.json({
+          path: "evals/reports/deep-research/run_eval_report_http_without_writer.json",
+        }),
+      );
+    }, () =>
+      uploadEvalReportToProjectFiles({
         request,
         ctx: createCtx("unused-public-key"),
         req,
         report,
         projectReference: "proj-1",
         reportPath: "evals/reports/deep-research/run_eval_report_http_without_writer.json",
-      });
-    } finally {
-      _resetEnvironmentConfig();
-    }
-  });
+      })));
   assertEquals(uploads, 1);
   assertEquals(
     path,
@@ -21093,6 +21092,382 @@ describe("project run required schema snapshot protocol", () => {
         outcome === "invalid" || outcome === "refused" ? ["ack"] : ["ack", "run"],
       );
       assertExists(result.response);
+    });
+  }
+});
+
+describe("project run API origin", () => {
+  const HOST_API_ORIGIN = "https://api.veryfront.com";
+  const ENV_FILE_API_ORIGIN = "https://93.184.216.34";
+
+  /** Run with an API origin that a project env file wrote into the process environment. */
+  async function withEnvFileApiOrigin<T>(run: () => Promise<T>): Promise<T> {
+    return await withEnv(
+      { VERYFRONT_API_BASE_URL: ENV_FILE_API_ORIGIN, VERYFRONT_API_URL: "" },
+      async () => {
+        markEnvFileValue("VERYFRONT_API_BASE_URL");
+        _resetEnvironmentConfig();
+        try {
+          return await run();
+        } finally {
+          clearEnvFileValueSource("VERYFRONT_API_BASE_URL");
+          _resetEnvironmentConfig();
+        }
+      },
+    );
+  }
+
+  function requestUrl(input: string | URL | Request): string {
+    return input instanceof Request ? input.url : String(input);
+  }
+
+  function assertHostApiOrigin(urls: string[]): void {
+    assertEquals(urls.length > 0, true, "the run must reach the API");
+    assertEquals(
+      urls.filter((url) => new URL(url).origin !== HOST_API_ORIGIN),
+      [],
+      "every API request uses the host-configured origin",
+    );
+  }
+
+  it("uploads an eval report to the host-configured API origin", async () => {
+    const urls: string[] = [];
+    await withEnvFileApiOrigin(() =>
+      withMockFetch((input) => {
+        urls.push(requestUrl(input));
+        return Promise.resolve(Response.json({ path: "evals/reports/report.json" }));
+      }, () =>
+        uploadEvalReportToProjectFiles({
+          request: {
+            runId: "run_eval_report_origin",
+            kind: "task",
+            target: "task:eval",
+            projectId: "proj-1",
+            config: { eval_id: "eval:deep-research" },
+          },
+          ctx: createCtx("unused-public-key"),
+          req: new Request(
+            "https://runtime.example.test/api/control-plane/runs/run_eval_report_origin/execute",
+            { headers: { "x-token": "runtime-token" } },
+          ),
+          report: {
+            kind: "eval-report",
+            runId: "run_eval_report_origin",
+            definitionId: "eval:deep-research",
+            targetKind: "agent",
+            target: "agent:researcher",
+            startedAt: "2026-09-30T10:00:00.000Z",
+            endedAt: "2026-09-30T10:00:01.000Z",
+            summary: { records: 1, passed: 1, failed: 0, passRate: 1, metrics: [] },
+            records: [],
+          },
+          projectReference: "proj-1",
+          reportPath: "evals/reports/report.json",
+        }))
+    );
+    assertHostApiOrigin(urls);
+  });
+
+  it("sends nothing when the host-configured API origin is not an approved transport", async () => {
+    let requests = 0;
+    let refusal: unknown;
+    await withEnv(
+      { VERYFRONT_API_BASE_URL: "ftp://api.example.test", VERYFRONT_API_URL: "" },
+      () =>
+        withMockFetch(() => {
+          requests++;
+          return Promise.resolve(Response.json({}));
+        }, async () => {
+          try {
+            await uploadEvalReportToProjectFiles({
+              request: {
+                runId: "run_eval_report_transport",
+                kind: "task",
+                target: "task:eval",
+                projectId: "proj-1",
+                config: { eval_id: "eval:deep-research" },
+              },
+              ctx: createCtx("unused-public-key"),
+              req: new Request(
+                "https://runtime.example.test/api/control-plane/runs/run_eval_report_transport/execute",
+                { headers: { "x-token": "runtime-token" } },
+              ),
+              report: {
+                kind: "eval-report",
+                runId: "run_eval_report_transport",
+                definitionId: "eval:deep-research",
+                targetKind: "agent",
+                target: "agent:researcher",
+                startedAt: "2026-09-30T10:00:00.000Z",
+                endedAt: "2026-09-30T10:00:01.000Z",
+                summary: { records: 1, passed: 1, failed: 0, passRate: 1, metrics: [] },
+                records: [],
+              },
+              projectReference: "proj-1",
+              reportPath: "evals/reports/report.json",
+            });
+          } catch (error) {
+            refusal = error;
+          }
+        }),
+    );
+    assertStringIncludes(refusal instanceof Error ? refusal.message : "not refused", "HTTPS");
+    assertEquals(requests, 0);
+  });
+
+  it("runs a dependency artifact build against the host-configured API origin", async () => {
+    const signed = await signedRequest(
+      "/api/control-plane/runs/run_dependency_artifact_origin/execute",
+      {
+        runId: "run_dependency_artifact_origin",
+        kind: "task",
+        target: "task:dependency-artifact-build",
+        projectId: "proj-1",
+        config: {
+          artifact_id: "11111111-1111-4111-8111-111111111111",
+          attempt_count: 1,
+          identity: {
+            origin_key: "npm:public",
+            package_name: "fixture-package",
+            exact_version: "1.2.3",
+            subpath: "",
+            target: "es2022",
+            profile: "standard-v1",
+          },
+          policy: { decision: "allow" },
+        },
+      },
+      { "x-token": "test-token" },
+    );
+    const urls: string[] = [];
+    await withEnvFileApiOrigin(() =>
+      withMockFetch(
+        (input) => {
+          const url = requestUrl(input);
+          if (url.startsWith("https://esm.sh/")) {
+            return Promise.resolve(
+              new Response("export const ready = true;", {
+                headers: { "Content-Type": "text/javascript" },
+              }),
+            );
+          }
+          urls.push(url);
+          return Promise.resolve(
+            Response.json(
+              url.endsWith("/result")
+                ? { accepted: true, state: "ready" }
+                : { stored: true, existed: false },
+            ),
+          );
+        },
+        () => new ProjectRunExecuteHandler().handle(signed.request, createCtx(signed.publicKeyPem)),
+      )
+    );
+    assertHostApiOrigin(urls);
+  });
+
+  it("runs a release asset build against the host-configured API origin", async () => {
+    const signed = await signedRequest(
+      "/api/control-plane/runs/run_release_asset_origin/execute",
+      {
+        runId: "run_release_asset_origin",
+        kind: "task",
+        target: "task:release-asset-build",
+        projectId: "proj-1",
+        config: { release_id: "release-1", release_version: 1 },
+      },
+      { "x-token": "test-token" },
+    );
+    const ctx = createCtx(signed.publicKeyPem);
+    ctx.config = {};
+    const urls: string[] = [];
+    await withEnvFileApiOrigin(() =>
+      withMockFetch((input) => {
+        urls.push(requestUrl(input));
+        return Promise.resolve(new Response("Not found", { status: 404 }));
+      }, () => new ProjectRunExecuteHandler().handle(signed.request, ctx))
+    );
+    assertHostApiOrigin(urls);
+  });
+
+  it("runs a style artifact build against the host-configured API origin", async () => {
+    const signed = await signedRequest(
+      "/api/control-plane/runs/run_style_origin/execute",
+      {
+        runId: "run_style_origin",
+        kind: "task",
+        target: "task:style-artifact-build",
+        projectId: "proj-1",
+        config: { environment_name: "Preview" },
+      },
+      { "x-token": "test-token" },
+    );
+    const { ctx } = createStyleArtifactCtx(signed.publicKeyPem, {
+      files: [{ path: "pages/index.tsx", content: "export default () => null;" }],
+      stylesheet: "@tailwind utilities;",
+      stylesheetPath: "src/styles.css",
+    });
+    const recorder = createStyleArtifactFetchRecorder();
+    const urls: string[] = [];
+    await withEnvFileApiOrigin(() =>
+      withMockFetch(
+        ((input: string | URL | Request, init?: RequestInit) => {
+          urls.push(requestUrl(input));
+          return recorder.fetch(input, init);
+        }) as typeof fetch,
+        () => new ProjectRunExecuteHandler().handle(signed.request, ctx),
+      )
+    );
+    assertHostApiOrigin(urls);
+  });
+
+  it("runs a durable eval against the host-configured API origin", async () => {
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      runTask: runTaskDefinition,
+      findEvalById: async () => ({
+        id: "eval:deep-research",
+        name: "Deep research quality",
+        filePath: "evals/deep-research.eval.ts",
+        exportName: "default",
+        definition: evalAgent({
+          id: "eval:deep-research",
+          target: "agent:researcher",
+          dataset: datasets.inline([{ id: "q1", input: "France capital?" }]),
+          metrics: [metrics.answer.contains({ text: "Paris" }).gate()],
+        }),
+      }),
+      runEval: runEvalDefinition,
+      createEvalAgentAdapter: (config) =>
+        createAgentServiceEvalAdapter({ ...config, requestTimeoutMs: 250 }),
+    }));
+    const signed = await signedRequest(
+      "/api/control-plane/runs/run_eval_origin/execute",
+      {
+        runId: "run_eval_origin",
+        canonicalRunId: "88888888-8888-4888-8888-888888888888",
+        kind: "task",
+        target: "task:eval",
+        projectId: "55555555-5555-4555-8555-555555555555",
+        runtimeAgUiEndpoint: "https://demo-project.preview.veryfront.org/api/ag-ui",
+        config: { eval_id: "eval:deep-research" },
+      },
+      { "x-token": "test-token" },
+      "https://veryfront.org",
+    );
+    const urls: string[] = [];
+    await withEnvFileApiOrigin(() =>
+      withMockFetch((input) => {
+        urls.push(requestUrl(input));
+        return Promise.resolve(new Response("Unavailable", { status: 503 }));
+      }, () =>
+        handler.handle(signed.request, {
+          ...createCtx(signed.publicKeyPem),
+          projectId: "55555555-5555-4555-8555-555555555555",
+        }))
+    );
+    assertHostApiOrigin(urls);
+  });
+});
+
+describe("runtime API client binary writes", () => {
+  type BinaryWriter = {
+    putBytes(path: string, bytes: Uint8Array, headers: Record<string, string>): Promise<unknown>;
+  };
+
+  /** Run `use` with the API client of a run and return the requests `use` sent. */
+  async function withBinaryWriter(use: (writer: BinaryWriter) => Promise<void>): Promise<string[]> {
+    const runId = "run_binary_write_paths";
+    const canonicalRunId = "11111111-1111-4111-8111-111111111111";
+    let writer: BinaryWriter | undefined;
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      createRuntimeOwnershipProbe: () => ({
+        createSession(input) {
+          writer = input.createCanonicalClient(
+            new AbortController().signal,
+          ) as unknown as BinaryWriter;
+          return undefined;
+        },
+      }),
+      executeKnowledgeIngest: async () => ({ success: true, result: {}, duration_ms: 1 }),
+    }));
+    const signed = await signedRequest(`/api/control-plane/runs/${runId}/execute`, {
+      runId,
+      canonicalRunId,
+      kind: "task",
+      target: "task:knowledge-ingest",
+      projectId: "proj-1",
+      runtimeTargetKind: "preview_branch",
+      runtimeTargetBranchId: "branch-preview",
+    }, {
+      "x-token": "test-runtime-bearer",
+      "x-veryfront-run-event-token": createProjectRunEventToken({
+        runId,
+        projectId: "proj-1",
+        canonicalRunId,
+      }),
+    });
+    let sent: string[] | undefined;
+    await withEnv(
+      { VERYFRONT_API_BASE_URL: "https://api.veryfront.com", VERYFRONT_API_URL: "" },
+      () =>
+        withMockFetch((input) => {
+          sent?.push(String(input));
+          return Promise.resolve(Response.json({}));
+        }, async () => {
+          await handler.handle(signed.request, createCtx(signed.publicKeyPem));
+          assertExists(writer, "the run must create its API client");
+          sent = [];
+          await use(writer);
+        }),
+    );
+    return sent ?? [];
+  }
+
+  it("sends a knowledge asset write as written", async () => {
+    const sent = await withBinaryWriter(async (writer) => {
+      await writer.putBytes(
+        "/projects/p/knowledge/assets/knowledge%2Fa..b.bin?branch_id=main",
+        new Uint8Array([1]),
+        {},
+      );
+    });
+    assertEquals(sent, [
+      "https://api.veryfront.com/projects/p/knowledge/assets/knowledge%2Fa..b.bin?branch_id=main",
+    ]);
+  });
+
+  for (
+    const path of [
+      "/projects/p/knowledge/assets/..",
+      "/projects/p/knowledge/assets/.",
+      "/projects/p/knowledge/assets/%2e%2e",
+      "/projects/p/knowledge/assets/%2E%2e?branch_id=main",
+      "/projects/../knowledge/assets/a.bin",
+      "/projects/p/knowledge/assets/a\\b.bin",
+      "/projects/p/knowledge/assets/a.bin\0",
+      "/projects/p/knowledge/assets/a.bin ",
+      "/projects/p/knowledge/assets/a b.bin",
+      "/projects/p/knowledge/assets/a\nb.bin",
+      "/projects/p/files/a.bin",
+      "/projects/p/branches/b/files/a.bin/draft",
+      "/projects/p/knowledge/assets/a/b.bin",
+      "/projects/p/knowledge/assets/a.bin#fragment",
+    ]
+  ) {
+    it(`refuses the binary write path ${JSON.stringify(path)} before sending`, async () => {
+      let refusal: unknown;
+      const sent = await withBinaryWriter(async (writer) => {
+        try {
+          await writer.putBytes(path, new Uint8Array([1]), {});
+        } catch (error) {
+          refusal = error;
+        }
+      });
+      assertStringIncludes(
+        refusal instanceof Error ? refusal.message : "not refused",
+        "knowledge asset",
+      );
+      assertEquals(sent, []);
     });
   }
 });

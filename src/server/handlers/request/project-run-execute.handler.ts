@@ -60,7 +60,6 @@ import {
   type SchemaValidationError,
 } from "#veryfront/schemas/validation-errors.ts";
 import { CONTROL_PLANE_RUNS_PATH_PREFIX } from "#veryfront/channels/control-plane.ts";
-import { getEnvironmentConfig } from "#veryfront/config";
 import {
   requireHostPrivateApiHttps,
   resolveHostOwnedSourceApiBaseUrl,
@@ -4272,6 +4271,41 @@ function requireCanonicalWriterHttps(apiUrl: string): string {
   return apiUrl;
 }
 
+/** API origin for requests made on behalf of a run: the one the host configured. */
+function resolveRunApiBaseUrl(): string {
+  return requireHostPrivateApiHttps(resolveHostOwnedSourceApiBaseUrl());
+}
+
+const KNOWLEDGE_ASSET_ROUTE = "/knowledge/assets/";
+
+/**
+ * A binary write targets one knowledge asset, and its path reaches the API as
+ * written. A path that URL parsing would rewrite is not sent.
+ */
+function isKnowledgeAssetWritePath(apiUrl: string, path: string): boolean {
+  if (!isRuntimeFileMutationRequest("PUT", path)) return false;
+  const projectEnd = ReflectApply(StringPrototypeIndexOf, path, [
+    "/",
+    "/projects/".length,
+  ]) as number;
+  const route = ReflectApply(StringPrototypeSlice, path, [
+    projectEnd,
+    projectEnd + KNOWLEDGE_ASSET_ROUTE.length,
+  ]) as string;
+  if (projectEnd < 0 || route !== KNOWLEDGE_ASSET_ROUTE) return false;
+  const queryStart = ReflectApply(StringPrototypeIndexOf, path, ["?"]) as number;
+  const pathname = queryStart < 0
+    ? path
+    : ReflectApply(StringPrototypeSlice, path, [0, queryStart]) as string;
+  let sentPathname: string;
+  try {
+    sentPathname = new URL(`${apiUrl}${path}`).pathname;
+  } catch {
+    return false;
+  }
+  return ReflectApply(StringPrototypeSlice, sentPathname, [-pathname.length]) === pathname;
+}
+
 function createRuntimeApiClient(
   req: Request,
   ctx: HandlerContext,
@@ -4282,14 +4316,13 @@ function createRuntimeApiClient(
   retainedChildWriterAuthority = false,
   authoritySurface: RuntimeOwnershipProbeAuthoritySurface = "current-generation",
 ): RuntimeApiClient {
-  // A client that may carry the current-attempt writer credential uses the
-  // host-owned HTTPS origin; project env files cannot select it, and a
-  // boot-configured HTTP API origin does not extend to this credential.
+  // Every client uses the host-owned API origin; project env files cannot
+  // select it. A client that may carry the current-attempt writer credential
+  // also requires HTTPS: a boot-configured HTTP API origin does not extend to
+  // that credential.
   const apiUrl = canonicalWriterAuthority
-    ? requireCanonicalWriterHttps(
-      requireHostPrivateApiHttps(resolveHostOwnedSourceApiBaseUrl()),
-    )
-    : getEnvironmentConfig().apiBaseUrl;
+    ? requireCanonicalWriterHttps(resolveRunApiBaseUrl())
+    : resolveRunApiBaseUrl();
   const token = retainedBearerToken ?? getRuntimeApiToken(req, ctx);
   // The execution request no longer carries the event token; it is retained
   // by the handler and passed in explicitly.
@@ -4363,7 +4396,7 @@ function createRuntimeApiClient(
       headers: Record<string, string>,
       options?: { signal?: AbortSignal },
     ): Promise<T> {
-      if (!/^\/projects\/[^/]+\/knowledge\/assets\/[^/?#]+(?:\?[^#]*)?$/.test(path)) {
+      if (!isKnowledgeAssetWritePath(apiUrl, path)) {
         throw INVALID_ARGUMENT.create({
           detail: "Binary writes require a scoped knowledge asset endpoint",
         });
@@ -5204,7 +5237,7 @@ function createEvalAdapterConfig(input: {
     if (managedEndpointContext && agentId) {
       return bindTrustedLocalEvalFetch(
         createDurableEvalAgentFetch({
-          apiBaseUrl: getEnvironmentConfig().apiBaseUrl,
+          apiBaseUrl: resolveRunApiBaseUrl(),
           authToken,
           projectId: input.request.projectId,
           parentRunId: resolveCanonicalEvalParentRunId(input.request),
@@ -5518,7 +5551,7 @@ async function executeReleaseAssetBuildRun(input: {
       "#veryfront/release-assets/css-compile.ts"
     );
 
-    const apiBaseUrl = getEnvironmentConfig().apiBaseUrl;
+    const apiBaseUrl = resolveRunApiBaseUrl();
     const token = getRuntimeApiToken(input.req, input.ctx);
     if (!token) throw INVALID_ARGUMENT.create({ detail: "Missing project runtime API token" });
 
@@ -5671,7 +5704,7 @@ async function executeDependencyArtifactBuildRun(input: {
       "#veryfront/platform/adapters/veryfront-api-client/client.ts"
     );
     const apiClient = new VeryfrontApiClient({
-      apiBaseUrl: getEnvironmentConfig().apiBaseUrl,
+      apiBaseUrl: resolveRunApiBaseUrl(),
       apiToken: token,
       projectSlug: input.ctx.projectSlug,
       projectId: input.ctx.projectId,
@@ -5918,7 +5951,7 @@ async function executeStyleArtifactBuildRun(input: {
     if (!token) throw INVALID_ARGUMENT.create({ detail: "Missing project runtime API token" });
 
     apiClient = new VeryfrontApiClient({
-      apiBaseUrl: getEnvironmentConfig().apiBaseUrl,
+      apiBaseUrl: resolveRunApiBaseUrl(),
       apiToken: token,
       projectSlug: projectReference,
       projectId: input.ctx.projectId,
