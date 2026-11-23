@@ -366,7 +366,7 @@ describe("isolated knowledge source origins", () => {
     }
   });
   it("retains an explicitly migrated old typed custom destination", async () => {
-    const root = await Deno.realPath(await Deno.makeTempDir());
+    const root = await Deno.realPath(await makeTempDir({ prefix: "veryfront-migrated-origin-" }));
     const cwd = Deno.cwd();
     try {
       Deno.chdir(root);
