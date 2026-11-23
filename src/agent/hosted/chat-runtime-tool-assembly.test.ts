@@ -3541,51 +3541,59 @@ for (const model of ["openai/gpt-5.4-nano", "anthropic/claude-sonnet-4-6"]) {
   });
 }
 
-Deno.test("prepareHostedChatRuntimeToolAssembly advertises load_skill's static schema to providers", async () => {
-  // The hosted load_skill validates with a union but advertises a static object
-  // schema through an `inputSchemaJson` getter. Materialization must keep that
-  // getter; regenerating the union yields a root without `properties`, which
-  // OpenAI-compatible providers reject with HTTP 400.
-  const advertised = {
-    type: "object",
-    properties: { inventory: { type: "object", properties: {} } },
-    additionalProperties: false,
-  } as const;
-  let reads = 0;
-  const platformLoadSkill: HostToolSet[string] = {
-    description: "Platform load skill",
-    inputSchema: getRuntimeLoadSkillToolInputSchema(),
-    get inputSchemaJson() {
-      reads++;
-      return advertised;
-    },
-    execute: () => ({ owner: "platform" }),
-  };
+for (const traced of [false, true]) {
+  Deno.test(`prepareHostedChatRuntimeToolAssembly advertises load_skill's static schema to providers (traced: ${traced})`, async () => {
+    // The hosted load_skill validates with a union but advertises a static object
+    // schema through an `inputSchemaJson` getter. Materialization must keep that
+    // getter; regenerating the union yields a root without `properties`, which
+    // OpenAI-compatible providers reject with HTTP 400.
+    const advertised = {
+      type: "object",
+      properties: { inventory: { type: "object", properties: {} } },
+      additionalProperties: false,
+    } as const;
+    let reads = 0;
+    const platformLoadSkill: HostToolSet[string] = {
+      description: "Platform load skill",
+      inputSchema: getRuntimeLoadSkillToolInputSchema(),
+      get inputSchemaJson() {
+        reads++;
+        return advertised;
+      },
+      execute: () => ({ owner: "platform" }),
+    };
 
-  const toolAssembly = await prepareHostedChatRuntimeToolAssembly({
-    sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
-    taskContext: {
-      authToken: "token",
-      projectId: "project-1",
-      model: "anthropic/claude-sonnet-4-6",
-      availableSkillIds: ["plan"],
-    },
-    instructions: "Base instructions",
-    localTools: canonicalPlatformHostTools(
-      withPlatformHostToolAliases(markTrustedHostToolSet({ load_skill: platformLoadSkill })),
-    ),
-    apiUrl: "https://api.example.com",
-    apiMcpUrl: "https://api.example.com/mcp",
-    allowedToolNames: ["veryfront__load_skill"],
-    createRemoteToolSource: remoteSourceFromConfig,
-    preloadLatestConversationUserText: false,
+    const toolAssembly = await prepareHostedChatRuntimeToolAssembly({
+      sourceIntegrationPolicy: unrestrictedSourceIntegrationPolicy,
+      taskContext: {
+        authToken: "token",
+        projectId: "project-1",
+        model: "anthropic/claude-sonnet-4-6",
+        availableSkillIds: ["plan"],
+      },
+      instructions: "Base instructions",
+      localTools: canonicalPlatformHostTools(
+        withPlatformHostToolAliases(markTrustedHostToolSet({ load_skill: platformLoadSkill })),
+      ),
+      apiUrl: "https://api.example.com",
+      apiMcpUrl: "https://api.example.com/mcp",
+      allowedToolNames: ["veryfront__load_skill"],
+      createRemoteToolSource: remoteSourceFromConfig,
+      preloadLatestConversationUserText: false,
+      // Production cloud chat always traces local tools.
+      ...(traced ? { traceLocalTools: { trace: (_name, operation) => operation() } } : {}),
+    });
+
+    const loader = toolAssembly.runtimeTools.veryfront__load_skill;
+    assertExists(loader);
+    // Every provider read must run the getter: its side effect refreshes
+    // reference authorization between model steps.
+    const beforeFirst = reads;
+    assertEquals(toolToProviderDefinition(loader).parameters, advertised);
+    const afterFirst = reads;
+    assertEquals(afterFirst > beforeFirst, true);
+    assertEquals(toolToProviderDefinition(loader).parameters, advertised);
+    assertEquals(reads > afterFirst, true);
+    assertEquals(await loader.execute({ inventory: {} }), { owner: "platform" });
   });
-
-  const loader = toolAssembly.runtimeTools.veryfront__load_skill;
-  assertExists(loader);
-  const before = reads;
-  const provider = toolToProviderDefinition(loader);
-  assertEquals(provider.parameters, advertised);
-  assertEquals(reads > before, true);
-  assertEquals(await loader.execute({ inventory: {} }), { owner: "platform" });
-});
+}
