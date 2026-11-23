@@ -1,4 +1,5 @@
 export { createCanonicalManagedBrokerService } from "./canonical-managed-service.ts";
+export { createCanonicalBrokerAuthorizer } from "./canonical-broker-authorization.ts";
 export {
   createManagedAgentBrokerIngress,
   type ManagedAgentBrokerIngressOptions,

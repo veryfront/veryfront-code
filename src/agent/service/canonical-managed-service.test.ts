@@ -47,7 +47,11 @@ async function fixture(
       runtimeTargetEnvironmentName: "Production",
     },
     agentEntrypoint: { path: "agents/selected.ts" },
-    credentials: { authToken: "api-auth-token", sourceAuthToken: "source-read-token" },
+    credentials: {
+      authToken: "api-auth-token",
+      sourceAuthToken: "source-read-token",
+      inferenceAuthToken: "inference-token",
+    },
   });
   if (negotiate) {
     Object.assign(body, {

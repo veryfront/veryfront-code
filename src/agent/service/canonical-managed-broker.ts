@@ -73,6 +73,11 @@ export function createCanonicalManagedBrokerHandler<T>(
       const sourceToken = authority.sourceAuthToken ??
         (sourceProject.projectId === run.project.projectId ? authority.apiAuthToken : undefined);
       if (!sourceToken) throw new BrokerIngressError(403, "BROKER_INGRESS_SCOPE_DENIED");
+      // A shared source cannot borrow ambient model authority from its host.
+      // The API supplies a separate inference credential for the consuming run.
+      if (sourceProject.projectId !== run.project.projectId && !authority.inferenceAuthToken) {
+        throw new BrokerIngressError(403, "BROKER_INGRESS_SCOPE_DENIED");
+      }
       const lifecycle = await getCanonicalRunStatus({
         apiUrl,
         authToken: authority.apiAuthToken,

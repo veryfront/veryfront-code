@@ -33,6 +33,7 @@ async function fixture(input: {
   cursor?: boolean;
   terminal?: boolean;
   sourceToken?: boolean;
+  inferenceToken?: boolean;
   mismatch?: boolean;
   apiStatus?: number;
   probeState?: boolean;
@@ -70,6 +71,7 @@ async function fixture(input: {
       : {}),
     credentials: {
       authToken: "api-auth-token",
+      ...(input.inferenceToken === false ? {} : { inferenceAuthToken: "inference-token" }),
       ...(input.sourceToken === false ? {} : { sourceAuthToken: "source-read-token" }),
     },
   });
@@ -354,6 +356,18 @@ describe("canonical managed broker preparation", () => {
       await result.close();
     }
     assertEquals(result.cleaned, 1);
+  });
+
+  it("refuses a shared run without consuming inference authority before preparation", async () => {
+    const result = await fixture({ stream: true, inferenceToken: false });
+    try {
+      assertEquals(result.response.status, 403);
+      assertEquals(result.prepared, 0);
+      assertEquals(result.started, undefined);
+      assertEquals(result.calls, []);
+    } finally {
+      await result.close();
+    }
   });
 
   it("reads execution lifecycle with execution authority before constructing persistence", async () => {
