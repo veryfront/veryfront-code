@@ -57,7 +57,8 @@ import { prepareHostedChatRuntimeCreationOptions } from "./chat-preparation.ts";
 import { buildHostedChatRequestForwardedPropsFromRuntimeAgentInvocation } from "./chat-request.ts";
 import { parseRuntimeAgentRunInvocationValue } from "../runtime/agent-invocation-contract.ts";
 import { buildVeryfrontCloudRuntimeInstructions } from "./cloud-runtime-system-messages.ts";
-import { withPlatformHostToolAliases } from "../platform-host-tools.ts";
+import { canonicalPlatformHostTools, withPlatformHostToolAliases } from "../platform-host-tools.ts";
+import { prepareHostedChatRuntimeToolAssembly } from "./chat-runtime-tool-assembly.ts";
 import { markRuntimeProviderSchemaHiddenTool } from "../runtime/local-tool.ts";
 import { scriptedModel } from "../runtime/model-runtime.test-helpers.ts";
 import {
@@ -3021,3 +3022,95 @@ it("forwards the caller's alias through hosted runtime scoping, so a gated tool 
   }]);
   assertEquals(asked, ["payments_transfer"]);
 });
+
+for (const traced of [false, true]) {
+  Deno.test(`fully scoped hosted load_skill advertises properties and refreshes authority every step (traced: ${traced})`, async () => {
+    // Mirrors default-chat-runtime: platform aliases, tool assembly (traced in
+    // production), then scopeHostedRuntimeTools. Wrappers may copy the advertised
+    // schema as data, so each per-step catalog build must still refresh
+    // load_skill's private reference authorization.
+    const builtinSkillIds = ["writer"];
+    let bodyReads = 0;
+    const loadSkill = createRuntimeLoadSkillTool({
+      context: { projectId: "project-1", authToken: "token", branchId: "branch-1" },
+      skillsDir: "/skills",
+      projectSkillLoader: {
+        listProjectSkillReferences: () => Promise.resolve([]),
+        loadProjectSkill: () => Promise.resolve(null),
+        loadProjectSkillReference: () => Promise.resolve(null),
+      },
+      builtinSkillIds,
+      builtinStore: {
+        readSkill: () => {
+          bodyReads += 1;
+          return Promise.resolve("# Writer");
+        },
+        readReferenceFile: () => Promise.resolve("secret"),
+        listReferences: () => Promise.resolve(["references/secret.md"]),
+      },
+    });
+    const taskContext = {
+      authToken: "token",
+      projectId: "project-1",
+      branchId: null,
+      model: "test/model",
+    };
+    const toolAssembly = await prepareHostedChatRuntimeToolAssembly({
+      sourceIntegrationPolicy: { schemaVersion: 1, mode: "unrestricted" },
+      taskContext: { ...taskContext, availableSkillIds: ["writer"] },
+      instructions: "Base instructions",
+      localTools: canonicalPlatformHostTools(
+        withPlatformHostToolAliases(markTrustedHostToolSet({ load_skill: loadSkill })),
+      ),
+      apiUrl: "https://api.example.com",
+      apiMcpUrl: "https://api.example.com/mcp",
+      allowedToolNames: ["veryfront__load_skill"],
+      createRemoteToolSource: emptyRemoteSource,
+      preloadLatestConversationUserText: false,
+      ...(traced ? { traceLocalTools: { trace: (_name, operation) => operation() } } : {}),
+    });
+    const scoped = scopeHostedRuntimeTools({
+      tools: toolAssembly.runtimeTools,
+      taskContext,
+      cloudContext: {
+        apiBaseUrl: "https://api.example.com",
+        apiToken: "token",
+        serviceLayer: "cloud",
+      },
+    });
+    const loader = scoped.veryfront__load_skill;
+    assertExists(loader);
+    const modelStep = async () => {
+      const definitions = await getAvailableTools(scoped, {
+        includeSkillTools: true,
+        includeIntegrationTools: false,
+        strictConfiguredToolsOnly: true,
+      });
+      const definition = definitions.find((entry) => entry.name === "veryfront__load_skill");
+      assertExists(definition);
+      const parameters = definition.parameters as Record<string, unknown>;
+      assertEquals(parameters.type, "object");
+      assertEquals(typeof parameters.properties, "object");
+      assertEquals(Object.hasOwn(parameters, "anyOf"), false);
+    };
+    const context = { toolCallId: "call-1" };
+
+    await modelStep();
+    await loader.execute({ skillId: "writer" }, context);
+    assertEquals(bodyReads, 1);
+    // Inventory ABA between model steps must invalidate cached reference authorization.
+    builtinSkillIds[0] = "other";
+    await modelStep();
+    builtinSkillIds[0] = "writer";
+    await modelStep();
+    assertEquals(
+      await loader.execute({ skillId: "writer", file: "references/secret.md" }, context),
+      {
+        skillId: "writer",
+        file: "references/secret.md",
+        content: "secret",
+      },
+    );
+    assertEquals(bodyReads, 2);
+  });
+}

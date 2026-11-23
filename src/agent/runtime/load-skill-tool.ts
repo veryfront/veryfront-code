@@ -2248,7 +2248,9 @@ export function createRuntimeLoadSkillTool(
       inputSchema: runtimeLoadSkillToolInputSchema,
       get inputSchemaJson() {
         // Keep refreshing the private reference-authorization scope on schema
-        // access (its side effect is relied upon), but advertise the STATIC
+        // access (its side effect is relied upon; the per-step catalog build also
+        // refreshes it through loader provenance, so wrappers that copy this
+        // schema as plain data stay safe), but advertise the STATIC
         // generic schema so the tool definition is byte-identical across projects
         // (shared cache prefix, RFC 0001). The runtime validation schema is
         // still used for `.parse()` validation at execution, so all runtime
@@ -2260,5 +2262,6 @@ export function createRuntimeLoadSkillTool(
       execute,
     },
     "operation",
+    { refreshAuthority: () => void refreshPrivateAuthorityScope() },
   );
 }
