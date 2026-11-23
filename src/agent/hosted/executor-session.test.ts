@@ -197,7 +197,13 @@ function fixture(overrides: Partial<HostedExecutorSessionOptions> = {}) {
 }
 
 describe("hosted executor session", () => {
-  for (const cause of ["request cancellation", "lease expiration"] as const) {
+  for (
+    const cause of [
+      "request cancellation",
+      "lease expiration",
+      "lease expiration after stream",
+    ] as const
+  ) {
     it(`retains canonical SSE finalization ownership through real session ${cause}`, async () => {
       const controller = new AbortController();
       const boundSource = { type: "release" as const, releaseId: request.source.releaseId };
@@ -268,6 +274,7 @@ describe("hosted executor session", () => {
         runtimeKind: "framework",
         accepted: false,
         settled: session.settled,
+        signal: session.signal,
         runOwned: session.runOwned.bind(session),
         close: session.close.bind(session),
         accept(value) {
@@ -282,6 +289,10 @@ describe("hosted executor session", () => {
                 return (async function* () {
                   yield { type: "start", messageId: "assistant-message" } as const;
                   entered.resolve();
+                  if (cause === "lease expiration after stream") {
+                    f.time.advanceBy(1000);
+                    return;
+                  }
                   if (!session.signal.aborted) {
                     await new Promise<void>((resolve) =>
                       session.signal.addEventListener("abort", () => resolve(), { once: true })
@@ -335,9 +346,13 @@ describe("hosted executor session", () => {
           clearTimeout(timer);
         }
         if (cause === "request cancellation") controller.abort();
-        else f.time.advanceBy(1000);
+        else if (cause === "lease expiration") f.time.advanceBy(1000);
         await assertRejects(() => session.runOwned(() => Promise.resolve()));
-        await reading;
+        const wire = await reading;
+        if (cause === "lease expiration after stream") {
+          assert(!wire.includes("event: RunFinished"));
+          assert(wire.includes("event: RunError"));
+        }
         await handler.close();
         assertEquals(finishes, [false]);
         assertEquals(terminalWrites, [cause === "request cancellation" ? "cancelled" : "failed"]);

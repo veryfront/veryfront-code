@@ -186,6 +186,7 @@ async function fixture(input: {
             definition: { id: "builder", name: "Builder", description: "", instructions: "Work" },
             modelId: value.installation.grant.defaultModelId,
             runtimeKind: "framework",
+            signal: new AbortController().signal,
             accepted: false,
             settled: settled.promise,
             runOwned: (operation) => operation(),

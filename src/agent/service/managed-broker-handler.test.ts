@@ -992,6 +992,7 @@ function runtimeFixture(
     definition: { id: "builder", name: "Builder", description: "Builds", instructions: "Work" },
     modelId: "veryfront-cloud/openai/synthetic",
     runtimeKind: "framework",
+    signal: new AbortController().signal,
     accepted: false,
     settled: settled.promise,
     runOwned: (operation) => operation(),

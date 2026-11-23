@@ -360,7 +360,10 @@ export default tool({ id: "project_probe", description: "Inspect approved data",
       );
       let raw = "";
       for await (const chunk of request) raw += chunk;
-      const data = JSON.parse(raw);
+      // Canonical cancellation intentionally has no JSON body.
+      const cancellation = request.url === `/runs/${canonicalRunId}/cancel`;
+      if (cancellation) assertEquals(raw, "");
+      const data = cancellation ? {} : JSON.parse(raw);
       for (const canary of canaries) {
         assert(!raw.includes(canary), "Credential entered persistence data");
       }
@@ -1052,7 +1055,7 @@ export default tool({ id: "project_probe", description: "Inspect approved data",
         ),
       );
     }
-    assertEquals(apiErrors, []);
+    assertEquals(apiErrors.map((error) => String(error)), []);
     if (kind === "kill") assertEquals(exit.signal, "SIGKILL");
     else assertEquals(exit.code, 0);
     if (mode === "detached") {
@@ -1071,9 +1074,13 @@ export default tool({ id: "project_probe", description: "Inspect approved data",
     } else {
       assertEquals(
         completions.length,
-        0,
-        "SSE persistence is owned by the stream consumer",
+        1,
+        "The broker must persist exactly one SSE terminal update",
       );
+      assertEquals(completions[0].status, kind === "disconnect" ? "cancelled" : "completed");
+      if (kind !== "disconnect") {
+        assert(JSON.stringify(persisted).includes("Host tool completed."));
+      }
       if (kind === "sse" || directAgUi) {
         assertEquals(
           wire.split("\n").filter((line) => line === "event: RunFinished")

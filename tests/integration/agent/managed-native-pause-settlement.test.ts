@@ -45,6 +45,7 @@ for (const mode of ["durable", "signed", "signed-sse"] as const) {
         definition: { id: "builder", name: "Builder", description: "Test", instructions: "Test" },
         modelId: "veryfront-cloud/openai/synthetic",
         runtimeKind: "framework",
+        signal: session.signal,
         accepted: false,
         settled: settled.promise,
         runOwned: (operation) => operation(),

@@ -664,18 +664,26 @@ async function createSseResponse(input: {
         let finalizationFailed = false;
         let finalizationError: unknown;
         try {
+          const paused = hasHostedAgentPauseStopped(input.runtime);
+          const sessionStopped = input.runtime.signal.aborted;
+          const terminalFailure = failure ??
+            (sessionStopped
+              ? input.runtime.signal.reason ?? new Error("Executor session stopped")
+              : undefined);
           if (input.finishOutput) {
-            const paused = hasHostedAgentPauseStopped(input.runtime);
             await input.finishOutput({
               completed: !paused && natural && reason === "completed" &&
-                !input.requestSignal.aborted,
+                !input.requestSignal.aborted && !sessionStopped,
               ...(paused ? { paused: true as const } : {}),
               ...(!paused && terminalOutput !== undefined ? { output: terminalOutput } : {}),
-              ...(paused || failure === undefined || input.requestSignal.aborted
+              ...(paused || terminalFailure === undefined || input.requestSignal.aborted
                 ? {}
-                : { error: failure }),
+                : { error: terminalFailure }),
               ...(terminalMetadata ? { metadata: terminalMetadata } : {}),
             });
+          }
+          if (sessionStopped && !paused && !input.requestSignal.aborted) {
+            throw terminalFailure;
           }
         } catch (error) {
           finalizationFailed = true;
