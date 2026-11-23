@@ -2162,64 +2162,71 @@ describe("broker-local trusted runtime", () => {
     assert(f.projectWire.includes('"projectContext"'));
   });
 
-  it("uses broker-owned credentials for managed hosted knowledge without sending them to the project executor", async () => {
-    const requestedUrls: string[] = [];
-    const authorizationHeaders: string[] = [];
-    const f = trustedFixture(undefined, false, undefined, undefined, undefined, {
-      knowledge: true,
-    });
-    assert(f.input.trustedRuntime);
-    f.input.trustedRuntime.projectToolNames = [];
-    f.input.trustedRuntime.hostedKnowledgeAuthToken = "broker-knowledge-token";
-    f.input.installation.grant.allowedToolNames = ["veryfront__search_knowledge"];
-    f.input.installation.grant.execution.branchId = "feature-x";
-    f.input.tools.catalog = new Map([["veryfront__search_knowledge", {}]]);
-    f.input.model.resolver = () =>
-      scriptedModel([
-        {
-          toolCalls: [{
-            id: "knowledge-call",
-            name: "veryfront__search_knowledge",
-            input: { query: "managed needle" },
-          }],
+  for (const separateExecutionProject of [false, true]) {
+    it(`uses source knowledge without exposing credentials (separate execution: ${separateExecutionProject})`, async () => {
+      const requestedUrls: string[] = [];
+      const authorizationHeaders: string[] = [];
+      const f = trustedFixture(undefined, false, undefined, undefined, {
+        owner,
+        projectId: separateExecutionProject
+          ? "22222222-2222-4222-8222-222222222222"
+          : owner.projectId,
+      }, {
+        knowledge: true,
+      });
+      assert(f.input.trustedRuntime);
+      f.input.trustedRuntime.projectToolNames = [];
+      f.input.trustedRuntime.hostedKnowledgeAuthToken = "broker-knowledge-token";
+      f.input.installation.grant.allowedToolNames = ["veryfront__search_knowledge"];
+      f.input.installation.grant.execution.branchId = "feature-x";
+      f.input.tools.catalog = new Map([["veryfront__search_knowledge", {}]]);
+      f.input.model.resolver = () =>
+        scriptedModel([
+          {
+            toolCalls: [{
+              id: "knowledge-call",
+              name: "veryfront__search_knowledge",
+              input: { query: "managed needle" },
+            }],
+          },
+          { text: "done" },
+        ], { only: "stream" });
+
+      await runWithKnowledgeApiTransport(
+        async (input: RequestInfo | URL, init?: RequestInit) => {
+          const request = input instanceof Request ? input : new Request(input, init);
+          requestedUrls.push(request.url);
+          authorizationHeaders.push(request.headers.get("authorization") ?? "");
+          return Response.json({
+            data: [{
+              id: "file-1",
+              version_id: "version-1",
+              path: "knowledge/support.md",
+              content: "Managed hosted knowledge needle.",
+              type: "file",
+              size: 32,
+              updated_at: "2026-01-01T00:00:00.000Z",
+            }],
+            page_info: { self: null, first: null, next: null, prev: null },
+          });
         },
-        { text: "done" },
-      ], { only: "stream" });
+        async () => {
+          const events = await drainTrustedFixture(f);
+          assert(events.some((event) => event.type === "finish"));
+        },
+      );
 
-    await runWithKnowledgeApiTransport(
-      async (input: RequestInfo | URL, init?: RequestInit) => {
-        const request = input instanceof Request ? input : new Request(input, init);
-        requestedUrls.push(request.url);
-        authorizationHeaders.push(request.headers.get("authorization") ?? "");
-        return Response.json({
-          data: [{
-            id: "file-1",
-            version_id: "version-1",
-            path: "knowledge/support.md",
-            content: "Managed hosted knowledge needle.",
-            type: "file",
-            size: 32,
-            updated_at: "2026-01-01T00:00:00.000Z",
-          }],
-          page_info: { self: null, first: null, next: null, prev: null },
-        });
-      },
-      async () => {
-        const events = await drainTrustedFixture(f);
-        assert(events.some((event) => event.type === "finish"));
-      },
-    );
-
-    assertEquals(f.executions, 0);
-    assertEquals(authorizationHeaders, ["Bearer broker-knowledge-token"]);
-    assertEquals(requestedUrls.length, 1);
-    assertStringIncludes(
-      requestedUrls[0] ?? "",
-      `/projects/${owner.projectId}/releases/release-test/files`,
-    );
-    assertEquals(f.projectWire.includes("broker-knowledge-token"), false);
-    assertEquals(f.projectWire.includes('"authToken"'), false);
-  });
+      assertEquals(f.executions, 0);
+      assertEquals(authorizationHeaders, ["Bearer broker-knowledge-token"]);
+      assertEquals(requestedUrls.length, 1);
+      assertStringIncludes(
+        requestedUrls[0] ?? "",
+        `/projects/${owner.projectId}/releases/release-test/files`,
+      );
+      assertEquals(f.projectWire.includes("broker-knowledge-token"), false);
+      assertEquals(f.projectWire.includes('"authToken"'), false);
+    });
+  }
 
   it("fails closed for managed hosted knowledge without a broker-owned credential", async () => {
     let requests = 0;

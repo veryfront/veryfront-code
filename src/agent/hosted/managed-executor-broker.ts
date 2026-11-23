@@ -464,6 +464,11 @@ function snapshotHostedKnowledgeContext(
   installation: ExecutorRuntimeInstall,
   execution: Extract<ExecutorRuntimeInstall["grant"]["execution"], { kind: "canonical" }>,
 ): HostedKnowledgeExecutionContext | undefined {
+  const projectOwnedSource = installation.owner.scopeKind === "project";
+  const sourceProjectId = installation.owner.scopeKind === "project"
+    ? installation.owner.projectId
+    : execution.projectId;
+  const sameProject = sourceProjectId?.toLowerCase() === execution.projectId?.toLowerCase();
   const hostedKnowledgeContext = typeof input.hostedKnowledgeAuthToken === "string" &&
       input.hostedKnowledgeAuthToken
     ? {
@@ -471,9 +476,13 @@ function snapshotHostedKnowledgeContext(
       ...(typeof input.hostedKnowledgeApiUrl === "string" && input.hostedKnowledgeApiUrl
         ? { apiUrl: input.hostedKnowledgeApiUrl }
         : {}),
-      ...(execution.projectId === null ? {} : { projectId: execution.projectId }),
-      ...(execution.projectSlug === undefined ? {} : { projectSlug: execution.projectSlug }),
-      ...(execution.branchId === undefined ? {} : { branch: execution.branchId }),
+      ...(sourceProjectId === null ? {} : { projectId: sourceProjectId }),
+      ...(sameProject && execution.projectSlug !== undefined
+        ? { projectSlug: execution.projectSlug }
+        : {}),
+      ...(!projectOwnedSource && execution.branchId !== undefined
+        ? { branch: execution.branchId }
+        : {}),
       ...(installation.source.type === "release"
         ? { productionMode: true, releaseId: installation.source.releaseId }
         : {
