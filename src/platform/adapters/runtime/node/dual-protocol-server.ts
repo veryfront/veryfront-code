@@ -13,12 +13,45 @@ const socketHasInstance = Function.prototype[Symbol.hasInstance];
 const setAdd = Set.prototype.add;
 const setDelete = Set.prototype.delete;
 const setForEach = Set.prototype.forEach;
+const defineProperty = Object.defineProperty;
 
 function isSocket(value: unknown): value is Socket {
   return apply(socketHasInstance, Socket, [value]);
 }
 
 const HTTP2_PREFACE = new TextEncoder().encode("PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n");
+
+type SniffedSocket = Socket & { _handle?: { _consumed?: boolean } | null };
+
+/**
+ * Keep the JS stream as the only reader of a sniffed HTTP/1 connection.
+ *
+ * node:http attaches its native parser straight to a stream-base handle
+ * (`parser.consume(handle)`) unless that handle is already marked consumed.
+ * The sniffed prefix was read through the JS stream and unshifted back into
+ * it, so a native consumer would parse later bytes before that prefix. On a
+ * request whose bytes span several reads, the parser then sees body bytes as a
+ * request line and node:http answers a bare `400 Bad Request` before any
+ * handler runs. Marking the handle keeps node:http on socket `data` events,
+ * which deliver the unshifted prefix first. The h2c session already reads
+ * through `data` events.
+ *
+ * The flag is defined as an own data property through a captured intrinsic:
+ * plain assignment would run any `_consumed` setter that project code
+ * installed on the shared handle prototype, exposing the raw connection.
+ * Verified against the node:http bundled with Deno 2.9.7; re-check this
+ * contract (and its wire regression) whenever the pinned Deno changes.
+ */
+function keepJsStreamReader(socket: SniffedSocket): void {
+  const handle = socket._handle;
+  if (!handle) return;
+  defineProperty(handle, "_consumed", {
+    value: true,
+    writable: true,
+    enumerable: true,
+    configurable: true,
+  });
+}
 
 /**
  * Public Node transports sharing Deno's existing cleartext HTTP/1 + h2c port.
@@ -97,7 +130,10 @@ export class DualProtocolServer extends HttpServer {
       cleanup();
       socket.unshift(bytes);
       if (matches) this.http2.emit("connection", socket);
-      else apply(emitHttpServerEvent, this, ["connection", socket]);
+      else {
+        keepJsStreamReader(socket);
+        apply(emitHttpServerEvent, this, ["connection", socket]);
+      }
       socket.resume();
     };
     socket.on("data", data);
