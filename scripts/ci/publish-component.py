@@ -15,6 +15,7 @@ import json
 import os
 from pathlib import Path
 import re
+import ssl
 import subprocess
 import sys
 import tarfile
@@ -261,7 +262,7 @@ def witness_when_ready(version,env,read_public=public_json,read_source=source_js
                 continue
             if error.code<500:raise
             failure=error
-        except (URLError,TimeoutError,ConnectionError,HTTPException,TransientRead) as error:
+        except (URLError,TimeoutError,ConnectionError,ssl.SSLError,HTTPException,TransientRead) as error:
             failure=error
         transient+=1
         delay=min(TRANSIENT_DELAYS[transient-1] if transient<=len(TRANSIENT_DELAYS) else 0,deadline-clock())

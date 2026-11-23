@@ -6,6 +6,7 @@ import importlib.util
 import io
 import json
 from pathlib import Path
+import ssl
 import subprocess
 import sys
 import tarfile
@@ -289,7 +290,8 @@ class ReleaseReadinessTests(unittest.TestCase):
     def test_transient_server_and_transport_failures_are_retried(self):
         failures={'server':lambda url:HTTPError(url,502,'Bad Gateway',{},None),
                   'transport':lambda url:URLError('connection reset'),
-                  'timeout':lambda url:TimeoutError('timed out')}
+                  'timeout':lambda url:TimeoutError('timed out'),
+                  'tls read':lambda url:ssl.SSLEOFError(8,'EOF occurred in violation of protocol')}
         for name,failure in failures.items():
             facts=Facts();attempts=[];elapsed=[0];log=io.StringIO()
             def public(url):
