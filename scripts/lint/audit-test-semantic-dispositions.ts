@@ -41,10 +41,25 @@ async function main(): Promise<void> {
     boolean: ["json"],
     default: { json: false },
   });
-  const result = await collectSemanticAuditCandidates({
-    root: ".",
-    dispositions: TEST_SEMANTIC_AUDIT_MIGRATION_ENTRIES,
-  });
+  // A test-layout discovery failure stays fatal, but it is reported like any
+  // other audit error so that --json still prints one parseable report.
+  let result: Pick<
+    Awaited<ReturnType<typeof collectSemanticAuditCandidates>>,
+    "consideredFiles" | "candidates" | "errors"
+  >;
+  try {
+    result = await collectSemanticAuditCandidates({
+      root: ".",
+      dispositions: TEST_SEMANTIC_AUDIT_MIGRATION_ENTRIES,
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    result = {
+      consideredFiles: 0,
+      candidates: [],
+      errors: [`semantic audit discovery failed: ${message}`],
+    };
+  }
   let baselineErrors: readonly string[];
   try {
     baselineErrors = compareSemanticDispositionBaseline(
