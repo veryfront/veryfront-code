@@ -1,3 +1,4 @@
+import { readIngressCredential } from "#veryfront/security/http/ingress-credentials.ts";
 import { createPublicKey, verify as verifySignature } from "node:crypto";
 import { Buffer as NativeBuffer } from "node:buffer";
 import { filterPrivateArray, somePrivateArray } from "#veryfront/security/private-array.ts";
@@ -561,7 +562,7 @@ export function getHostedServiceTokenFromRequest(request: Request): string | nul
     | null;
   if (cookieMatch?.[1]) return cookieMatch[1];
 
-  const authHeader = readRequestHeader(request, "authorization");
+  const authHeader = readIngressCredential(request, "authorization");
   if (authHeader && ReflectApply(StringStartsWith, authHeader, ["Bearer "])) {
     return ReflectApply(StringSlice, authHeader, [7]) as string;
   }

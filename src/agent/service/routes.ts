@@ -1,3 +1,4 @@
+import { inheritIngressCredentials } from "#veryfront/security/http/ingress-credentials.ts";
 import {
   revokeHostedPlatformDependencies,
   runWithHostedPlatformDependencies,
@@ -644,11 +645,10 @@ export function createHostedAgentServiceRouteSet<TExecution extends object>(
         );
         if (isResponseLike(boundedRequest)) return boundedRequest;
         controlRequest = boundedRequest;
-        const authenticationRequest = IntrinsicReflectApply(
-          RequestClone,
+        const authenticationRequest = inheritIngressCredentials(
           controlRequest,
-          [],
-        ) as Request;
+          IntrinsicReflectApply(RequestClone, controlRequest, []) as Request,
+        );
         const authenticatedRequest = await authenticateAgUiRequest(authenticationRequest)
           .finally(() => cancelUnusedRequestBody(authenticationRequest));
         if (!isSafeHostedJwtVerificationEnvironment(authenticatedRequest)) {
