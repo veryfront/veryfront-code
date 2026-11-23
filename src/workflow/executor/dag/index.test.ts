@@ -21,6 +21,7 @@ import {
   assertStringIncludes,
 } from "#veryfront/testing/assert.ts";
 import { beforeEach, describe, it } from "#veryfront/testing/bdd.ts";
+import { FakeTime } from "#std/testing/time";
 import { DAGExecutor } from "./index.ts";
 import { toPersistedNodeStates } from "./loop-node-strategy.ts";
 import { prepareNodeStatesUserData } from "../../context-serialization.ts";
@@ -10358,22 +10359,36 @@ describe("DAGExecutor", () => {
         } as any,
       }];
 
-      let result;
-      let watchdogId: ReturnType<typeof setTimeout> | undefined;
+      // Fake time drives the timeout and the grace period, so a stalled event
+      // loop cannot make the attempt look as if it never stopped.
+      using time = new FakeTime();
+      const advance = async (ms: number) => {
+        time.tick(ms);
+        await time.runMicrotasks();
+      };
+      let result: Awaited<ReturnType<DAGExecutor["execute"]>> | undefined;
       try {
-        result = await Promise.race([
-          exec.execute(nodes, createTestRun()),
-          new Promise<never>((_, reject) =>
-            watchdogId = setTimeout(
-              () => reject(new Error("Composite execution did not stop after timeout")),
-              100,
-            )
-          ),
-        ]);
+        const execution = exec.execute(nodes, createTestRun()).then((settled) => {
+          result = settled;
+        });
+        // Let the attempt start and arm its timeout before time moves.
+        await time.runMicrotasks();
+        assertEquals(attempts, 1);
+
+        await advance(4);
+        assertEquals(result, undefined, "the attempt must run until its timeout");
+        await advance(1);
+        assertEquals(result, undefined, "a timed-out attempt gets its grace period");
+        await advance(4);
+        assertEquals(result, undefined, "the grace period must run in full");
+        await advance(1);
+        if (result === undefined) {
+          throw new Error("Composite execution did not stop after its timeout and grace period");
+        }
+        await execution;
       } finally {
-        if (watchdogId !== undefined) clearTimeout(watchdogId);
         operation.resolve(false);
-        await new Promise((resolve) => setTimeout(resolve, 0));
+        await time.runMicrotasks();
       }
 
       assertEquals(result.completed, false);
