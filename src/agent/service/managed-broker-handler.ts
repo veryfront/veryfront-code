@@ -437,7 +437,32 @@ function createManagedBrokerIngressHandler<TIngress>(options: {
           },
         });
         admissionSettled = runtime.settled;
+        const sseFinalization = options.responseMode === "sse" && prepared.output
+          ? retainManagedBrokerOutputFinalization(runtime, prepared.output)
+          : undefined;
+        const refuseRuntime = async (error: unknown): Promise<never> => {
+          let failure = error;
+          try {
+            await sseFinalization?.finish({ completed: false, error });
+          } catch (terminalError) {
+            failure = new AggregateError(
+              [error, terminalError],
+              "Managed SSE setup and finalization failed",
+            );
+          }
+          try {
+            await runtime.close("canceled");
+          } catch (closeError) {
+            failure = new AggregateError(
+              [failure, closeError],
+              "Managed runtime retirement failed",
+            );
+          }
+          void retire(runtime.settled).catch(() => {});
+          throw failure;
+        };
         try {
+          await sseFinalization?.ready;
           runtime.accept(
             options.responseMode === "detached"
               ? { kind: "execution", signal: prepared.executionSignal }
@@ -445,9 +470,7 @@ function createManagedBrokerIngressHandler<TIngress>(options: {
           );
           activeRun.accepted = true;
         } catch (error) {
-          await runtime.close("canceled").catch(() => {});
-          void retire(runtime.settled).catch(() => {});
-          throw error;
+          return await refuseRuntime(error);
         }
         if (options.responseMode === "sse") {
           try {
@@ -457,6 +480,7 @@ function createManagedBrokerIngressHandler<TIngress>(options: {
               messages: prepared.messages,
               requestSignal: request.signal,
               output: prepared.output,
+              finishOutput: sseFinalization?.finish,
               runId,
               ...parsed.stream,
               onSettled: async () => {
@@ -474,9 +498,7 @@ function createManagedBrokerIngressHandler<TIngress>(options: {
               },
             });
           } catch (error) {
-            await runtime.close("canceled").catch(() => {});
-            void retire(runtime.settled).catch(() => {});
-            throw error;
+            return await refuseRuntime(error);
           }
         }
         const execution = runDetached(
@@ -581,11 +603,35 @@ function buildManagedBrokerMessageMetadata(
   });
 }
 
+type ManagedOutputOutcome = Parameters<ManagedBrokerOutput["finish"]>[0];
+
+/** Reserve terminal IO before request ownership can stop the executor session. */
+function retainManagedBrokerOutputFinalization(
+  runtime: ManagedExecutorRuntime,
+  output: ManagedBrokerOutput,
+) {
+  const request = Promise.withResolvers<ManagedOutputOutcome>();
+  const ready = Promise.withResolvers<void>();
+  const owned = runtime.runOwned(async () => {
+    ready.resolve();
+    await output.finish(await request.promise);
+  });
+  void owned.catch(ready.reject);
+  return {
+    ready: ready.promise,
+    finish(outcome: ManagedOutputOutcome) {
+      request.resolve(outcome);
+      return owned;
+    },
+  };
+}
+
 async function createSseResponse(input: {
   runtime: ManagedExecutorRuntime;
   messages: HostedChatRuntimeStreamInput["messages"];
   requestSignal: AbortSignal;
   output?: ManagedBrokerOutput;
+  finishOutput?: (outcome: ManagedOutputOutcome) => Promise<void>;
   runId: string;
   threadId: string;
   agentId: string;
@@ -618,21 +664,18 @@ async function createSseResponse(input: {
         let finalizationFailed = false;
         let finalizationError: unknown;
         try {
-          if (input.output) {
-            const output = input.output;
+          if (input.finishOutput) {
             const paused = hasHostedAgentPauseStopped(input.runtime);
-            await input.runtime.runOwned(() =>
-              output.finish({
-                completed: !paused && natural && reason === "completed" &&
-                  !input.requestSignal.aborted,
-                ...(paused ? { paused: true as const } : {}),
-                ...(!paused && terminalOutput !== undefined ? { output: terminalOutput } : {}),
-                ...(paused || failure === undefined || input.requestSignal.aborted
-                  ? {}
-                  : { error: failure }),
-                ...(terminalMetadata ? { metadata: terminalMetadata } : {}),
-              })
-            );
+            await input.finishOutput({
+              completed: !paused && natural && reason === "completed" &&
+                !input.requestSignal.aborted,
+              ...(paused ? { paused: true as const } : {}),
+              ...(!paused && terminalOutput !== undefined ? { output: terminalOutput } : {}),
+              ...(paused || failure === undefined || input.requestSignal.aborted
+                ? {}
+                : { error: failure }),
+              ...(terminalMetadata ? { metadata: terminalMetadata } : {}),
+            });
           }
         } catch (error) {
           finalizationFailed = true;

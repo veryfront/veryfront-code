@@ -764,6 +764,8 @@ not register a serving process, advertise the publication protocol or enable
 account-chat execution.
 SSE output is persisted before forwarding each chunk, and its terminal event
 waits for canonical finalization. Persistence failures cannot acknowledge success.
+Terminal ownership is reserved before request acceptance and retained through
+cancellation or executor expiry, so retirement cannot skip finalization.
 
 Configure each direct
 adapter's owner in trusted service configuration; project owners reject requests

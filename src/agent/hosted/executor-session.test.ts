@@ -23,6 +23,16 @@ import {
   sameHostedExecutorBinding,
 } from "./executor-session-schema.ts";
 import type { ExecutorNodeTransport } from "./executor-node-transport.ts";
+import type { ManagedExecutorRuntime } from "./managed-executor-broker.ts";
+import { createManagedBrokerHandler } from "../service/managed-broker-handler.ts";
+import {
+  invocation,
+  options as ingressOptions,
+  projectId,
+  signedRequest,
+} from "../service/broker-ingress.test-helpers.ts";
+import { managedStart } from "../../../tests/fixtures/managed-executor-start.ts";
+import { createManagedBrokerPersistence } from "./managed-broker-persistence.ts";
 
 const request = {
   allocationId: "11111111-1111-4111-8111-111111111111",
@@ -187,6 +197,162 @@ function fixture(overrides: Partial<HostedExecutorSessionOptions> = {}) {
 }
 
 describe("hosted executor session", () => {
+  for (const cause of ["request cancellation", "lease expiration"] as const) {
+    it(`retains canonical SSE finalization ownership through real session ${cause}`, async () => {
+      const controller = new AbortController();
+      const boundSource = { type: "release" as const, releaseId: request.source.releaseId };
+      const f = fixture({
+        preparationSignal: controller.signal,
+        request: { ...request, owner: { scopeKind: "project", projectId } },
+      });
+      const session = f.start();
+      await session.ready;
+      const entered = Promise.withResolvers<void>();
+      const finishes: boolean[] = [];
+      const terminalWrites: string[] = [];
+      const logical = invocation().run;
+      const canonicalId = "30000000-3000-4000-8000-300000000001";
+      const terminal = `header.${
+        btoa(
+          JSON.stringify({
+            runId: logical.runId,
+            canonicalRunId: canonicalId,
+            tokenUse: "run_event_writer",
+            writerPurpose: "current_run_terminal",
+            dispatchNonce: "generation",
+          }),
+        )
+      }.signature`;
+      let cursor = 0;
+      const persistence = createManagedBrokerPersistence({
+        apiUrl: "https://api.example.test",
+        runEventToken: "synthetic-event-token",
+        completionAuthToken: "api-auth-token",
+        terminalAuthToken: terminal,
+        modelId: "veryfront-cloud/openai/synthetic",
+        resolveProvider: () => "synthetic",
+        run: {
+          canonicalRunId: canonicalId,
+          runId: logical.runId,
+          conversationId: logical.conversationId,
+          messageId: logical.messageId,
+          latestEventId: 0,
+          latestExternalEventSequence: 0,
+          status: "running",
+        },
+        fetch: async (value, init) => {
+          const request = new Request(value, init), path = new URL(request.url).pathname;
+          if (path === `/runs/${canonicalId}/events`) {
+            assertEquals(request.headers.get("authorization"), "Bearer synthetic-event-token");
+            const body = await request.json();
+            cursor += body.events.length;
+            return Response.json({
+              run_id: canonicalId,
+              latest_event_id: cursor,
+              latest_external_event_sequence: cursor,
+              appended_count: body.events.length,
+            });
+          }
+          assertEquals(request.headers.get("authorization"), "Bearer api-auth-token");
+          assertEquals(request.headers.get("x-veryfront-run-terminal-token"), terminal);
+          assert([`/runs/${canonicalId}/cancel`, `/runs/${canonicalId}/finalize`].includes(path));
+          const status = path.endsWith("/cancel") ? "cancelled" : (await request.json()).status;
+          terminalWrites.push(status);
+          return Response.json({ id: canonicalId, status });
+        },
+      });
+      persistence.bindSessionOwnedWork(session.runOwned.bind(session));
+      const runtime: ManagedExecutorRuntime = {
+        definition: { id: "builder", name: "Builder", description: "", instructions: "Work" },
+        modelId: "veryfront-cloud/openai/synthetic",
+        runtimeKind: "framework",
+        accepted: false,
+        settled: session.settled,
+        runOwned: session.runOwned.bind(session),
+        close: session.close.bind(session),
+        accept(value) {
+          session.accept(value);
+          Object.defineProperty(runtime, "accepted", { value: true });
+        },
+        agent: {
+          async stream() {
+            return {
+              steps: Promise.resolve([]),
+              toUIMessageStream() {
+                return (async function* () {
+                  yield { type: "start", messageId: "assistant-message" } as const;
+                  entered.resolve();
+                  if (!session.signal.aborted) {
+                    await new Promise<void>((resolve) =>
+                      session.signal.addEventListener("abort", () => resolve(), { once: true })
+                    );
+                  }
+                  throw new Error("Executor session stopped");
+                })();
+              },
+            };
+          },
+        },
+      };
+      const signed = await signedRequest(
+        invocation({ agentSource: boundSource, credentials: { authToken: "api-auth-token" } }),
+      );
+      const handler = createManagedBrokerHandler({
+        responseMode: "sse",
+        broker: { start: () => Promise.resolve(runtime) },
+        resolveIngressOptions: () => ({ ...ingressOptions(signed.publicKeyPem), boundSource }),
+        prepare: () =>
+          Promise.resolve({
+            start: managedStart({ agentId: "builder" }),
+            messages: [],
+            executionSignal: controller.signal,
+            output: {
+              write: persistence.output.write,
+              finish: async (input) => {
+                finishes.push(input.completed);
+                await persistence.output.finish(input);
+              },
+            },
+            cleanup: persistence.cleanup,
+          }),
+      });
+      let reading: Promise<string> | undefined;
+      try {
+        const response = await handler.handle(
+          new Request(signed.request, { signal: controller.signal }),
+        );
+        assertEquals(response.status, 200);
+        reading = response.text();
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        try {
+          await Promise.race([
+            entered.promise,
+            new Promise((_, reject) => {
+              timer = setTimeout(() => reject(new Error("SSE did not start")), 2000);
+            }),
+          ]);
+        } finally {
+          clearTimeout(timer);
+        }
+        if (cause === "request cancellation") controller.abort();
+        else f.time.advanceBy(1000);
+        await assertRejects(() => session.runOwned(() => Promise.resolve()));
+        await reading;
+        await handler.close();
+        assertEquals(finishes, [false]);
+        assertEquals(terminalWrites, [cause === "request cancellation" ? "cancelled" : "failed"]);
+      } finally {
+        controller.abort();
+        await reading?.catch(() => {});
+        await handler.close();
+        await session.close();
+        await session.settled;
+        await f.peerClosed();
+        await persistence.cleanup();
+      }
+    });
+  }
+
   it("retains the requested HTTP profile through allocation and retirement", async () => {
     const f = fixture({ request: { ...request, executionProfile: "http" } });
     const session = f.start();
