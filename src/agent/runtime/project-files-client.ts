@@ -1019,22 +1019,25 @@ function createRuntimeProjectFileUrl(input: {
 }): URL {
   const apiUrl = new URL(input.apiUrl);
   const encodedProjectId = encodeURIComponent(input.projectId);
-  const pathname = input.path
-    ? `/projects/${encodedProjectId}/files/${encodeURIComponent(input.path)}`
+  const filesPath = input.releaseId !== undefined && input.releaseId !== null
+    ? `/projects/${encodedProjectId}/releases/${encodeURIComponent(input.releaseId)}/files`
     : `/projects/${encodedProjectId}/files`;
+  const pathname = input.path ? `${filesPath}/${encodeURIComponent(input.path)}` : filesPath;
   const url = new URL(pathname, apiUrl.origin);
 
   url.searchParams.set("fields", input.fields);
-  if (input.releaseId !== undefined && input.releaseId !== null) {
-    url.searchParams.set("ref", `release:${input.releaseId}`);
-  } else if (input.branchId) {
+  if (input.branchId) {
     url.searchParams.set("ref", `branch:${input.branchId}`);
   }
   if (input.cursor) {
     url.searchParams.set("cursor", input.cursor);
   }
   if (input.pathPrefix) {
-    url.searchParams.set("path", input.pathPrefix);
+    if (input.releaseId !== undefined && input.releaseId !== null) {
+      url.searchParams.set("pattern", `${input.pathPrefix}/**`);
+    } else {
+      url.searchParams.set("path", input.pathPrefix);
+    }
   }
   if (!input.path) {
     url.searchParams.set("limit", String(input.pageLimit ?? DEFAULT_PROJECT_FILES_PAGE_LIMIT));
@@ -1057,22 +1060,25 @@ function createStrictRuntimeProjectFileUrl(input: {
 }): URL {
   const apiUrl = new URL(input.apiUrl);
   const encodedProjectId = encodeURIComponent(input.projectId);
-  const pathname = input.path
-    ? `/projects/${encodedProjectId}/files/${encodeURIComponent(input.path)}`
+  const filesPath = input.releaseId !== undefined && input.releaseId !== null
+    ? `/projects/${encodedProjectId}/releases/${encodeURIComponent(input.releaseId)}/files`
     : `/projects/${encodedProjectId}/files`;
+  const pathname = input.path ? `${filesPath}/${encodeURIComponent(input.path)}` : filesPath;
   const url = new URL(pathname, apiUrl.origin);
 
   url.searchParams.set("fields", input.fields);
-  if (input.releaseId !== undefined && input.releaseId !== null) {
-    url.searchParams.set("ref", `release:${input.releaseId}`);
-  } else if (input.branchId) {
+  if (input.branchId) {
     url.searchParams.set("ref", `branch:${input.branchId}`);
   }
   if (input.cursor) {
     url.searchParams.set("cursor", input.cursor);
   }
   if (input.pathPrefix) {
-    url.searchParams.set("path", input.pathPrefix);
+    if (input.releaseId !== undefined && input.releaseId !== null) {
+      url.searchParams.set("pattern", `${input.pathPrefix}/**`);
+    } else {
+      url.searchParams.set("path", input.pathPrefix);
+    }
   }
   if (!input.path) {
     url.searchParams.set("limit", String(resolveProjectFilesPageLimit(input.pageLimit)));

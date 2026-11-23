@@ -63,7 +63,7 @@ describe("executor state bridge", () => {
   });
 
   it("prepares captured source steering through the bridge independently of execution scope", async () => {
-    const refs: Array<string | null> = [];
+    const refs: string[] = [];
     const state = createManagedBrokerProjectState({
       apiUrl: "https://api.example.test",
       authToken: "source-token",
@@ -72,8 +72,12 @@ describe("executor state bridge", () => {
       releaseId: "release-1",
       fetch: (value: string) => {
         const url = new URL(value);
-        assertEquals(url.pathname.startsWith("/projects/source-project/files"), true);
-        refs.push(url.searchParams.get("ref"));
+        assertEquals(
+          url.pathname.startsWith("/projects/source-project/releases/release-1/files"),
+          true,
+        );
+        assertEquals(url.searchParams.has("ref"), false);
+        refs.push(url.pathname);
         return Promise.resolve(
           url.pathname.endsWith("/AGENTS.md")
             ? Response.json({ path: "AGENTS.md", content: "Captured source instructions" })
@@ -102,7 +106,10 @@ describe("executor state bridge", () => {
       });
       assertEquals(prepared.initialProjectInstructions, "Captured source instructions");
       await facades.projectSteering!.refresh(new AbortController().signal);
-      assertEquals(refs.every((ref) => ref === "release:release-1"), true);
+      assertEquals(
+        refs.every((path) => path.startsWith("/projects/source-project/releases/release-1/files")),
+        true,
+      );
       const count = refs.length;
       await assertRejects(() =>
         channels.executor.request(executorStateOperations.prepareProjectSteering, {

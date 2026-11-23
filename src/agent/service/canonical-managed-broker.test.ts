@@ -275,9 +275,9 @@ describe("canonical managed broker preparation", () => {
     assert(sourceReads.length > 0);
     assertEquals(
       sourceReads.every((call) =>
-        call.url.pathname.startsWith(`/projects/${sourceId}/`) &&
+        call.url.pathname.startsWith(`/projects/${sourceId}/releases/release-1/files`) &&
         call.authorization === "Bearer source-read-token" &&
-        call.url.searchParams.get("ref") === "release:release-1"
+        !call.url.searchParams.has("ref")
       ),
       true,
     );

@@ -38,7 +38,8 @@ describe("managed broker project state", () => {
       fetch: (value: string) => {
         const url = new URL(value);
         calls.push(url);
-        assertEquals(url.searchParams.get("ref"), "release:release-1");
+        assertStringIncludes(url.pathname, "/projects/project-1/releases/release-1/files");
+        assertEquals(url.searchParams.has("ref"), false);
         if (decodeURIComponent(url.pathname).endsWith("/skills/check/SKILL.md")) {
           return Promise.resolve(
             Response.json({
@@ -51,7 +52,7 @@ describe("managed broker project state", () => {
           url.pathname.endsWith("/AGENTS.md")
             ? Response.json({ path: "AGENTS.md", content: "Captured release instructions" })
             : Response.json({
-              data: url.searchParams.get("path") === "skills"
+              data: url.searchParams.get("pattern") === "skills/**"
                 ? [{ path: "skills/check/SKILL.md" }]
                 : [],
               page_info: { next: null },

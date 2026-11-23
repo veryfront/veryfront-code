@@ -11,7 +11,7 @@ import {
 describe("runtime project file release selection", () => {
   for (const list of [getRuntimeProjectFiles, getStrictRuntimeProjectFiles]) {
     it(`does not change release between pages through ${list.name}`, async () => {
-      const refs: Array<string | null> = [];
+      const refs: string[] = [];
       const input = {
         apiUrl: "https://api.example.test",
         projectId: "project-1",
@@ -19,7 +19,7 @@ describe("runtime project file release selection", () => {
         releaseId: "release-1",
         fetch: (value: string) => {
           const url = new URL(value);
-          refs.push(url.searchParams.get("ref"));
+          refs.push(url.pathname);
           input.releaseId = "release-2";
           const second = url.searchParams.has("cursor");
           return Promise.resolve(
@@ -31,11 +31,55 @@ describe("runtime project file release selection", () => {
         },
       };
       await list(input);
-      assertEquals(refs, ["release:release-1", "release:release-1"]);
+      assertEquals(refs, [
+        "/projects/project-1/releases/release-1/files",
+        "/projects/project-1/releases/release-1/files",
+      ]);
     });
   }
 
   for (const create of [createRuntimeProjectFilesClient, createStrictRuntimeProjectFilesClient]) {
+    it(`uses release-file transport accepted by a release-bound source token through ${create.name}`, async () => {
+      const projectId = "11111111-1111-4111-8111-111111111111";
+      const releaseId = "22222222-2222-4222-8222-222222222222";
+      const prefix = `/projects/${projectId}/releases/${releaseId}/files`;
+      const calls: string[] = [];
+      const client = create({
+        apiUrl: "https://api.example.test",
+        fetch: (value: string, init: RequestInit) => {
+          const url = new URL(value);
+          calls.push(url.pathname);
+          assertEquals(
+            new Headers(init.headers).get("authorization"),
+            "Bearer release-bound-token",
+          );
+          // The API's published_source_read transport admits immutable file routes,
+          // not the draft files route with a release query parameter.
+          if (
+            !(url.pathname === prefix || url.pathname === `${prefix}/AGENTS.md`) ||
+            url.searchParams.has("ref") ||
+            (url.pathname === prefix && url.searchParams.get("pattern") !== "skills/**")
+          ) {
+            return Promise.resolve(
+              Response.json({ detail: "Source transport denied" }, { status: 403 }),
+            );
+          }
+          return Promise.resolve(
+            url.pathname.endsWith("/AGENTS.md")
+              ? Response.json({ path: "AGENTS.md", content: "Release instructions" })
+              : Response.json({ data: [], page_info: { next: null } }),
+          );
+        },
+      });
+      const source = { projectId, releaseId, authToken: "release-bound-token" };
+      assertEquals(
+        (await client.getProjectFile({ ...source, path: "AGENTS.md" }))?.content,
+        "Release instructions",
+      );
+      assertEquals(await client.getProjectFiles({ ...source, pathPrefix: "skills" }), []);
+      assertEquals(calls, [`${prefix}/AGENTS.md`, prefix]);
+    });
+
     it(`pins file reads and every listing page through ${create.name}`, async () => {
       const calls: URL[] = [];
       const client = create({
@@ -62,9 +106,14 @@ describe("runtime project file release selection", () => {
       await client.getProjectFiles(source);
       assertEquals(calls.length, 3);
       assertEquals(
-        calls.map((url) => url.searchParams.get("ref")),
-        Array(3).fill("release:release-1"),
+        calls.map((url) => url.pathname),
+        [
+          "/projects/project-1/releases/release-1/files/AGENTS.md",
+          "/projects/project-1/releases/release-1/files",
+          "/projects/project-1/releases/release-1/files",
+        ],
       );
+      assertEquals(calls.some((url) => url.searchParams.has("ref")), false);
       const count = calls.length;
       await assertRejects(() =>
         client.getProjectFile({ ...source, branchId: "main", path: "AGENTS.md" })

@@ -416,6 +416,8 @@ Services that use Veryfront Cloud project steering can reuse
 
 Managed brokers can use `createManagedBrokerProjectState()` from
 `veryfront/agent/managed-broker` for project instructions and skill catalogs.
+Release-bound reads use immutable release-file routes with the source credential;
+they do not use draft file routes with a release query parameter.
 The executor sends its effective tool selection on each steering refresh. The
 broker validates that selection against the installed grant before constructing
 instructions, and includes skills only when `veryfront__load_skill` remains available.
