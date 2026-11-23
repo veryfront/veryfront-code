@@ -592,6 +592,74 @@ describe("Login Module", { sanitizeOps: false, sanitizeResources: false }, () =>
       }
     });
 
+    it("authenticates and resolves with the project dotenv token, not a stored login saved for another API", async () => {
+      // A production login must not stay the preferred credential for a staging
+      // API: `up` authenticates first and then resolves its config again, and
+      // both have to settle on the same credential.
+      const originalToken = getEnv("VERYFRONT_API_TOKEN");
+      const projectDir = await makeTempDir({ prefix: "ensure-dotenv-other-host-" });
+      const requestedAuth: string[] = [];
+      const stagingEnv = {
+        ...testEnv,
+        apiUrl: "https://api.staging.example.test/api",
+        apiToken: "env-file-staging-token",
+      };
+      await saveToken("stored-prod-token", {
+        ...testEnv,
+        apiUrl: "https://api.prod.example.test/api",
+      });
+
+      try {
+        deleteEnv("VERYFRONT_API_TOKEN");
+        await Deno.writeTextFile(
+          `${projectDir}/.env`,
+          "VERYFRONT_API_TOKEN=env-file-staging-token\n",
+        );
+        await Deno.writeTextFile(
+          `${projectDir}/veryfront.json`,
+          JSON.stringify({ projectSlug: "staging-project" }) + "\n",
+        );
+        const { __resetEnvLoaderForTests, loadEnv } = await import(
+          "veryfront/utils/env-loader"
+        );
+        __resetEnvLoaderForTests();
+        await loadEnv({ cwd: projectDir });
+        setNonInteractive(true);
+
+        const { ensureAuthenticated } = await import("./login.ts");
+        const { resolveConfigWithAuth } = await import("../shared/config.ts");
+        const [credential, config] = await withMockFetch(
+          (_input, init) => {
+            const auth = String(new Headers(init?.headers).get("authorization") ?? "");
+            requestedAuth.push(auth);
+            if (auth !== "Bearer env-file-staging-token") {
+              return Promise.resolve(new Response(null, { status: 401 }));
+            }
+            return Promise.resolve(Response.json({ id: "env-user", email: "env@example.com" }));
+          },
+          async () =>
+            [
+              await ensureAuthenticated(stagingEnv, projectDir),
+              await resolveConfigWithAuth(projectDir, stagingEnv),
+            ] as const,
+        );
+
+        assertEquals(credential, { id: "env-user", email: "env@example.com" });
+        assertEquals(config.apiToken, "env-file-staging-token");
+        assertEquals(config.apiTokenSource, "env-file");
+        assertEquals(requestedAuth, ["Bearer env-file-staging-token"]);
+        assertEquals(await readToken(testEnv), "stored-prod-token");
+      } finally {
+        const { __resetEnvLoaderForTests } = await import("veryfront/utils/env-loader");
+        __resetEnvLoaderForTests();
+        if (originalToken) setEnv("VERYFRONT_API_TOKEN", originalToken);
+        else deleteEnv("VERYFRONT_API_TOKEN");
+        resetInteractiveMode();
+        await safeDeleteToken();
+        await remove(projectDir, { recursive: true });
+      }
+    });
+
     it("uses a valid veryfront.json API key without executing module config", async () => {
       const originalFetch = globalThis.fetch;
       const projectDir = await makeTempDir({ prefix: "ensure-config-token-" });
