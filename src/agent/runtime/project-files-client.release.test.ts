@@ -17,20 +17,26 @@ describe("runtime project file release selection", () => {
         projectId: "project-1",
         authToken: "release-bound-token",
         releaseId: "release-1",
+        pathPrefix: "skills/a*",
         fetch: (value: string) => {
           const url = new URL(value);
           refs.push(url.pathname);
+          assertEquals(url.searchParams.get("pattern"), "skills/**");
           input.releaseId = "release-2";
+          input.pathPrefix = "other-directory";
           const second = url.searchParams.has("cursor");
           return Promise.resolve(
             Response.json({
-              data: [{ path: second ? "second.md" : "first.md" }],
+              data: [{ path: second ? "skills/a*/second.md" : "skills/a*/first.md" }],
               page_info: { next: second ? null : "next-page" },
             }),
           );
         },
       };
-      await list(input);
+      assertEquals((await list(input)).map((file) => file.path), [
+        "skills/a*/first.md",
+        "skills/a*/second.md",
+      ]);
       assertEquals(refs, [
         "/projects/project-1/releases/release-1/files",
         "/projects/project-1/releases/release-1/files",
@@ -39,6 +45,42 @@ describe("runtime project file release selection", () => {
   }
 
   for (const create of [createRuntimeProjectFilesClient, createStrictRuntimeProjectFilesClient]) {
+    for (const prefix of ["skills/a*", "skills/[team]?", "a*"]) {
+      it(`keeps literal prefix ${prefix} and counts only matching files through ${create.name}`, async () => {
+        const patterns: Array<string | null> = [];
+        let overLimit = false;
+        const client = create({
+          apiUrl: "https://api.example.test",
+          fetch: (value: string) => {
+            const url = new URL(value), index = Number(url.searchParams.get("cursor") ?? "0");
+            patterns.push(url.searchParams.get("pattern"));
+            const paths = [
+              `${prefix}-other/SKILL.md`,
+              `${prefix}/SKILL.md`,
+              overLimit ? `${prefix}/extra.md` : "skills/another/SKILL.md",
+            ];
+            return Promise.resolve(
+              Response.json({
+                data: [{ path: paths[index] }],
+                page_info: { next: index === 2 ? null : String(index + 1) },
+              }),
+            );
+          },
+        });
+        const source = {
+          projectId: "project-1",
+          releaseId: "release-1",
+          authToken: "source-token",
+          pathPrefix: prefix,
+          maximumEntries: 1,
+        };
+        assertEquals(await client.getProjectFiles(source), [{ path: `${prefix}/SKILL.md` }]);
+        assertEquals(patterns, Array(3).fill(prefix.includes("/") ? "skills/**" : null));
+        overLimit = true;
+        await assertRejects(() => client.getProjectFiles(source));
+      });
+    }
+
     it(`uses release-file transport accepted by a release-bound source token through ${create.name}`, async () => {
       const projectId = "11111111-1111-4111-8111-111111111111";
       const releaseId = "22222222-2222-4222-8222-222222222222";
