@@ -14,6 +14,166 @@ import {
 } from "./broker-ingress.test-helpers.ts";
 
 describe("managed broker ingress", () => {
+  it("retains terminal authority only for the broker and trusted scope verifier", async () => {
+    const signed = await signedRequest();
+    signed.request.headers.set("x-veryfront-run-terminal-token", "terminal-only-token");
+    const result = await parseBrokerRuntimeAgentIngress(signed.request, {
+      ...options(signed.publicKeyPem),
+      authorizeScope(input) {
+        assertEquals(Reflect.get(input, "terminalAuthToken"), "terminal-only-token");
+        return { principal: { userId }, runEventWriter: { id: "writer-1" } };
+      },
+    });
+    assertEquals(Reflect.get(result.privateAuthority, "terminalAuthToken"), "terminal-only-token");
+    assertEquals(JSON.stringify(result.executor).includes("terminal-only-token"), false);
+  });
+
+  it("rejects oversized terminal authority before scope authorization", async () => {
+    const signed = await signedRequest();
+    signed.request.headers.set("x-veryfront-run-terminal-token", "t".repeat(16 * 1024 + 1));
+    let authorized = false;
+    await assertIngressError(
+      () =>
+        parseBrokerRuntimeAgentIngress(signed.request, {
+          ...options(signed.publicKeyPem),
+          authorizeScope() {
+            authorized = true;
+            return { principal: { userId }, runEventWriter: { id: "writer-1" } };
+          },
+        }),
+      401,
+      "BROKER_INGRESS_AUTH_REQUIRED",
+    );
+    assertEquals(authorized, false);
+  });
+
+  for (const token of ["terminal-only-token", "terminal%2Donly%2Dtoken"]) {
+    it(`rejects reflected terminal authority in executor data: ${token}`, async () => {
+      const signed = await signedRequest(invocation({
+        forwardedProps: { attachments: [{ url: `https://files.test/document?token=${token}` }] },
+      }));
+      signed.request.headers.set("x-veryfront-run-terminal-token", "terminal-only-token");
+      await assertIngressError(
+        () => parseBrokerRuntimeAgentIngress(signed.request, options(signed.publicKeyPem)),
+        403,
+        "BROKER_INGRESS_SCOPE_DENIED",
+      );
+    });
+  }
+
+  it("preserves selected shared source independently of execution and keeps its credential private", async () => {
+    const base = invocation();
+    const sourceProject = {
+      projectId: "00000000-0000-4000-8000-000000000099",
+      projectSlug: "private-source",
+      runtimeTargetKind: "environment" as const,
+      runtimeTargetEnvironmentId: "00000000-0000-4000-8000-000000000098",
+      runtimeTargetEnvironmentName: "Production",
+    };
+    const agentEntrypoint = { path: "agents/selected.ts" };
+    const signed = await signedRequest(
+      invocation({
+        run: {
+          ...base.run,
+          project: { ...base.run.project, runtimeTargetBranchName: "main" },
+        },
+        sourceProject,
+        agentEntrypoint,
+      }),
+      { projectId: sourceProject.projectId, audience: sourceProject.projectSlug },
+    );
+    const result = await parseBrokerRuntimeAgentIngress(signed.request, {
+      ...options(signed.publicKeyPem),
+      projectId: sourceProject.projectId,
+      audience: sourceProject.projectSlug,
+      expectedOwner: { scopeKind: "project", projectId: sourceProject.projectId },
+      authorizeScope(input) {
+        assertEquals(input.run.project.projectId, projectId);
+        assertEquals(input.sourceProject, sourceProject);
+        if (!input.sourceProject) throw new Error("Shared source context is missing");
+        assertEquals(Reflect.set(input.sourceProject, "projectId", "mutated-source"), false);
+        assertEquals(input.apiAuthToken, "api-auth-token");
+        assertEquals(input.sourceAuthToken, "source-read-token");
+        return { principal: { userId }, runEventWriter: { id: "writer-1" } };
+      },
+    });
+    assertEquals(result.executor.owner, {
+      scopeKind: "project",
+      projectId: sourceProject.projectId,
+    });
+    assertEquals(result.executor.run.project.projectId, projectId);
+    assertEquals(Reflect.get(result.executor, "sourceProject"), sourceProject);
+    assertEquals(Reflect.get(result.executor, "agentEntrypoint"), agentEntrypoint);
+    assertEquals(Reflect.get(result.privateAuthority, "sourceAuthToken"), "source-read-token");
+    assertEquals(JSON.stringify(result.executor).includes("source-read-token"), false);
+  });
+
+  it("rejects a signed shared source outside the broker project before scope authorization", async () => {
+    const base = invocation();
+    const signed = await signedRequest(invocation({
+      run: { ...base.run, project: { ...base.run.project, runtimeTargetBranchName: "main" } },
+      sourceProject: {
+        projectId: "00000000-0000-4000-8000-000000000099",
+        projectSlug: "another-source",
+        runtimeTargetKind: "environment" as const,
+        runtimeTargetEnvironmentId: "00000000-0000-4000-8000-000000000098",
+        runtimeTargetEnvironmentName: "Production",
+      },
+      agentEntrypoint: { path: "agents/selected.ts" },
+    }));
+    let authorized = false;
+    await assertIngressError(
+      () =>
+        parseBrokerRuntimeAgentIngress(signed.request, {
+          ...options(signed.publicKeyPem),
+          authorizeScope() {
+            authorized = true;
+            return { principal: { userId }, runEventWriter: { id: "writer-1" } };
+          },
+        }),
+      403,
+      "BROKER_INGRESS_SCOPE_DENIED",
+    );
+    assertEquals(authorized, false);
+  });
+
+  it("does not treat a valid source signature as execution authorization", async () => {
+    const base = invocation();
+    const sourceProject = {
+      projectId: "00000000-0000-4000-8000-000000000099",
+      projectSlug: "private-source",
+      runtimeTargetKind: "environment" as const,
+      runtimeTargetEnvironmentId: "00000000-0000-4000-8000-000000000098",
+      runtimeTargetEnvironmentName: "Production",
+    };
+    const signed = await signedRequest(
+      invocation({
+        run: { ...base.run, project: { ...base.run.project, runtimeTargetBranchName: "main" } },
+        sourceProject,
+        agentEntrypoint: { path: "agents/selected.ts" },
+      }),
+      { projectId: sourceProject.projectId, audience: sourceProject.projectSlug },
+    );
+    let checked = false;
+    await assertIngressError(
+      () =>
+        parseBrokerRuntimeAgentIngress(signed.request, {
+          ...options(signed.publicKeyPem),
+          projectId: sourceProject.projectId,
+          audience: sourceProject.projectSlug,
+          expectedOwner: { scopeKind: "project", projectId: sourceProject.projectId },
+          authorizeScope(input) {
+            checked = true;
+            assertEquals(input.run.project.projectId, projectId);
+            return undefined;
+          },
+        }),
+      403,
+      "BROKER_INGRESS_SCOPE_DENIED",
+    );
+    assertEquals(checked, true);
+  });
+
   it("accepts root writer grants through the shared 32 KiB boundary", async () => {
     for (const length of [16 * 1024 + 1, 32 * 1024]) {
       const signed = await signedRequest();
