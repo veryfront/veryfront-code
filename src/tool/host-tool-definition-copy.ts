@@ -13,6 +13,8 @@
  * @module tool/host-tool-definition-copy
  */
 
+import type { HostToolDefinition } from "./host-tools.ts";
+
 const apply = Reflect.apply;
 const objectCreate = Object.create;
 const objectDefineProperty = Object.defineProperty;
@@ -20,7 +22,11 @@ const objectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
 const objectHasOwn = Object.hasOwn;
 const reflectOwnKeys = Reflect.ownKeys;
 
-function defineOwn(target: object, key: PropertyKey, descriptor: PropertyDescriptor): void {
+function defineOwn(
+  target: HostToolDefinition,
+  key: PropertyKey,
+  descriptor: PropertyDescriptor,
+): void {
   apply(objectDefineProperty, Object, [target, key, descriptor]);
 }
 
@@ -29,10 +35,10 @@ function defineOwn(target: object, key: PropertyKey, descriptor: PropertyDescrip
  * copied as writable data (undefined values are skipped); getters become
  * getters that call the original with `definition` as the receiver.
  */
-export function copyTrustedHostToolDefinition<T extends object>(
-  target: T,
-  definition: object,
-): T {
+export function copyTrustedHostToolDefinition(
+  target: HostToolDefinition,
+  definition: HostToolDefinition,
+): HostToolDefinition {
   const keys = apply(reflectOwnKeys, Reflect, [definition]) as PropertyKey[];
   for (let index = 0; index < keys.length; index++) {
     const key = keys[index]!;
