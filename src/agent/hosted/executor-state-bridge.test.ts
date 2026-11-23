@@ -4,6 +4,7 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { createExecutorChannel, type ExecutorOperation } from "../executor/channel.ts";
 import type { ExecutorRuntimeFacades } from "./executor-runtime-prepare.ts";
 import { createExecutorStateBroker, createExecutorStateFacades } from "./executor-state-bridge.ts";
+import { createManagedBrokerProjectState } from "./managed-broker-project-state.ts";
 import {
   executorStateJson,
   executorStateOperations,
@@ -48,6 +49,75 @@ function pair(operations: ReadonlyMap<string, ExecutorOperation>) {
 }
 
 describe("executor state bridge", () => {
+  it("does not fall back to execution scope for malformed installed source state", () => {
+    for (const projectSteeringSource of [null, "invalid", []]) {
+      assertThrows(() =>
+        Reflect.apply(createExecutorStateBroker, undefined, [{
+          ...scope,
+          expectedBinding: binding,
+          capabilityIds: {},
+          projectSteeringSource,
+        }])
+      );
+    }
+  });
+
+  it("prepares captured source steering through the bridge independently of execution scope", async () => {
+    const refs: Array<string | null> = [];
+    const state = createManagedBrokerProjectState({
+      apiUrl: "https://api.example.test",
+      authToken: "source-token",
+      agentId: "coder",
+      projectId: "source-project",
+      releaseId: "release-1",
+      fetch: (value: string) => {
+        const url = new URL(value);
+        assertEquals(url.pathname.startsWith("/projects/source-project/files"), true);
+        refs.push(url.searchParams.get("ref"));
+        return Promise.resolve(
+          url.pathname.endsWith("/AGENTS.md")
+            ? Response.json({ path: "AGENTS.md", content: "Captured source instructions" })
+            : Response.json({ data: [], page_info: { next: null } }),
+        );
+      },
+    });
+    const channels = pair(createExecutorStateBroker({
+      expectedBinding: binding,
+      ...scope,
+      projectSteeringSource: { projectId: "source-project", releaseId: "release-1" },
+      capabilityIds: { projectSteering: capabilityIds.projectSteering },
+      ...state,
+    }));
+    try {
+      const facades = createExecutorStateFacades({
+        channel: channels.executor,
+        ...scope,
+        capabilityIds: { projectSteering: capabilityIds.projectSteering },
+      });
+      const prepared = await facades.projectSteering!.prepare({
+        definition,
+        projectId: scope.projectId,
+        branchId: scope.branchId,
+        signal: new AbortController().signal,
+      });
+      assertEquals(prepared.initialProjectInstructions, "Captured source instructions");
+      await facades.projectSteering!.refresh(new AbortController().signal);
+      assertEquals(refs.every((ref) => ref === "release:release-1"), true);
+      const count = refs.length;
+      await assertRejects(() =>
+        channels.executor.request(executorStateOperations.prepareProjectSteering, {
+          capabilityId: capabilityIds.projectSteering,
+          definition,
+          releaseId: "other-release",
+        })
+      );
+      assertEquals(refs.length, count);
+      assertEquals(JSON.stringify(prepared).includes("source-token"), false);
+    } finally {
+      await channels.close();
+    }
+  });
+
   it("accepts rules skill selector policies in serialized project steering", () => {
     const steering = parseExecutorStateData(getExecutorProjectSteeringResultSchema(), {
       agent: definition,

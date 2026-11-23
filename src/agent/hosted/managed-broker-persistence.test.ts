@@ -77,6 +77,77 @@ function authorities() {
 }
 
 describe("managed persistence authority validation", () => {
+  it("rejects admission state paired with a different canonical terminal run", () => {
+    const fixture = authorities();
+    assertThrows(() =>
+      createManagedBrokerPersistence({
+        ...fixture.raw,
+        run: { ...run, canonicalRunId: "22222222-2222-4222-8222-222222222222" },
+        completionAuthToken: "synthetic-completion-token",
+        terminalAuthToken: token(run.runId),
+      })
+    );
+    assertThrows(() =>
+      createManagedBrokerPersistenceFromCapability({
+        capability: fixture.writer(),
+        terminal: fixture.terminal,
+        run: { ...run, canonicalRunId: "22222222-2222-4222-8222-222222222222" },
+      })
+    );
+    assertThrows(() =>
+      createManagedBrokerPersistenceFromCapability({
+        capability: createHostedRunEventWriterCapability({
+          apiUrl: "https://api.example.test",
+          runId: run.runId,
+          canonicalRunId: "22222222-2222-4222-8222-222222222222",
+          runEventAppendToken: "synthetic-event-token",
+        }),
+        terminal: fixture.terminal,
+        run: { ...run, canonicalRunId: canonicalId },
+      })
+    );
+    fixture.assertNoEffects();
+  });
+
+  it("accepts authenticated admission state without legacy projection metadata", async () => {
+    const fixture = authorities();
+    const persistence = createManagedBrokerPersistence({
+      ...fixture.raw,
+      run: {
+        canonicalRunId: canonicalId,
+        runId: run.runId,
+        conversationId: run.conversationId,
+        messageId: run.messageId,
+        latestEventId: 42,
+        latestExternalEventSequence: 17,
+        status: "running",
+      },
+      completionAuthToken: "synthetic-completion-token",
+      terminalAuthToken: token(run.runId),
+    });
+    await persistence.cleanup();
+    fixture.assertNoEffects();
+  });
+
+  it("retains snake-case projection input compatibility without a projection read", async () => {
+    const fixture = authorities();
+    const persistence = Reflect.apply(createManagedBrokerPersistence, undefined, [{
+      ...fixture.raw,
+      run: {
+        run_id: run.runId,
+        conversation_id: run.conversationId,
+        message_id: run.messageId,
+        latest_event_id: 42,
+        latest_external_event_sequence: 17,
+        status: "running",
+      },
+      completionAuthToken: "synthetic-completion-token",
+      terminalAuthToken: token(run.runId),
+    }]);
+    await persistence.cleanup();
+    fixture.assertNoEffects();
+  });
+
   it("requires completion credentials when creating terminal authority", () => {
     const fixture = authorities();
     for (const completionAuthToken of [undefined, null, "", " "]) {

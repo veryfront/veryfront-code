@@ -60,7 +60,43 @@ const getAdmissionScopeSchema = defineSchema((v) =>
   v.object({ projectId: v.string().uuid() }).strict()
 );
 
-function requireActivePersistenceRun(run: ConversationRunProjection): void {
+/** Authenticated run state needed by broker persistence, without legacy UI projection fields. */
+export type ManagedBrokerRunSnapshot = Pick<
+  ConversationRunProjection,
+  | "canonicalRunId"
+  | "runId"
+  | "conversationId"
+  | "messageId"
+  | "latestEventId"
+  | "latestExternalEventSequence"
+  | "status"
+>;
+
+const getManagedBrokerRunSnapshotSchema = defineSchema((v) =>
+  v.object({
+    canonicalRunId: v.string().uuid().optional(),
+    runId: v.string().min(1),
+    conversationId: v.string().uuid(),
+    messageId: v.string().uuid(),
+    latestEventId: v.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+    latestExternalEventSequence: v.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+    status: v.enum(["pending", "running", "waiting_for_tool", "completed", "failed", "cancelled"]),
+  })
+);
+
+function readManagedBrokerRunSnapshot(
+  value: ConversationRunProjection | ManagedBrokerRunSnapshot,
+): ManagedBrokerRunSnapshot {
+  // Preserve the existing camel/snake response normalization. This decodes
+  // supplied admission state; it never reads a legacy run projection endpoint.
+  const decoded = getConversationRunProjectionSchema().parse(value);
+  return getManagedBrokerRunSnapshotSchema().parse({
+    ...decoded,
+    canonicalRunId: value.canonicalRunId,
+  });
+}
+
+function requireActivePersistenceRun(run: ManagedBrokerRunSnapshot): void {
   if (run.status !== "pending" && run.status !== "running" && run.status !== "waiting_for_tool") {
     throw new TypeError("Managed broker persistence requires an active run");
   }
@@ -94,6 +130,7 @@ export interface ManagedBrokerTerminal {
 const freezeTerminal = Object.freeze;
 const terminalStates = createPrivateWeakStore<ManagedBrokerTerminal, {
   runId: string;
+  canonicalRunId: string;
   dispatch(state: ConversationHostedTerminalStateInput): Promise<HostedLifecycleTerminalState>;
 }>();
 
@@ -102,17 +139,20 @@ export function createManagedBrokerTerminal(input: {
   apiUrl: string;
   completionAuthToken: string;
   terminalAuthToken: string;
-  run: ConversationRunProjection;
+  run: ConversationRunProjection | ManagedBrokerRunSnapshot;
   modelId: string;
   resolveProvider(modelId: string): string;
   fetch?: typeof globalThis.fetch;
 }): ManagedBrokerTerminal {
-  const run = getConversationRunProjectionSchema().parse(input.run);
+  const run = readManagedBrokerRunSnapshot(input.run);
   if (typeof input.completionAuthToken !== "string" || !input.completionAuthToken.trim()) {
     throw new TypeError("Managed broker requires completion authorization");
   }
   const { apiUrl, completionAuthToken, terminalAuthToken, fetch: transport } = input;
-  terminalRoute(terminalAuthToken, run.runId);
+  const routing = terminalRoute(terminalAuthToken, run.runId);
+  if (run.canonicalRunId && routing.id.toLowerCase() !== run.canonicalRunId.toLowerCase()) {
+    throw new TypeError("Managed broker admission and terminal routing do not match");
+  }
   const resolveProvider = input.resolveProvider;
   const adapter = createConversationHostedTerminalAdapter({
     apiUrl: input.apiUrl,
@@ -135,7 +175,11 @@ export function createManagedBrokerTerminal(input: {
     fetch: input.fetch ? instrumentConversationRunFetch(input.fetch) : undefined,
   });
   const terminal = freezeTerminal({ kind: "managed-broker-terminal" as const });
-  terminalStates.set(terminal, { runId: run.runId, dispatch: adapter.dispatch });
+  terminalStates.set(terminal, {
+    runId: run.runId,
+    canonicalRunId: routing.id,
+    dispatch: adapter.dispatch,
+  });
   return terminal;
 }
 
@@ -146,7 +190,7 @@ export function createManagedBrokerPersistence(input: {
   /** Application authority accepted by the API completion route, never the append token. */
   completionAuthToken: string;
   terminalAuthToken: string;
-  run: ConversationRunProjection;
+  run: ConversationRunProjection | ManagedBrokerRunSnapshot;
   modelId: string;
   resolveProvider(modelId: string): string;
   fetch?: typeof globalThis.fetch;
@@ -157,7 +201,7 @@ export function createManagedBrokerPersistence(input: {
   /** Trusted migration opt-in. Disabled until the API accepts runtime_observations. */
   runtimeObservations?: { projectId: string };
 }) {
-  const run = getConversationRunProjectionSchema().parse(input.run);
+  const run = readManagedBrokerRunSnapshot(input.run);
   if (
     typeof input.completionAuthToken !== "string" || !input.completionAuthToken.trim() ||
     input.completionAuthToken === input.runEventToken
@@ -186,17 +230,21 @@ export function createManagedBrokerPersistence(input: {
 /** Create exact-run persistence from opaque broker authority with pinned API transport. */
 export function createManagedBrokerPersistenceFromCapability(input: {
   capability: HostedRunEventWriterCapability;
-  run: ConversationRunProjection;
+  run: ConversationRunProjection | ManagedBrokerRunSnapshot;
   terminal: ManagedBrokerTerminal;
   /** Internal/test persistence deadline; production uses the sink default. */
   eventPersistenceTimeoutMs?: number;
   toolCallAdmissions?: { projectId: string };
   runtimeObservations?: { projectId: string };
 }) {
-  const run = getConversationRunProjectionSchema().parse(input.run);
+  const run = readManagedBrokerRunSnapshot(input.run);
   requireActivePersistenceRun(run);
   const terminalState = terminalStates.get(input.terminal);
-  if (terminalState?.runId !== run.runId) {
+  if (
+    terminalState?.runId !== run.runId ||
+    (run.canonicalRunId &&
+      terminalState.canonicalRunId.toLowerCase() !== run.canonicalRunId.toLowerCase())
+  ) {
     throw new TypeError("Managed broker terminal authority is not bound to this run");
   }
   const dispatchTerminal = terminalState.dispatch;
@@ -207,6 +255,9 @@ export function createManagedBrokerPersistenceFromCapability(input: {
     ? undefined
     : getAdmissionScopeSchema().parse(input.runtimeObservations);
   const canonicalRunId = hostedRunCanonicalId(input.capability, run.runId);
+  if (
+    run.canonicalRunId && canonicalRunId?.toLowerCase() !== run.canonicalRunId.toLowerCase()
+  ) throw new TypeError("Managed broker admission and append routing do not match");
   requireCanonicalWriterScope(
     admissionScope,
     canonicalRunId,

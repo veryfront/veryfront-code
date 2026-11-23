@@ -32,6 +32,10 @@ type ProjectSteeringPrepareInput = {
   branchId?: string | null;
   signal: AbortSignal;
 };
+type ProjectSteeringSource = Omit<Scope, "agentId"> & { releaseId?: string | null };
+type BrokerProjectSteeringPrepareInput = ProjectSteeringPrepareInput & {
+  releaseId?: string | null;
+};
 export interface ExecutorStateFacades {
   projectSteering?: {
     prepare(input: ProjectSteeringPrepareInput): Promise<
@@ -72,12 +76,14 @@ function authorize(
 
 export function createExecutorStateBroker(
   options: Scope & {
+    /** Host-installed source; never accepted from executor state messages. */
+    projectSteeringSource?: ProjectSteeringSource;
     expectedBinding: ExecutorBinding;
     capabilityIds: ExecutorStateCapabilityIds;
     /** Installed tool grant used to authorize the executor's narrowed refresh selection. */
     allowedToolNames?: readonly string[];
     prepareProjectSteering?: (
-      input: ProjectSteeringPrepareInput,
+      input: BrokerProjectSteeringPrepareInput,
     ) => Promise<HostedChatRuntimeProjectSteering<RuntimeAgentMarkdownDefinition>>;
     refreshProjectSteering?: (
       signal: AbortSignal,
@@ -88,6 +94,25 @@ export function createExecutorStateBroker(
 ): ReadonlyMap<string, ExecutorOperation> {
   const expectedBinding = Object.freeze(getExecutorBindingSchema().parse(options.expectedBinding));
   const scope = parseScope(options);
+  const source = options.projectSteeringSource;
+  if (
+    source !== undefined && (source === null || typeof source !== "object" || Array.isArray(source))
+  ) {
+    throw new TypeError("Managed steering source is invalid");
+  }
+  const sourceScope = source ? parseScope({ ...source, agentId: scope.agentId }) : scope;
+  const releaseId = source?.releaseId;
+  if (sourceScope.branchId && releaseId !== undefined && releaseId !== null) {
+    throw new TypeError("Managed steering cannot select both a branch and release");
+  }
+  const steeringScope = Object.freeze({
+    ...sourceScope,
+    ...(releaseId === undefined ? {} : {
+      releaseId: releaseId === null
+        ? null
+        : parseExecutorStateData(getExecutorDiscoveryIdSchema(), releaseId),
+    }),
+  });
   const allowedToolNames = new Set(options.allowedToolNames ?? []);
   const capabilityIds = Object.freeze(
     parseExecutorStateData(getExecutorStateCapabilityIdsSchema(), options.capabilityIds),
@@ -135,7 +160,8 @@ export function createExecutorStateBroker(
         }
         const result = await scheduleSteering(
           context,
-          () => prepare({ ...scope, definition: request.definition, signal: context.signal }),
+          () =>
+            prepare({ ...steeringScope, definition: request.definition, signal: context.signal }),
         );
         const parsed = parseExecutorStateData(
           getExecutorProjectSteeringResultSchema(),

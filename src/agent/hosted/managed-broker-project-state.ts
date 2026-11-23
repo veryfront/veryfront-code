@@ -25,7 +25,7 @@ import {
 import type { HostedChatRuntimeProjectSteering } from "./chat-runtime-contract.ts";
 import { isLoadSkillToolName } from "../platform-tool-names.ts";
 
-type Scope = { projectId: string | null; branchId?: string | null };
+type Scope = { projectId: string | null; branchId?: string | null; releaseId?: string | null };
 
 /**
  * Create broker-owned project steering. Refreshes show skills only when the
@@ -48,6 +48,11 @@ export function createManagedBrokerProjectState(
   }
   const projectId = options.projectId;
   const branchId = options.branchId;
+  const releaseId = options.releaseId;
+  const agentId = options.agentId;
+  if (branchId && releaseId !== undefined && releaseId !== null) {
+    throw new TypeError("Managed broker project source cannot select both a branch and release");
+  }
   const authToken = options.authToken;
   const projectClient = createStrictRuntimeProjectFilesClient({
     apiUrl: new URL(options.apiUrl).toString(),
@@ -56,7 +61,9 @@ export function createManagedBrokerProjectState(
   const builtinSkills = [...options.builtinSkills ?? []];
   let definition: RuntimeAgentMarkdownDefinition | undefined;
   const assertScope = (input: Scope) => {
-    if (input.projectId !== projectId || input.branchId !== branchId) {
+    if (
+      input.projectId !== projectId || input.branchId !== branchId || input.releaseId !== releaseId
+    ) {
       throw new TypeError("Managed broker project state scope cannot change");
     }
   };
@@ -77,7 +84,7 @@ export function createManagedBrokerProjectState(
   const load = async (signal: AbortSignal) => {
     signal.throwIfAborted();
     if (projectId === null) return { instructions: "", skills: [] as RuntimeSkillDefinition[] };
-    const lookup = { projectId, branchId, authToken };
+    const lookup = { projectId, branchId, releaseId, authToken };
     const [instructionsResult, skillsResult] = await Promise.allSettled([
       getRuntimeProjectInstructions({ ...lookup, getProjectFile: fileReader(signal) }),
       getRuntimeProjectSkillCatalog({
@@ -111,7 +118,7 @@ export function createManagedBrokerProjectState(
       },
     ): Promise<HostedChatRuntimeProjectSteering<RuntimeAgentMarkdownDefinition>> {
       assertScope(input);
-      if (input.definition.id !== options.agentId) {
+      if (input.definition.id !== agentId) {
         throw new TypeError("Managed broker project agent cannot change");
       }
       const loaded = await load(input.signal);

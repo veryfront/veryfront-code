@@ -63,6 +63,11 @@ describe("managed broker ingress", () => {
 
   it("preserves selected shared source independently of execution and keeps its credential private", async () => {
     const base = invocation();
+    const eventCursor = {
+      canonicalRunId: "30000000-3000-4000-8000-300000000001",
+      latestEventId: 42,
+      latestExternalEventSequence: 17,
+    };
     const sourceProject = {
       projectId: "00000000-0000-4000-8000-000000000099",
       projectSlug: "private-source",
@@ -75,6 +80,7 @@ describe("managed broker ingress", () => {
       invocation({
         run: {
           ...base.run,
+          eventCursor,
           project: { ...base.run.project, runtimeTargetBranchName: "main" },
         },
         sourceProject,
@@ -89,6 +95,7 @@ describe("managed broker ingress", () => {
       expectedOwner: { scopeKind: "project", projectId: sourceProject.projectId },
       authorizeScope(input) {
         assertEquals(input.run.project.projectId, projectId);
+        assertEquals(input.run.eventCursor, eventCursor);
         assertEquals(input.sourceProject, sourceProject);
         if (!input.sourceProject) throw new Error("Shared source context is missing");
         assertEquals(Reflect.set(input.sourceProject, "projectId", "mutated-source"), false);
@@ -102,6 +109,7 @@ describe("managed broker ingress", () => {
       projectId: sourceProject.projectId,
     });
     assertEquals(result.executor.run.project.projectId, projectId);
+    assertEquals(result.executor.run.eventCursor, eventCursor);
     assertEquals(Reflect.get(result.executor, "sourceProject"), sourceProject);
     assertEquals(Reflect.get(result.executor, "agentEntrypoint"), agentEntrypoint);
     assertEquals(Reflect.get(result.privateAuthority, "sourceAuthToken"), "source-read-token");
