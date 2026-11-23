@@ -424,7 +424,9 @@ async function fetchWithHostTransport(
     allowedResolvedAddressesForTests: transport.allowedResolvedAddressesForTests,
     options: {
       allowInternalEgress: allowInternalEgress ||
-        isInternalEgressOverrideEnabled(getHostEnv(HOST_INTERNAL_EGRESS_OVERRIDE_ENV)),
+        isInternalEgressOverrideEnabled(
+          getHostEnvExcludingEnvFile(HOST_INTERNAL_EGRESS_OVERRIDE_ENV),
+        ),
       resolveHost: transport.resolveHost,
     },
   });
@@ -473,7 +475,7 @@ function parseAllowedInternalProviderOrigins(value: string | undefined): Readonl
 /** Whether `base.origin` is on the host-owned internal-provider allowlist ({@link HOST_ALLOWED_INTERNAL_PROVIDER_ORIGINS_ENV}). */
 export function isHostAllowedInternalProviderOrigin(base: URL): boolean {
   const allowedOrigins = parseAllowedInternalProviderOrigins(
-    getHostEnv(HOST_ALLOWED_INTERNAL_PROVIDER_ORIGINS_ENV),
+    getHostEnvExcludingEnvFile(HOST_ALLOWED_INTERNAL_PROVIDER_ORIGINS_ENV),
   );
   return IntrinsicReflectApply(SetPrototypeHas, allowedOrigins, [
     readNativeURLString(base, URLOriginGet),
