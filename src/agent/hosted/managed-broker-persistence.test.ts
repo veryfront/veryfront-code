@@ -129,6 +129,25 @@ describe("managed persistence authority validation", () => {
     fixture.assertNoEffects();
   });
 
+  it("retains snake-case projection input compatibility without a projection read", async () => {
+    const fixture = authorities();
+    const persistence = Reflect.apply(createManagedBrokerPersistence, undefined, [{
+      ...fixture.raw,
+      run: {
+        run_id: run.runId,
+        conversation_id: run.conversationId,
+        message_id: run.messageId,
+        latest_event_id: 42,
+        latest_external_event_sequence: 17,
+        status: "running",
+      },
+      completionAuthToken: "synthetic-completion-token",
+      terminalAuthToken: token(run.runId),
+    }]);
+    await persistence.cleanup();
+    fixture.assertNoEffects();
+  });
+
   it("requires completion credentials when creating terminal authority", () => {
     const fixture = authorities();
     for (const completionAuthToken of [undefined, null, "", " "]) {

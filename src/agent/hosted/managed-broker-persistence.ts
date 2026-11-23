@@ -1,7 +1,10 @@
 import { terminalRoute } from "../conversation/terminal-route.ts";
 import type { ChatMessageMetadata, ChatUiMessageChunk } from "#veryfront/chat/protocol.ts";
 import type { ConversationRunEvent } from "../conversation/run-events.ts";
-import { type ConversationRunProjection } from "../conversation/durable-contracts.ts";
+import {
+  type ConversationRunProjection,
+  getConversationRunProjectionSchema,
+} from "../conversation/durable-contracts.ts";
 import {
   type ConversationHostedTerminalStateInput,
   createConversationHostedTerminalAdapter,
@@ -81,6 +84,18 @@ const getManagedBrokerRunSnapshotSchema = defineSchema((v) =>
   })
 );
 
+function readManagedBrokerRunSnapshot(
+  value: ConversationRunProjection | ManagedBrokerRunSnapshot,
+): ManagedBrokerRunSnapshot {
+  // Preserve the existing camel/snake response normalization. This decodes
+  // supplied admission state; it never reads a legacy run projection endpoint.
+  const decoded = getConversationRunProjectionSchema().parse(value);
+  return getManagedBrokerRunSnapshotSchema().parse({
+    ...decoded,
+    canonicalRunId: value.canonicalRunId,
+  });
+}
+
 function requireActivePersistenceRun(run: ManagedBrokerRunSnapshot): void {
   if (run.status !== "pending" && run.status !== "running" && run.status !== "waiting_for_tool") {
     throw new TypeError("Managed broker persistence requires an active run");
@@ -129,7 +144,7 @@ export function createManagedBrokerTerminal(input: {
   resolveProvider(modelId: string): string;
   fetch?: typeof globalThis.fetch;
 }): ManagedBrokerTerminal {
-  const run = getManagedBrokerRunSnapshotSchema().parse(input.run);
+  const run = readManagedBrokerRunSnapshot(input.run);
   if (typeof input.completionAuthToken !== "string" || !input.completionAuthToken.trim()) {
     throw new TypeError("Managed broker requires completion authorization");
   }
@@ -186,7 +201,7 @@ export function createManagedBrokerPersistence(input: {
   /** Trusted migration opt-in. Disabled until the API accepts runtime_observations. */
   runtimeObservations?: { projectId: string };
 }) {
-  const run = getManagedBrokerRunSnapshotSchema().parse(input.run);
+  const run = readManagedBrokerRunSnapshot(input.run);
   if (
     typeof input.completionAuthToken !== "string" || !input.completionAuthToken.trim() ||
     input.completionAuthToken === input.runEventToken
@@ -222,7 +237,7 @@ export function createManagedBrokerPersistenceFromCapability(input: {
   toolCallAdmissions?: { projectId: string };
   runtimeObservations?: { projectId: string };
 }) {
-  const run = getManagedBrokerRunSnapshotSchema().parse(input.run);
+  const run = readManagedBrokerRunSnapshot(input.run);
   requireActivePersistenceRun(run);
   const terminalState = terminalStates.get(input.terminal);
   if (
