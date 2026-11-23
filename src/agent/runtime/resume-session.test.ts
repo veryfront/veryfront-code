@@ -451,6 +451,68 @@ describe("agent/runtime/resume-session", () => {
     assertEquals(manager.getRunStatus("run_1"), "running");
   });
 
+  it("remembers a fenced ordinary cancel only for starts before the fence", async () => {
+    const manager = new RunResumeSessionManager<{ ok: boolean }>();
+    const authority = await authorizeRunControl(() => true, {
+      request: new Request("https://runtime.example.test/api/runs/run_1", { method: "DELETE" }),
+      runId: "run_1",
+      operation: "cancel",
+    });
+    if (!authority) throw new Error("Test authorizer must grant authority");
+
+    manager.startRun({ runId: "run_1", threadId: crypto.randomUUID(), startedFromEventId: 30 });
+    assertEquals(manager.wasLatestStartBefore("run_1", 20), false);
+    assertEquals(manager.wasLatestStartBefore("run_1", 31), true);
+    assertEquals(manager.wasLatestStartBefore("missing", 20), false, "unknown is not before");
+    assertEquals(
+      manager.cancelRunWithAuthority(authority, { onlyIfStartedBeforeEventId: 20 }),
+      false,
+      "a newer start must not be cancelled",
+    );
+    assertEquals(manager.getRunStatus("run_1"), "running");
+    manager.completeRun("run_1");
+
+    assertThrows(
+      () =>
+        manager.startRun({ runId: "run_1", threadId: crypto.randomUUID(), startedFromEventId: 10 }),
+      RunCancelledError,
+      "cancelled before start",
+    );
+    manager.startRun({ runId: "run_1", threadId: crypto.randomUUID(), startedFromEventId: 35 });
+    assertEquals(manager.getRunStatus("run_1"), "running");
+  });
+
+  it("cancels a session of unknown generation for a park fence only", async () => {
+    const manager = new RunResumeSessionManager<{ ok: boolean }>();
+    const grant = async () => {
+      const authority = await authorizeRunControl(() => true, {
+        request: new Request("https://runtime.example.test/api/runs/run_1", { method: "DELETE" }),
+        runId: "run_1",
+        operation: "cancel",
+      });
+      if (!authority) throw new Error("Test authorizer must grant authority");
+      return authority;
+    };
+
+    manager.startRun({ runId: "run_1", threadId: crypto.randomUUID() });
+    assertEquals(
+      manager.cancelRunWithAuthority(await grant(), {
+        onlyIfStartedBeforeEventId: 20,
+        cancelUnknownGeneration: false,
+      }),
+      false,
+    );
+    assertEquals(manager.getRunStatus("run_1"), "running");
+    assertEquals(
+      manager.cancelRunWithAuthority(await grant(), {
+        rememberCancellation: false,
+        onlyIfStartedBeforeEventId: 20,
+      }),
+      true,
+      "a park fence keeps cancelling a session without generation metadata",
+    );
+  });
+
   it("keeps the strictest remembered cancellation when park cancels follow", async () => {
     const manager = new RunResumeSessionManager<{ ok: boolean }>();
     const grant = async (runId: string) => {

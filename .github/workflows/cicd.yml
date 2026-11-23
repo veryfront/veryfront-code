@@ -1445,6 +1445,7 @@ jobs:
       - uses: ./.github/actions/setup-deno
         timeout-minutes: 5
       - uses: ./.github/actions/prepare-build-deps
+        timeout-minutes: 5
       - name: Verify proxy dependency lock is current
         run: |
           deno task build:proxy-lock
@@ -1468,6 +1469,9 @@ jobs:
     if: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && ((github.ref == 'refs/heads/main' && inputs.maintenance_release_number == '') || (github.event_name == 'workflow_dispatch' && inputs.maintenance_release_number != '' && startsWith(github.ref, 'refs/heads/maintenance/rc.'))) }}
     needs: [version-check, tested-run]
     runs-on: ${{ matrix.os }}
+    # Recent main legs finish in under four minutes. Without a bound, a hung
+    # step holds the run and the release it gates for the six-hour default.
+    timeout-minutes: 15
     continue-on-error: ${{ contains(matrix.os, 'windows') }}
     strategy:
       fail-fast: false
@@ -1522,6 +1526,7 @@ jobs:
         run: deno run -A scripts/ci/prepare-rc-build.ts
 
       - uses: ./.github/actions/prepare-build-deps
+        timeout-minutes: 5
 
       - name: Verify proxy dependency lock is current
         if: matrix.profile == 'proxy'

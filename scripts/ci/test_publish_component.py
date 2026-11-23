@@ -1,13 +1,17 @@
 import base64
+import contextlib
 from copy import deepcopy
 import hashlib
 import importlib.util
 import io
 import json
 from pathlib import Path
+import ssl
+import subprocess
+import sys
 import tarfile
 import unittest
-from urllib.error import HTTPError
+from urllib.error import HTTPError, URLError
 from urllib.request import Request
 
 spec=importlib.util.spec_from_file_location('component_publisher',Path(__file__).with_name('publish-component.py'))
@@ -213,11 +217,13 @@ class AssetRouteTests(unittest.TestCase):
     def test_asset_reader_accepts_a_direct_stream_or_the_asset_host_only(self):
         route='https://api.github.com/repos/veryfront/veryfront/releases/assets/701'
         class Response:
-            def __init__(self,final):self.status=200;self.final=final
+            def __init__(self,final):self.status=200;self.final=final;self.body=b'x'*3
             def __enter__(self):return self
             def __exit__(self,*_):return False
             def geturl(self):return self.final
-            def read(self,limit):return b'x'*3
+            def read(self,limit):
+                chunk,self.body=self.body[:limit],self.body[limit:]
+                return chunk
         def opener_for(final):
             class Opener:
                 def open(self,request,timeout):
@@ -236,6 +242,21 @@ class AssetRouteTests(unittest.TestCase):
             with self.assertRaises(ValueError):publisher.public_asset(701,4)
         finally:
             publisher.build_opener=original
+
+    def test_a_slow_stream_stops_at_the_deadline(self):
+        now=[0];reads=[]
+        class Slow:
+            def read(self,limit):
+                reads.append(limit);now[0]+=6
+                return b'x'
+        publisher.ATTEMPT_BUDGET.update(deadline=10,clock=lambda:now[0])
+        try:
+            with self.assertRaises(TimeoutError):publisher.read_bounded(Slow(),5)
+        finally:
+            publisher.ATTEMPT_BUDGET.clear()
+        self.assertEqual(len(reads),2)
+        self.assertEqual(publisher.read_bounded(io.BytesIO(b'abcdef'),4),b'abcd')
+        self.assertEqual(publisher.read_bounded(io.BytesIO(b'ab'),4),b'ab')
 
     def test_asset_reader_refuses_unbounded_requests(self):
         for asset_id,size in [(0,1),(True,1),(1,0),(1,publisher.TARBALL_LIMIT+1)]:
@@ -275,10 +296,154 @@ class ReleaseReadinessTests(unittest.TestCase):
     def test_other_http_failures_and_invalid_materials_fail_immediately(self):
         from urllib.error import HTTPError
         def no_sleep(_):self.fail('Invalid release facts must not be retried')
-        for status in (401,403,429,500):
+        for status in (401,403,429):
             def public(url):raise HTTPError(url,status,'Refused',{},None)
             with self.subTest(status=status),self.assertRaises(HTTPError):
                 publisher.witness_when_ready(VERSION,ENV,public,Facts().source,sleep=no_sleep)
         facts=Facts();facts.release['assets'][0]['digest']=None
         with self.assertRaises(ValueError):
             publisher.witness_when_ready(VERSION,ENV,facts.public,facts.source,sleep=no_sleep)
+
+    def test_transient_server_and_transport_failures_are_retried(self):
+        failures={'server':lambda url:HTTPError(url,502,'Bad Gateway',{},None),
+                  'transport':lambda url:URLError('connection reset'),
+                  'timeout':lambda url:TimeoutError('timed out'),
+                  'tls read':lambda url:ssl.SSLEOFError(8,'EOF occurred in violation of protocol')}
+        for name,failure in failures.items():
+            facts=Facts();attempts=[];elapsed=[0];log=io.StringIO()
+            def public(url):
+                attempts.append(url)
+                if len(attempts)==1:raise failure(url)
+                return facts.public(url)
+            def sleep(seconds):elapsed[0]+=seconds
+            with self.subTest(failure=name),contextlib.redirect_stderr(log):
+                result=publisher.witness_when_ready(VERSION,ENV,public,facts.source,
+                    clock=lambda:elapsed[0],sleep=sleep)
+                self.assertEqual(result['release']['package_source_revision'],SOURCE)
+                self.assertEqual(elapsed[0],5)
+                self.assertIn('Retrying after a transient read failure',log.getvalue())
+
+    def test_persistent_server_failure_is_refused_after_bounded_retries(self):
+        elapsed=[0];attempts=[]
+        def public(url):
+            attempts.append(url)
+            raise HTTPError(url,503,'Unavailable',{},None)
+        def sleep(seconds):elapsed[0]+=seconds
+        with contextlib.redirect_stderr(io.StringIO()),self.assertRaises(HTTPError):
+            publisher.witness_when_ready(VERSION,ENV,public,Facts().source,
+                clock=lambda:elapsed[0],sleep=sleep)
+        self.assertEqual(len(attempts),5)
+        self.assertEqual(elapsed[0],75)
+
+    def test_transient_retries_stay_inside_the_publication_deadline(self):
+        elapsed=[0];attempts=[]
+        def public(url):
+            attempts.append(url)
+            if len(attempts)<=29:raise HTTPError(url,404,'Not Found',{},None)
+            raise HTTPError(url,502,'Bad Gateway',{},None)
+        def sleep(seconds):elapsed[0]+=seconds
+        with contextlib.redirect_stderr(io.StringIO()),self.assertRaises(HTTPError):
+            publisher.witness_when_ready(VERSION,ENV,public,Facts().source,
+                clock=lambda:elapsed[0],sleep=sleep)
+        self.assertEqual(elapsed[0],900)
+        # 29 waits, then retries at 870, 875 and 885 s. The sleep that reaches
+        # the deadline is not followed by another attempt.
+        self.assertEqual(len(attempts),32)
+
+    def test_transient_source_read_failures_are_retried(self):
+        failures={'server':(1,b'gh: Bad Gateway (HTTP 502)\n'),'transport':(1,b'error connecting to api.github.com\n'),
+                  'timeout':None}
+        for name,failure in failures.items():
+            facts=Facts();runs=[];elapsed=[0];log=io.StringIO()
+            def run(command,**options):
+                runs.append(command)
+                path=command[4]
+                if len(runs)==1:
+                    if failure is None:raise subprocess.TimeoutExpired(command,60)
+                    return subprocess.CompletedProcess(command,failure[0],b'',failure[1])
+                return subprocess.CompletedProcess(command,0,json.dumps(facts.source(path)).encode(),b'')
+            def sleep(seconds):elapsed[0]+=seconds
+            original=publisher.subprocess.run
+            publisher.subprocess.run=run
+            try:
+                with self.subTest(failure=name),contextlib.redirect_stderr(log):
+                    result=publisher.witness_when_ready(VERSION,ENV,facts.public,clock=lambda:elapsed[0],sleep=sleep)
+                    self.assertEqual(result['release']['package_source_revision'],SOURCE)
+                    self.assertEqual(elapsed[0],5)
+                    self.assertIn('Retrying after a transient read failure (source read commit',log.getvalue())
+            finally:
+                publisher.subprocess.run=original
+
+    def test_reads_near_the_deadline_get_only_the_remaining_time(self):
+        facts=Facts();elapsed=[0];attempts=[];timeouts=[]
+        def public(url):
+            attempts.append(url)
+            if len(attempts)<=29:raise HTTPError(url,404,'Not Found',{},None)
+            return facts.public(url)
+        def run(command,**options):
+            timeouts.append(options['timeout'])
+            return subprocess.CompletedProcess(command,0,json.dumps(facts.source(command[4])).encode(),b'')
+        def sleep(seconds):elapsed[0]+=seconds
+        original=publisher.subprocess.run
+        publisher.subprocess.run=run
+        try:
+            with contextlib.redirect_stderr(io.StringIO()):
+                publisher.witness_when_ready(VERSION,ENV,public,clock=lambda:elapsed[0],sleep=sleep)
+        finally:
+            publisher.subprocess.run=original
+        self.assertEqual(elapsed[0],870)
+        self.assertEqual(timeouts,[30,30])
+        # Outside a deadline, and after one ends, each read keeps its own limit.
+        self.assertEqual(publisher.read_timeout(120),120)
+
+    def test_rejected_source_reads_are_refused_at_once(self):
+        def no_sleep(_):self.fail('A rejected source read must not be retried')
+        for stderr in (b'gh: Not Found (HTTP 404)\n',b'gh: Forbidden (HTTP 403)\n',b'gh: Unprocessable (HTTP 422)\n'):
+            def run(command,**options):return subprocess.CompletedProcess(command,1,b'',stderr)
+            original=publisher.subprocess.run
+            publisher.subprocess.run=run
+            try:
+                with self.subTest(stderr=stderr),self.assertRaises(ValueError) as refused:
+                    publisher.witness_when_ready(VERSION,ENV,Facts().public,sleep=no_sleep)
+                self.assertEqual(publisher.refusal_reason(refused.exception),'failed check: source read commit')
+            finally:
+                publisher.subprocess.run=original
+
+class RefusalReportTests(unittest.TestCase):
+    def reason(self,facts):
+        try:facts.witness()
+        except Exception as error:return publisher.refusal_reason(error)
+        raise AssertionError('The witness must refuse these facts')
+
+    def test_refusal_names_the_failed_check(self):
+        def git_head(f):f.package['gitHead']='main'
+        def ancestry(f):f.ancestry={'status':'diverged','base_commit':{'sha':SOURCE}}
+        def digest(f):f.release['assets'][0]['digest']=None
+        def draft(f):f.release['draft']=True
+        for mutate,expected in [(git_head,'package gitHead and integrity format'),
+                                (ancestry,'package gitHead is an ancestor of the CI commit'),
+                                (digest,'release asset veryfront-linux-x64 id, size and digest'),
+                                (draft,'release record identity')]:
+            facts=Facts();mutate(facts)
+            with self.subTest(case=mutate.__name__):self.assertEqual(self.reason(facts),'failed check: '+expected)
+        facts=SuspendedFacts().build();facts.blobs[701]=facts.tgz[:-1]+bytes([facts.tgz[-1]^1])
+        self.assertEqual(self.reason(facts),'failed check: release asset veryfront-'+VERSION+'.tgz digest')
+
+    def test_http_refusal_reports_status_and_route_without_query_or_body(self):
+        error=HTTPError('https://release-assets.githubusercontent.com/x?sig=secret#part',503,'Unavailable',{},
+                        io.BytesIO(b'private body'))
+        self.assertEqual(publisher.refusal_reason(error),'HTTP 503 from https://release-assets.githubusercontent.com/x')
+
+    def test_other_failures_report_their_type_without_their_message(self):
+        self.assertEqual(publisher.refusal_reason(URLError('private detail')),'URLError')
+        self.assertEqual(publisher.refusal_reason(KeyError('private detail')),'KeyError')
+        self.assertEqual(publisher.refusal_reason(TimeoutError('Code release material was not published within fifteen minutes')),
+                         'TimeoutError')
+
+    def test_refused_run_prints_the_failed_check(self):
+        script=Path(__file__).with_name('publish-component.py')
+        result=subprocess.run([sys.executable,'-I',str(script),'not-a-version'],capture_output=True,text=True,
+                              env={},timeout=60,check=False)
+        self.assertEqual(result.returncode,1)
+        self.assertEqual(result.stderr.strip(),
+                         'Code release witness refused (failed check: version format); no component receipt issued')
