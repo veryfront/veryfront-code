@@ -1,5 +1,6 @@
 import { assert, assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import { withTempDir } from "#veryfront/testing/deno-compat.ts";
 
 // The lint shard runs both validators, so their failure output lands in CI
 // logs. It must name files relative to the checked root, never by the
@@ -21,21 +22,18 @@ async function runValidator(
   };
 }
 
-async function withFixture(
+function withFixture(
   files: Record<string, string>,
   check: (root: string) => Promise<void>,
 ): Promise<void> {
-  const root = await Deno.makeTempDir({ prefix: "validator-output-paths-" });
-  try {
+  return withTempDir(async (root) => {
     for (const [path, content] of Object.entries(files)) {
       const target = `${root}/${path}`;
       await Deno.mkdir(target.slice(0, target.lastIndexOf("/")), { recursive: true });
       await Deno.writeTextFile(target, content);
     }
     await check(root);
-  } finally {
-    await Deno.remove(root, { recursive: true });
-  }
+  }, { prefix: "validator-output-paths-" });
 }
 
 describe("docs validator output paths", () => {
