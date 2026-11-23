@@ -13,6 +13,7 @@ import {
   receiptNamesProject,
   selectMergeTargetBaselinePaths,
 } from "./command.ts";
+import { parseCliArgs } from "#cli/shared/args";
 import type { ApiClient } from "#cli/shared/config";
 import type { ParsedArgs } from "#cli/shared/types";
 
@@ -123,6 +124,17 @@ describe("parseMergeArgs", () => {
     const args = { _: ["merge"] } as ParsedArgs;
     const result = parseMergeArgs(args);
     assertEquals(result.success, false);
+  });
+
+  it("reads --project and -p from the command line without taking the branch", () => {
+    for (const flag of ["--project", "-p"]) {
+      const result = parseMergeArgs(parseCliArgs(["merge", "feature", flag, "support-desk"]));
+      assertEquals(result.success, true, flag);
+
+      if (!result.success) return;
+      assertEquals(result.data.branch, "feature", flag);
+      assertEquals(result.data.project, "support-desk", flag);
+    }
   });
 });
 

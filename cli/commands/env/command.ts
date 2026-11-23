@@ -1,7 +1,11 @@
 import { defineSchema, lazySchema } from "veryfront/schemas";
 import type { InferSchema } from "veryfront/extensions/schema";
 import { CommonArgs, createArgParser } from "#cli/shared/args";
-import { resolveConfigWithAuth, type ResolvedConfig } from "#cli/shared/config";
+import {
+  resolveConfigWithAuth,
+  type ResolvedConfig,
+  resolveLinkedProjectConfigWithAuth,
+} from "#cli/shared/config";
 import { projectApiReference } from "#cli/shared/project-resolution";
 import {
   createHttpDeployControlPlane,
@@ -43,7 +47,12 @@ export async function mintEnvironmentAccessToken(
   options: EnvironmentTokenOptions,
   dependencies: EnvironmentTokenDependencies = {},
 ): Promise<EnvironmentAccessToken> {
-  const resolveConfig = dependencies.resolveConfig ?? resolveConfigWithAuth;
+  // --project names the target itself. Without it the project must be linked
+  // or configured: a slug guessed from the folder or package name stops here.
+  const resolveConfig = dependencies.resolveConfig ??
+    (options.projectReference
+      ? resolveConfigWithAuth
+      : (projectDir?: string) => resolveLinkedProjectConfigWithAuth(projectDir));
   const createControlPlane = dependencies.createControlPlane ?? createHttpDeployControlPlane;
   const config = await resolveConfig(options.projectDir);
   const projectReference = options.projectReference ?? projectApiReference(config);

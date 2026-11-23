@@ -11,7 +11,11 @@ import { defineSchema, lazySchema } from "veryfront/schemas";
 import type { InferSchema } from "veryfront/extensions/schema";
 import { cliLogger } from "#cli/utils";
 import { cwd } from "veryfront/platform";
-import { type ApiClient, createApiClient, resolveConfigWithAuth } from "#cli/shared/config";
+import {
+  type ApiClient,
+  createApiClient,
+  resolveLinkedProjectConfigWithAuth,
+} from "#cli/shared/config";
 import { CommonArgs, createArgParser } from "#cli/shared/args";
 import { confirmPrompt, logInfo, logSuccess } from "#cli/utils";
 import { createSpinner } from "#cli/ui";
@@ -37,6 +41,7 @@ export const getMergeArgsSchema = defineSchema((v) =>
   v.object({
     branch: v.string().min(1, "Branch name is required"),
     into: v.string().min(1).optional(),
+    project: v.string().min(1).optional(),
     dryRun: v.boolean().default(false),
     force: v.boolean().default(false),
   })
@@ -55,6 +60,9 @@ export type MergeOptions = InferSchema<ReturnType<typeof getMergeArgsSchema>>;
 export const parseMergeArgs = createArgParser(MergeArgsSchema, {
   branch: { keys: [], type: "string", positional: 0 },
   into: CommonArgs.into,
+  // Only the documented names: the command-line parser reads a flag's arity
+  // for merge from the command help.
+  project: { keys: ["project", "p"], type: "string" },
   dryRun: CommonArgs.dryRun,
   force: CommonArgs.force,
 });
@@ -308,7 +316,13 @@ export async function mergeCommand(options: MergeOptions): Promise<void> {
   let spinner = createSpinner("Resolving configuration...");
 
   const projectDir = cwd();
-  const config = await resolveConfigWithAuth(projectDir);
+  // Without --project, a slug guessed from the folder or package name stops
+  // here: merging into a project that only shares the folder's name is not
+  // something to do by chance.
+  const resolved = await resolveLinkedProjectConfigWithAuth(projectDir, options.project);
+  // The id of the project linked to this folder does not describe a project
+  // named with --project.
+  const config = options.project === undefined ? resolved : { ...resolved, projectId: undefined };
   const client = createApiClient(config);
 
   spinner.update(`Looking up branch "${branch}"...`);
