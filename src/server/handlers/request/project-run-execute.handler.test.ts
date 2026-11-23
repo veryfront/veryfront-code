@@ -7554,6 +7554,165 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     }
   });
 
+  // Every combination of an eval config allowlist, an eval config step ceiling
+  // and an eval case allowlist and step ceiling. Each field the config leaves
+  // unset falls back to the eval case's own value, the way the hosted path's
+  // forwarded runtime overrides resolve it, so the local run is never less
+  // restricted than the most specific restriction declared for that field.
+  for (const configAllowedTools of [undefined, ["config_tool"]]) {
+    for (const configMaxSteps of [undefined, 2]) {
+      for (const caseRestricted of [false, true]) {
+        const label = [
+          configAllowedTools ? "config allowlist" : "no config allowlist",
+          configMaxSteps ? "config step ceiling" : "no config step ceiling",
+          caseRestricted ? "case allowlist and step ceiling" : "no case restrictions",
+        ].join(", ");
+        it(`applies the most specific local eval restriction per field (${label})`, async () => {
+          let sourceAgentStreamCalls = 0;
+          let modelCalls = 0;
+          let firstCallToolNames: string[] | undefined;
+          const sourceAgent = createStreamingAgent("researcher", "Paris", undefined, () => {
+            sourceAgentStreamCalls += 1;
+          });
+          const evalTool = (id: string) =>
+            tool({
+              id,
+              description: `${id} for the eval restriction matrix.`,
+              inputSchema: defineSchema((v) => v.object({}))(),
+              execute: () => Promise.resolve("ok"),
+            });
+          agentRegistry.register("researcher", {
+            ...sourceAgent,
+            config: {
+              ...sourceAgent.config,
+              tools: {
+                config_tool: evalTool("config_tool"),
+                case_tool: evalTool("case_tool"),
+                other_tool: evalTool("other_tool"),
+              },
+              maxSteps: 5,
+              resolveModelTransport: () =>
+                Promise.resolve({
+                  model: {
+                    provider: "anthropic",
+                    modelId: "claude-sonnet-4-6",
+                    doGenerate: () => {
+                      throw new Error("Expected the streaming path");
+                    },
+                    // Every step calls the first offered tool, so the run only
+                    // stops at its step ceiling.
+                    doStream: (options: ModelRuntimeCallOptions) => {
+                      modelCalls += 1;
+                      const toolNames = (options.tools ?? [])
+                        .map((definition) => definition.name)
+                        .toSorted();
+                      firstCallToolNames ??= toolNames;
+                      const toolName = toolNames[0] ?? "config_tool";
+                      return Promise.resolve({
+                        stream: new ReadableStream<RuntimeStreamPart>({
+                          start(controller) {
+                            controller.enqueue({
+                              type: "tool-call",
+                              toolCallId: `call-${modelCalls}`,
+                              toolName,
+                              input: {},
+                            } as RuntimeStreamPart);
+                            controller.enqueue({
+                              type: "finish",
+                              finishReason: "tool-calls",
+                              totalUsage: null,
+                            } as RuntimeStreamPart);
+                            controller.close();
+                          },
+                        }),
+                      });
+                    },
+                  } as ModelRuntime<ModelRuntimeCallOptions>,
+                }),
+            } as Agent["config"],
+          });
+          const handler = new ProjectRunExecuteHandler(createDeps({
+            runTask: runTaskDefinition,
+            findEvalById: async (target) =>
+              target === "eval:deep-research"
+                ? {
+                  id: "eval:deep-research",
+                  name: "Deep research quality",
+                  filePath: "evals/deep-research.eval.ts",
+                  exportName: "default",
+                  definition: evalAgent({
+                    id: "eval:deep-research",
+                    target: "agent:researcher",
+                    dataset: datasets.inline([
+                      {
+                        id: "q1",
+                        input: caseRestricted
+                          ? { prompt: "France capital?", allowedTools: ["case_tool"], maxSteps: 3 }
+                          : { prompt: "France capital?" },
+                      },
+                    ]),
+                  }),
+                }
+                : null,
+            runEval: runEvalDefinition,
+            createEvalAgentAdapter: (config) =>
+              createAgentServiceEvalAdapter({ ...config, requestTimeoutMs: 250 }),
+          }));
+          const body = {
+            runId: "run_eval_restriction_matrix",
+            kind: "task",
+            target: "task:eval",
+            projectId: "proj-1",
+            runtimeAgUiEndpoint: "http://localhost:4311/api/ag-ui",
+            config: {
+              eval_id: "eval:deep-research",
+              ...(configAllowedTools ? { allowed_tools: configAllowedTools } : {}),
+              ...(configMaxSteps ? { max_steps: configMaxSteps } : {}),
+            },
+          };
+          const { request, publicKeyPem } = await signedRequest(
+            "/api/control-plane/runs/run_eval_restriction_matrix/execute",
+            body,
+            { "x-token": "runtime-token" },
+            "http://localhost:4311",
+          );
+          try {
+            const result = await withEnvValue(
+              "PORT",
+              "4311",
+              () => handler.handle(request, createCtx(publicKeyPem)),
+            );
+            assertExists(result.response);
+            assertEquals(result.response.status, 200);
+
+            const restricted = configAllowedTools !== undefined || configMaxSteps !== undefined ||
+              caseRestricted;
+            if (!restricted) {
+              // Nothing restricts the run, so the source agent streams itself.
+              assertEquals(sourceAgentStreamCalls, 1);
+              assertEquals(modelCalls, 0);
+              return;
+            }
+            assertEquals(sourceAgentStreamCalls, 0);
+            const expectedAllowedTools = configAllowedTools ??
+              (caseRestricted ? ["case_tool"] : undefined);
+            assertExists(firstCallToolNames);
+            if (expectedAllowedTools) {
+              assertEquals(firstCallToolNames, expectedAllowedTools);
+            } else {
+              for (const name of ["case_tool", "config_tool", "other_tool"]) {
+                assertEquals(firstCallToolNames.includes(name), true);
+              }
+            }
+            assertEquals(modelCalls, configMaxSteps ?? (caseRestricted ? 3 : 5));
+          } finally {
+            agentRegistry.delete("researcher");
+          }
+        });
+      }
+    }
+  }
+
   for (
     const publicParentId of [
       "run_66666666-6666-4666-8666-666666666666",

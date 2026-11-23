@@ -241,6 +241,34 @@ describe("eval/agent-service", () => {
     assertEquals(body.forwardedProps, { veryfront: { agentId: "researcher" } });
   });
 
+  for (
+    const fieldCase of [
+      {
+        name: "fills the allowlist from the eval case when only a step ceiling is configured",
+        configured: { maxSteps: 2 },
+        expected: { allowedTools: ["case_tool"], maxSteps: 2 },
+      },
+      {
+        name: "fills the step ceiling from the eval case when only an allowlist is configured",
+        configured: { allowedTools: ["config_tool"] },
+        expected: { allowedTools: ["config_tool"], maxSteps: 3 },
+      },
+    ]
+  ) {
+    it(`${fieldCase.name} in the forwarded runtime overrides`, () => {
+      const body = buildAgentServiceEvalRequestBody({
+        exampleId: "smoke",
+        input: { prompt: "List files", allowedTools: ["case_tool"], maxSteps: 3 },
+        agentId: "researcher",
+        ...fieldCase.configured,
+      });
+
+      assertEquals(body.forwardedProps, {
+        veryfront: { agentId: "researcher", runtimeOverrides: fieldCase.expected },
+      });
+    });
+  }
+
   it("forwards an environment context without other forwarded props", () => {
     const body = buildAgentServiceEvalRequestBody({
       exampleId: "smoke",

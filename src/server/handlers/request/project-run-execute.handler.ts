@@ -160,11 +160,7 @@ import {
   createAgentServiceEvalAdapter,
 } from "#veryfront/eval/agent-service.ts";
 import { bindTrustedLocalEvalFetch } from "#veryfront/eval/agent-service/trusted-fetch.ts";
-import {
-  type AgUiRuntimeRestrictions,
-  createAgUiHandler,
-  hasAgUiRuntimeRestrictions,
-} from "#veryfront/agent/ag-ui/handler.ts";
+import { type AgUiRuntimeRestrictions, createAgUiHandler } from "#veryfront/agent/ag-ui/handler.ts";
 import { runWithEvalEnvironmentContext } from "#veryfront/agent/runtime/eval-environment-context-scope.ts";
 import { getAgUiRuntimeContextItemSchema } from "#veryfront/agent/runtime/ag-ui-contract.ts";
 import { hostedChatRuntimeOverridesSchema } from "#veryfront/agent/hosted/chat-request.ts";
@@ -4003,6 +3999,36 @@ function withoutLocalEvalCredentials(init: RequestInit | undefined): RequestInit
   return local;
 }
 
+/**
+ * The restrictions a local eval run applies, resolved per field.
+ *
+ * A field the eval config sets wins: it comes from the control-plane request
+ * and project code cannot rewrite it on its way here. A field the config
+ * leaves unset falls back to the value the eval adapter forwarded in the
+ * request body (for example an eval case's own `allowedTools` or `maxSteps`),
+ * the same `config ?? case` resolution the hosted path's forwarded runtime
+ * overrides get. Taking the configured set whole would drop a forwarded field
+ * the config never set and run the source agent with its full tool set or
+ * step budget. The forwarded body only fills fields the config left open, so
+ * it can add a restriction but never loosen a configured one.
+ */
+async function resolveLocalEvalRuntimeRestrictions(
+  configured: AgUiRuntimeRestrictions | undefined,
+  request: Request,
+): Promise<AgUiRuntimeRestrictions | undefined> {
+  if (configured?.allowedTools !== undefined && configured.maxSteps !== undefined) {
+    return configured;
+  }
+  const forwarded = await readLocalEvalRuntimeRestrictions(request);
+  const allowedTools = configured?.allowedTools ?? forwarded?.allowedTools;
+  const maxSteps = configured?.maxSteps ?? forwarded?.maxSteps;
+  if (allowedTools === undefined && maxSteps === undefined) return undefined;
+  return {
+    ...(allowedTools === undefined ? {} : { allowedTools }),
+    ...(maxSteps === undefined ? {} : { maxSteps }),
+  };
+}
+
 function createLocalEvalAgentFetch(input: {
   endpoint: string;
   agentId?: string;
@@ -4021,8 +4047,10 @@ function createLocalEvalAgentFetch(input: {
     if (!isLocalAgUiEndpoint(request.url)) {
       return trustedHostFetch(requestInput, withoutLocalEvalCredentials(init));
     }
-    const runtimeRestrictions = input.runtimeRestrictions ??
-      await readLocalEvalRuntimeRestrictions(request);
+    const runtimeRestrictions = await resolveLocalEvalRuntimeRestrictions(
+      input.runtimeRestrictions,
+      request,
+    );
     const handler = createAgUiHandler({
       agent,
       context: { runIdBindsToolAuthorization: false },
@@ -5249,14 +5277,14 @@ function createEvalAdapterConfig(input: {
     ...(allowedTools !== undefined ? { allowedTools } : {}),
     ...(hasMaxSteps ? { maxSteps } : {}),
   };
-  // Pass a ceiling only when the eval config sets one. An empty set would
-  // suppress the local fetch's fallback to the restrictions forwarded in the
-  // request body (for example an eval case's own allowedTools), so the source
-  // agent would run with its full tool set.
-  const runtimeRestrictions = hasAgUiRuntimeRestrictions(configuredRestrictions)
-    ? configuredRestrictions
-    : undefined;
-  const localFetch = createLocalEvalAgentFetch({ endpoint, agentId, runtimeRestrictions });
+  // The local fetch fills each field this leaves unset from the restrictions
+  // the adapter forwards (for example an eval case's own allowedTools), so a
+  // partial config never widens the run past the case's own ceiling.
+  const localFetch = createLocalEvalAgentFetch({
+    endpoint,
+    agentId,
+    runtimeRestrictions: configuredRestrictions,
+  });
 
   function resolveAdapterFetch() {
     if (managedEndpointContext && agentId) {
