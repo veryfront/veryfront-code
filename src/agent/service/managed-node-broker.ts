@@ -34,6 +34,8 @@ export async function startNodeManagedAgentBroker(options: {
     agUi: ManagedNodeBrokerHandler;
     cancel: ManagedNodeBrokerHandler;
     resume: ManagedNodeBrokerHandler;
+    /** Trusted signed metadata verifier; omission refuses protocol probing. */
+    capabilities?: ManagedNodeBrokerHandler;
   };
 }): Promise<NodeVeryfrontServiceServer> {
   validateOptions(options);
@@ -47,7 +49,9 @@ export async function startNodeManagedAgentBroker(options: {
     void shutdown.catch(() => {});
     return shutdown;
   };
-  const handlers = Object.values(options.handlers);
+  const handlers = Object.values(options.handlers).filter(
+    (handler): handler is ManagedNodeBrokerHandler => handler !== undefined,
+  );
   const runtime = createVeryfrontServer({
     logger: options.logger,
     modules: [{
@@ -69,7 +73,11 @@ export async function startNodeManagedAgentBroker(options: {
         if (shuttingDown) {
           return Response.json({ errorCode: "BROKER_UNAVAILABLE" }, { status: 503 });
         }
-        return await options.handlers[route.kind].handle(request, {
+        const handler = options.handlers[route.kind];
+        if (!handler || (route.kind === "capabilities" && !await options.readiness())) {
+          return Response.json({ errorCode: "BROKER_UNAVAILABLE" }, { status: 503 });
+        }
+        return await handler.handle(request, {
           ...("runId" in route ? { runId: route.runId } : {}),
         });
       },
@@ -106,13 +114,16 @@ type RunRoute = { kind: "signedStream" | "cancel" | "resume"; runId: string };
 
 type Route =
   | RunRoute
-  | { kind: "durableStart" | "agUi" | "liveness" | "ready" | "invalid" };
+  | { kind: "durableStart" | "agUi" | "capabilities" | "liveness" | "ready" | "invalid" };
 
 function resolveRoute(method: string, pathname: string): Route | undefined {
   if (method === "GET" && pathname === "/liveness") return { kind: "liveness" };
   if (method === "GET" && pathname === "/readiness") return { kind: "ready" };
   if (method === "POST" && pathname === "/api/runs") return { kind: "durableStart" };
   if (method === "POST" && pathname === "/api/ag-ui") return { kind: "agUi" };
+  if (method === "POST" && pathname === "/api/control-plane/runtime/capabilities") {
+    return { kind: "capabilities" };
+  }
   const signed = /^\/api\/control-plane\/runs\/([^/]+)\/stream$/u.exec(pathname);
   if (method === "POST" && signed) return decodeRunRoute("signedStream", signed[1]!);
   const resume = /^\/api\/runs\/([^/]+)\/resume$/u.exec(pathname);
@@ -138,7 +149,7 @@ function decodeRunRoute(kind: RunRoute["kind"], value: string): Route {
 function validateOptions(options: {
   broker: ManagedNodeBrokerPool;
   readiness: unknown;
-  handlers: Record<string, ManagedNodeBrokerHandler>;
+  handlers: Record<string, ManagedNodeBrokerHandler | undefined>;
 }): void {
   if (
     !options.broker || typeof options.broker.shutdown !== "function" ||
@@ -150,4 +161,8 @@ function validateOptions(options: {
       throw new TypeError("Managed broker route configuration is incomplete");
     }
   }
+  if (
+    options.handlers.capabilities !== undefined &&
+    typeof options.handlers.capabilities.handle !== "function"
+  ) throw new TypeError("Managed broker capability verifier is invalid");
 }

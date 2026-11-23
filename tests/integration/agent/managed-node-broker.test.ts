@@ -7,6 +7,7 @@ const tick = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
 
 describe("managed node broker", () => {
   it("routes every required managed surface and preserves health contracts", async () => {
+    let ready = true;
     const calls: Array<{ name: string; runId?: string; body: string }> = [];
     const handler = (name: string) => ({
       async handle(request: Request, input: { runId?: string }) {
@@ -22,7 +23,7 @@ describe("managed node broker", () => {
       port: 0,
       bindAddress: "127.0.0.1",
       signals: [],
-      readiness: () => true,
+      readiness: () => ready,
       broker: {
         shutdown: () => Promise.resolve(),
         closed: Promise.resolve(),
@@ -34,6 +35,7 @@ describe("managed node broker", () => {
         agUi: handler("ag-ui"),
         cancel: handler("cancel"),
         resume: handler("resume"),
+        capabilities: handler("capabilities"),
       },
     });
     try {
@@ -48,6 +50,7 @@ describe("managed node broker", () => {
           ["POST", "/api/runs/run-3/resume", "resume-direct"],
           ["DELETE", "/api/control-plane/runs/run-4", ""],
           ["POST", "/api/control-plane/runs/run-5/resume", "resume-control"],
+          ["POST", "/api/control-plane/runtime/capabilities", "signed-capabilities"],
         ]
       ) {
         const response = await fetch(`${server.url}${path}`, { method, body: body || undefined });
@@ -62,7 +65,16 @@ describe("managed node broker", () => {
         { name: "resume", runId: "run-3", body: "resume-direct" },
         { name: "cancel", runId: "run-4", body: "" },
         { name: "resume", runId: "run-5", body: "resume-control" },
+        { name: "capabilities", body: "signed-capabilities" },
       ]);
+      ready = false;
+      const unavailable = await fetch(`${server.url}/api/control-plane/runtime/capabilities`, {
+        method: "POST",
+        body: "signed-capabilities",
+      });
+      assertEquals(unavailable.status, 503);
+      await unavailable.body?.cancel();
+      assertEquals(calls.length, 8);
     } finally {
       await server.stop();
     }
@@ -95,6 +107,13 @@ describe("managed node broker", () => {
       },
     });
     try {
+      const capabilities = await fetch(`${server.url}/api/control-plane/runtime/capabilities`, {
+        method: "POST",
+        body: "signed-capabilities",
+      });
+      assertEquals(capabilities.status, 503);
+      await capabilities.body?.cancel();
+      assertEquals(runIds, []);
       const routes = [
         ["POST", "/api/control-plane/runs/", "/stream"],
         ["POST", "/api/runs/", "/resume"],
