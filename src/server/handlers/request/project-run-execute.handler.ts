@@ -4514,6 +4514,17 @@ function getStringArrayConfig(
   config: Record<string, unknown>,
   keys: readonly string[],
 ): string[] {
+  return getOptionalStringArrayConfig(config, keys) ?? [];
+}
+
+/**
+ * Like `getStringArrayConfig`, but `undefined` when no key holds an array, so
+ * an unset list stays distinguishable from an explicitly empty one.
+ */
+function getOptionalStringArrayConfig(
+  config: Record<string, unknown>,
+  keys: readonly string[],
+): string[] | undefined {
   for (let keyIndex = 0; keyIndex < keys.length; keyIndex++) {
     const key = keys[keyIndex];
     if (key === undefined) continue;
@@ -4528,7 +4539,7 @@ function getStringArrayConfig(
     }
   }
 
-  return [];
+  return undefined;
 }
 
 function getStringConfig(
@@ -5225,11 +5236,13 @@ function createEvalAdapterConfig(input: {
     input.ctx.projectSlug,
   );
   const agentId = getEvalTargetAgentId(input.definition);
-  const allowedTools = getStringArrayConfig(config, ["allowed_tools", "allowedTools"]);
+  // An eval that names no allowed tools sends no allowlist, so its agent run
+  // keeps the tools a direct run gets. An explicit empty list still allows none.
+  const allowedTools = getOptionalStringArrayConfig(config, ["allowed_tools", "allowedTools"]);
   const maxSteps = getPositiveIntConfig(config, ["max_steps", "maxSteps"]);
   const hasMaxSteps = maxSteps != null;
   const runtimeRestrictions = {
-    allowedTools,
+    ...(allowedTools !== undefined ? { allowedTools } : {}),
     ...(hasMaxSteps ? { maxSteps } : {}),
   };
   const localFetch = createLocalEvalAgentFetch({ endpoint, agentId, runtimeRestrictions });
@@ -5276,7 +5289,7 @@ function createEvalAdapterConfig(input: {
       getHeaderFirstValue(input.req.headers.get("x-forwarded-proto")) ??
       getEndpointProtocol(input.request.runtimeAgUiEndpoint),
     model: getStringConfig(config, ["model"]),
-    allowedTools,
+    ...(allowedTools !== undefined ? { allowedTools } : {}),
     maxSteps,
     fetch: resolveAdapterFetch(),
   };

@@ -6674,6 +6674,67 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     assertEquals(executed, true);
   });
 
+  for (
+    const allowedToolsCase of [
+      { name: "omits the tool allowlist when the eval sets none", config: {}, expected: undefined },
+      {
+        name: "keeps an explicit empty tool allowlist",
+        config: { allowed_tools: [] },
+        expected: [],
+      },
+      {
+        name: "forwards a named tool allowlist",
+        config: { allowedTools: ["lookup"] },
+        expected: ["lookup"],
+      },
+    ]
+  ) {
+    it(`${allowedToolsCase.name} on an eval run`, async () => {
+      const definition = evalAgent({
+        id: "eval:deep-research",
+        target: "agent:researcher",
+        dataset: datasets.inline([{ id: "q1", input: "France capital?" }]),
+      });
+      let receivedConfig: { allowedTools?: string[] } | undefined;
+      const handler = new ProjectRunExecuteHandler(createDeps({
+        runTask: runTaskDefinition,
+        findEvalById: async () => ({
+          id: "eval:deep-research",
+          name: "Deep research quality",
+          filePath: "evals/deep-research.eval.ts",
+          exportName: "default",
+          definition,
+        }),
+        createEvalAgentAdapter: (config) => {
+          receivedConfig = config;
+          return async () => ({ text: "Paris" });
+        },
+      }));
+      const { request, publicKeyPem } = await signedRequest(
+        "/api/control-plane/runs/run_eval_allowed_tools/execute",
+        {
+          runId: "run_eval_allowed_tools",
+          kind: "task",
+          target: "task:eval",
+          projectId: "proj-1",
+          config: { eval_id: "eval:deep-research", ...allowedToolsCase.config },
+        },
+        { "x-token": "runtime-token" },
+      );
+
+      const result = await handler.handle(request, createCtx(publicKeyPem));
+
+      assertExists(result.response);
+      assertEquals((await result.response.json()).success, true);
+      assertExists(receivedConfig);
+      assertEquals(
+        Object.hasOwn(receivedConfig, "allowedTools"),
+        allowedToolsCase.expected !== undefined,
+      );
+      assertEquals(receivedConfig.allowedTools, allowedToolsCase.expected);
+    });
+  }
+
   it("parses the eval step ceiling with intrinsics captured before project discovery", async () => {
     const definition = evalAgent({
       id: "eval:deep-research",
@@ -6874,9 +6935,9 @@ describe("server/handlers/request/project-run-execute.handler", () => {
 
   it("runs local eval AG-UI requests through discovered source agents", async () => {
     let capturedContext: Record<string, unknown> | undefined;
-    // Control-plane eval runs carry a runtime ceiling, so the run streams
-    // through a framework-rebuilt restricted agent rather than through the
-    // source agent's own stream implementation.
+    // This eval sets an explicit empty tool allowlist, a runtime ceiling, so
+    // the run streams through a framework-rebuilt restricted agent rather than
+    // through the source agent's own stream implementation.
     const sourceAgent = createStreamingAgent("researcher", "Paris", {
       promptTokens: 12,
       completionTokens: 8,
@@ -6926,7 +6987,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
       target: "task:eval",
       projectId: "proj-1",
       runtimeAgUiEndpoint: "http://localhost:4311/api/ag-ui",
-      config: { eval_id: "eval:deep-research" },
+      config: { eval_id: "eval:deep-research", allowed_tools: [] },
     };
     const { request, publicKeyPem } = await signedRequest(
       "/api/control-plane/runs/run_eval_source_agent/execute",
@@ -7538,17 +7599,12 @@ describe("server/handlers/request/project-run-execute.handler", () => {
       const agentInput = createRequest?.body?.config as Record<string, unknown>;
       // Without an eval environment context, no studio_context item is added.
       assertEquals(agentInput.context, []);
+      // The eval names no allowed tools, so the child run gets no allowlist.
       assertEquals(agentInput.forwarded_props, {
         prompt: "France capital?",
-        runtimeOverrides: {
-          allowedTools: [],
-        },
         veryfront: {
           agentId: "researcher",
           projectId: "55555555-5555-4555-8555-555555555555",
-          runtimeOverrides: {
-            allowedTools: [],
-          },
         },
       });
       assertEquals(requests[0]?.pathname, "/runs");
@@ -7732,7 +7788,6 @@ describe("server/handlers/request/project-run-execute.handler", () => {
       prompt: "France capital?",
       model: "model-override-1",
       runtimeOverrides: {
-        allowedTools: [],
         maxSteps: 3,
       },
       veryfront: {
@@ -7740,7 +7795,6 @@ describe("server/handlers/request/project-run-execute.handler", () => {
         projectId: "55555555-5555-4555-8555-555555555555",
         model: "model-override-1",
         runtimeOverrides: {
-          allowedTools: [],
           maxSteps: 3,
         },
       },
