@@ -43,12 +43,19 @@ class Refused(ValueError):
         super().__init__('Code component publication refused: '+check);self.check=check
 
 
+class TransientRead(Exception):
+    # A read that failed without an answer about the release facts.
+    def __init__(self,check):
+        super().__init__(check);self.check=check
+
+
 def require(value,check):
     if not value:raise Refused(check)
 
 
 def refusal_reason(error):
     if isinstance(error,Refused):return 'failed check: '+error.check
+    if isinstance(error,TransientRead):return error.check
     if isinstance(error,HTTPError):
         route=urlsplit(error.url or '')
         return 'HTTP '+str(error.code)+' from '+route.scheme+'://'+(route.hostname or '')+route.path
@@ -103,9 +110,18 @@ def public_asset(asset_id,size):
 def source_json(path):
     require(path.startswith('repos/veryfront/veryfront-code/'),'source read route')
     projection = '{sha}' if '/commits/' in path else '{status,base_commit:{sha:.base_commit.sha}}'
-    result=subprocess.run(['gh','api','--hostname','github.com',path,'--jq',projection],capture_output=True,timeout=60,check=False)
-    require(result.returncode==0 and 0<len(result.stdout)<=2*1024*1024,
-            'source read '+('commit' if '/commits/' in path else 'comparison'))
+    check='source read '+('commit' if '/commits/' in path else 'comparison')
+    try:
+        result=subprocess.run(['gh','api','--hostname','github.com',path,'--jq',projection],capture_output=True,timeout=60,check=False)
+    except subprocess.TimeoutExpired:
+        raise TransientRead(check+' timed out') from None
+    if result.returncode!=0:
+        # gh reports an API answer as "(HTTP <status>)". A 5xx status, or no
+        # answer at all, is a failed read. Any other status is a refusal.
+        status=re.search(rb'\(HTTP ([0-9]{3})\)',result.stderr or b'')
+        if status is None:raise TransientRead(check+' got no response')
+        if status.group(1)>=b'500':raise TransientRead(check+' got HTTP '+status.group(1).decode())
+    require(result.returncode==0 and 0<len(result.stdout)<=2*1024*1024,check)
     return json.loads(result.stdout,object_pairs_hook=unique)
 
 
@@ -245,13 +261,16 @@ def witness_when_ready(version,env,read_public=public_json,read_source=source_js
                 continue
             if error.code<500:raise
             failure=error
-        except (URLError,TimeoutError,ConnectionError,HTTPException) as error:
+        except (URLError,TimeoutError,ConnectionError,HTTPException,TransientRead) as error:
             failure=error
         transient+=1
         delay=min(TRANSIENT_DELAYS[transient-1] if transient<=len(TRANSIENT_DELAYS) else 0,deadline-clock())
         if delay<=0:raise failure
         print('Retrying after a transient read failure ('+refusal_reason(failure)+')',file=sys.stderr)
         sleep(delay)
+        # A further attempt can take minutes of read timeouts. Do not start one
+        # at or past the deadline.
+        if clock()>=deadline:raise failure
 
 
 if __name__=='__main__':

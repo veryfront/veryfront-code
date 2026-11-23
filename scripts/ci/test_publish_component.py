@@ -326,13 +326,53 @@ class ReleaseReadinessTests(unittest.TestCase):
         with contextlib.redirect_stderr(io.StringIO()),self.assertRaises(HTTPError):
             publisher.witness_when_ready(VERSION,ENV,public,Facts().source,
                 clock=lambda:elapsed[0],sleep=sleep)
-        self.assertLessEqual(elapsed[0],900)
+        self.assertEqual(elapsed[0],900)
+        # 29 waits, then retries at 870, 875 and 885 s. The sleep that reaches
+        # the deadline is not followed by another attempt.
+        self.assertEqual(len(attempts),32)
+
+    def test_transient_source_read_failures_are_retried(self):
+        failures={'server':(1,b'gh: Bad Gateway (HTTP 502)\n'),'transport':(1,b'error connecting to api.github.com\n'),
+                  'timeout':None}
+        for name,failure in failures.items():
+            facts=Facts();runs=[];elapsed=[0];log=io.StringIO()
+            def run(command,**options):
+                runs.append(command)
+                path=command[4]
+                if len(runs)==1:
+                    if failure is None:raise subprocess.TimeoutExpired(command,60)
+                    return subprocess.CompletedProcess(command,failure[0],b'',failure[1])
+                return subprocess.CompletedProcess(command,0,json.dumps(facts.source(path)).encode(),b'')
+            def sleep(seconds):elapsed[0]+=seconds
+            original=publisher.subprocess.run
+            publisher.subprocess.run=run
+            try:
+                with self.subTest(failure=name),contextlib.redirect_stderr(log):
+                    result=publisher.witness_when_ready(VERSION,ENV,facts.public,clock=lambda:elapsed[0],sleep=sleep)
+                    self.assertEqual(result['release']['package_source_revision'],SOURCE)
+                    self.assertEqual(elapsed[0],5)
+                    self.assertIn('Retrying after a transient read failure (source read commit',log.getvalue())
+            finally:
+                publisher.subprocess.run=original
+
+    def test_rejected_source_reads_are_refused_at_once(self):
+        def no_sleep(_):self.fail('A rejected source read must not be retried')
+        for stderr in (b'gh: Not Found (HTTP 404)\n',b'gh: Forbidden (HTTP 403)\n',b'gh: Unprocessable (HTTP 422)\n'):
+            def run(command,**options):return subprocess.CompletedProcess(command,1,b'',stderr)
+            original=publisher.subprocess.run
+            publisher.subprocess.run=run
+            try:
+                with self.subTest(stderr=stderr),self.assertRaises(ValueError) as refused:
+                    publisher.witness_when_ready(VERSION,ENV,Facts().public,sleep=no_sleep)
+                self.assertEqual(publisher.refusal_reason(refused.exception),'failed check: source read commit')
+            finally:
+                publisher.subprocess.run=original
 
 class RefusalReportTests(unittest.TestCase):
     def reason(self,facts):
         try:facts.witness()
         except Exception as error:return publisher.refusal_reason(error)
-        self.fail('The witness must refuse these facts')
+        raise AssertionError('The witness must refuse these facts')
 
     def test_refusal_names_the_failed_check(self):
         def git_head(f):f.package['gitHead']='main'
