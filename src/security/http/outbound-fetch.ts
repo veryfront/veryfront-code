@@ -424,9 +424,7 @@ async function fetchWithHostTransport(
     allowedResolvedAddressesForTests: transport.allowedResolvedAddressesForTests,
     options: {
       allowInternalEgress: allowInternalEgress ||
-        isInternalEgressOverrideEnabled(
-          getHostEnvExcludingEnvFile(HOST_INTERNAL_EGRESS_OVERRIDE_ENV),
-        ),
+        isHostInternalEgressOverrideEnabled(),
       resolveHost: transport.resolveHost,
     },
   });
@@ -470,6 +468,19 @@ function parseAllowedInternalProviderOrigins(value: string | undefined): Readonl
     IntrinsicReflectApply(SetPrototypeAdd, origins, [readNativeURLString(url, URLOriginGet)]);
   }
   return origins;
+}
+
+/**
+ * Whether the host-wide internal egress override ({@link HOST_INTERNAL_EGRESS_OVERRIDE_ENV})
+ * is on. Only the real host process environment counts: a value the env loader
+ * copied from a project `.env` file is ignored, so a cloned repository cannot
+ * lift the SSRF ceiling. Every consumer of this gate must read it here so the
+ * outbound fetch layer and bootstrap validation never disagree.
+ */
+export function isHostInternalEgressOverrideEnabled(): boolean {
+  return isInternalEgressOverrideEnabled(
+    getHostEnvExcludingEnvFile(HOST_INTERNAL_EGRESS_OVERRIDE_ENV),
+  );
 }
 
 /** Whether `base.origin` is on the host-owned internal-provider allowlist ({@link HOST_ALLOWED_INTERNAL_PROVIDER_ORIGINS_ENV}). */
