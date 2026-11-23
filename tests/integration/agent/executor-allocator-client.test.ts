@@ -203,11 +203,17 @@ if ("Deno" in globalThis || "Bun" in globalThis) {
     });
 
     it("snapshots allocation data before token I/O and uses rotated broker tokens", async () => {
-      const calls: { url?: string; authorization?: string; body: unknown }[] = [];
+      const calls: {
+        url?: string;
+        authorization?: string;
+        projectSelector?: unknown;
+        body: unknown;
+      }[] = [];
       const server = createServer(tls, async (request, response) => {
         calls.push({
           url: request.url,
           authorization: request.headers.authorization,
+          projectSelector: request.headers["x-veryfront-executor-project"],
           body: await body(request),
         });
         response.writeHead(200, { "content-type": "application/json" });
@@ -233,10 +239,12 @@ if ("Deno" in globalThis || "Bun" in globalThis) {
         assertEquals(calls, [{
           url: "/agent-executors/allocate",
           authorization: "Bearer synthetic-initial",
+          projectSelector: requestData.owner.projectId,
           body: { request: requestData, channelKey: Buffer.alloc(32, 42).toString("base64") },
         }, {
           url: "/agent-executors/observe",
           authorization: "Bearer synthetic-rotated",
+          projectSelector: requestData.owner.projectId,
           body: { binding: view.binding },
         }]);
       } finally {
@@ -253,9 +261,13 @@ if ("Deno" in globalThis || "Bun" in globalThis) {
       it(`preserves exact ${owner.scopeKind} owner through every allocator operation`, async () => {
         const allocationRequest = { ...requestData, owner };
         const binding = { ...view.binding, owner };
-        const calls: { url?: string; body: unknown }[] = [];
+        const calls: { url?: string; projectSelector?: unknown; body: unknown }[] = [];
         const server = createServer(tls, async (request, response) => {
-          calls.push({ url: request.url, body: await body(request) });
+          calls.push({
+            url: request.url,
+            projectSelector: request.headers["x-veryfront-executor-project"],
+            body: await body(request),
+          });
           response.writeHead(200, { "content-type": "application/json" });
           response.end(JSON.stringify({ ...view, binding }));
         });
@@ -273,17 +285,126 @@ if ("Deno" in globalThis || "Bun" in globalThis) {
           assertEquals(calls, [
             {
               url: "/agent-executors/allocate",
+              projectSelector: owner.scopeKind === "project" ? owner.projectId : undefined,
               body: {
                 request: allocationRequest,
                 channelKey: Buffer.alloc(32, 42).toString("base64"),
               },
             },
-            { url: "/agent-executors/observe", body: { binding } },
-            { url: "/agent-executors/renew", body: { binding } },
-            { url: "/agent-executors/release", body: { binding, reason: "completed" } },
+            {
+              url: "/agent-executors/observe",
+              projectSelector: owner.scopeKind === "project" ? owner.projectId : undefined,
+              body: { binding },
+            },
+            {
+              url: "/agent-executors/renew",
+              projectSelector: owner.scopeKind === "project" ? owner.projectId : undefined,
+              body: { binding },
+            },
+            {
+              url: "/agent-executors/release",
+              projectSelector: owner.scopeKind === "project" ? owner.projectId : undefined,
+              body: { binding, reason: "completed" },
+            },
           ]);
         } finally {
           key.fill(0);
+          await close(server);
+        }
+      });
+    }
+
+    it("keeps concurrent project selectors with their captured allocation bodies", async () => {
+      const calls: { selector: unknown; owner: unknown }[] = [];
+      const server = createServer(tls, async (request, response) => {
+        const value = await body(request);
+        calls.push({
+          selector: request.headers["x-veryfront-executor-project"],
+          owner: value.request.owner,
+        });
+        response.writeHead(200, { "content-type": "application/json" });
+        response.end(JSON.stringify({
+          ...view,
+          binding: {
+            ...view.binding,
+            allocationId: value.request.allocationId,
+            invocationId: value.request.invocationId,
+            owner: value.request.owner,
+          },
+        }));
+      });
+      const token = Promise.withResolvers<string>();
+      let reads = 0;
+      const client = createHostedExecutorAllocatorClient({
+        baseUrl: await listen(server),
+        ca: tls.cert,
+        readBrokerToken: () => ++reads === 1 ? token.promise : Promise.resolve("synthetic"),
+      });
+      const original = {
+        ...structuredClone(requestData),
+        owner: { scopeKind: "project" as const, projectId: "project-a" },
+      };
+      const key = new Uint8Array(32).fill(42);
+      const pending: Promise<unknown>[] = [];
+      try {
+        pending.push(client.allocate(original, { channelKey: key }, signal()));
+        pending.push(
+          client.allocate(
+            {
+              ...requestData,
+              allocationId: "00000000-0000-4000-8000-000000000004",
+              invocationId: "00000000-0000-4000-8000-000000000005",
+              owner: { scopeKind: "project", projectId: "project-b" },
+            },
+            { channelKey: key },
+            signal(),
+          ),
+        );
+        original.owner.projectId = "mutated";
+        await pending[1];
+        token.resolve("synthetic");
+        await pending[0];
+        assertEquals(calls, [
+          { selector: "project-b", owner: { scopeKind: "project", projectId: "project-b" } },
+          { selector: "project-a", owner: { scopeKind: "project", projectId: "project-a" } },
+        ]);
+      } finally {
+        key.fill(0);
+        token.resolve("synthetic");
+        await Promise.allSettled(pending);
+        await close(server);
+      }
+    });
+
+    for (const operation of ["observe", "renew", "release"] as const) {
+      it(`snapshots the ${operation} selector before token I/O`, async () => {
+        const calls: { selector: unknown; owner: unknown }[] = [];
+        const server = createServer(tls, async (request, response) => {
+          calls.push({
+            selector: request.headers["x-veryfront-executor-project"],
+            owner: (await body(request)).binding.owner,
+          });
+          response.writeHead(200, { "content-type": "application/json" });
+          response.end(JSON.stringify(view));
+        });
+        const token = Promise.withResolvers<string>();
+        const client = createHostedExecutorAllocatorClient({
+          baseUrl: await listen(server),
+          ca: tls.cert,
+          readBrokerToken: () => token.promise,
+        });
+        const binding = structuredClone(view.binding);
+        const pending = operation === "release"
+          ? client.release(binding, "completed", signal())
+          : client[operation](binding, signal());
+        try {
+          binding.owner.projectId = "mutated";
+          token.resolve("synthetic");
+          await pending;
+          assertEquals(calls, [{ selector: "project-1", owner: requestData.owner }]);
+        } finally {
+          token.resolve("synthetic");
+          await Promise.allSettled([pending]);
           await close(server);
         }
       });
