@@ -1205,8 +1205,6 @@ function findFirstH1(markdown: string, mdx = false): string | undefined {
   } | undefined;
   let definitionThrough = -1;
   let referenceParagraph: { indents: number[] } | undefined;
-  let mdxThrough = -1;
-  let sourceOffset = 0;
   const indents: number[] = [];
   const body = markdown.replaceAll("\0", "\ufffd").replace(
     /^---\n(?:---|[\s\S]*?\n---)(?:\n|$)/,
@@ -1214,14 +1212,11 @@ function findFirstH1(markdown: string, mdx = false): string | undefined {
   );
   const lines = body.split("\n");
   for (const [lineIndex, sourceLine] of lines.entries()) {
-    const lineOffset = sourceOffset;
-    sourceOffset += sourceLine.length + 1;
     const raw = expandHeadingIndentation(sourceLine);
     if (!paragraphOpen) {
       rootParagraph = [];
       quoteParagraph = undefined;
     }
-    if (mdx && lineOffset < mdxThrough) continue;
     if (!hasHeadingContent(raw, false) && emptyItem) {
       indents.pop();
       emptyItem = false;
@@ -1264,37 +1259,6 @@ function findFirstH1(markdown: string, mdx = false): string | undefined {
       referenceParagraph = undefined;
       paragraphOpen = false;
     }
-    if (mdx && !fence && !htmlEnd) {
-      const start = lineOffset + (sourceLine.match(/^[ \t]*/)?.[0].length ?? 0);
-      const value = body.slice(start);
-      if (!paragraphOpen && /^(?:export|import) /.test(sourceLine)) {
-        mdxThrough = mdxExpressionEnd(body, start, true);
-        paragraphOpen = false;
-        continue;
-      }
-      if (
-        value.startsWith("{") ||
-        /^<\/?(?:[\p{ID_Start}_$][\p{ID_Continue}$.:_-]*|>)/u.test(value)
-      ) {
-        const region = mdxLineRegion(body, start);
-        mdxThrough = region.end;
-        if (region.kind === "flow") {
-          paragraphOpen = false;
-          quoteParagraph = undefined;
-        } else {
-          const ending = body.indexOf("\n", region.end);
-          mdxThrough = ending < 0 ? body.length : ending;
-          const content = body.slice(lineOffset, mdxThrough).replace(/\s*\n\s*/g, " ").trim();
-          if (!paragraphOpen) rootParagraph = [];
-          paragraphOpen = true;
-          setextEligible = true;
-          referenceParagraph = undefined;
-          if (!quoteParagraph && !indents.length) rootParagraph.push(content);
-          else rootParagraph = [];
-        }
-        continue;
-      }
-    }
     let line = container.line;
     if (container.startsItem) {
       paragraphOpen = false;
@@ -1329,7 +1293,6 @@ function findFirstH1(markdown: string, mdx = false): string | undefined {
       continue;
     }
     if (fence) {
-      if (mdx) line = line.trimStart();
       const closing = /^ {0,3}(`{3,}|~{3,})[ \t]*$/.exec(line)?.[1];
       if (closing && closing[0] === fence[0] && closing.length >= fence.length) {
         fence = undefined;
@@ -1425,7 +1388,7 @@ function findFirstH1(markdown: string, mdx = false): string | undefined {
         if (indent) blockOwner.push({ kind: "list", indent, empty: false });
       }
       const quoteFence = markdownFenceStart(content);
-      const quoteHtml = mdx ? undefined : markdownHtmlBlockEnd(content, !continuesParagraph);
+      const quoteHtml = markdownHtmlBlockEnd(content, !continuesParagraph);
       if (quoteFence) {
         fence = quoteFence;
         quotedBlockOwner = blockOwner;
@@ -1451,7 +1414,7 @@ function findFirstH1(markdown: string, mdx = false): string | undefined {
       const completesSetext = quotedUnderline && hasQuotedSetextText(previous.lines);
       if (
         !completesSetext && hasHeadingContent(content, false) &&
-        (mdx || continuesParagraph || !/^ {4}/.test(content)) &&
+        (continuesParagraph || !/^ {4}/.test(content)) &&
         (quotedUnderline || !startsInterruptingBlock(content))
       ) {
         quoteParagraph = previous ?? {
@@ -1473,7 +1436,7 @@ function findFirstH1(markdown: string, mdx = false): string | undefined {
     if (!quoteParagraph) quoteContainers = [];
     // A lazy line can retain an ancestor container, but missing indentation must not
     // be stripped as if that ancestor actually continued (notably nested list HTML).
-    const blockEnd = mdx ? undefined : markdownHtmlBlockEnd(
+    const blockEnd = markdownHtmlBlockEnd(
       container.lazy
         ? raw.slice(
           (/^ */.exec(raw)?.[0].length ?? 0) >= (indents.at(-2) ?? 0) ? indents.at(-2) ?? 0 : 0,
@@ -1491,7 +1454,7 @@ function findFirstH1(markdown: string, mdx = false): string | undefined {
       paragraphOpen = false;
       continue;
     }
-    const fenceLine = mdx ? line.trimStart() : line;
+    const fenceLine = line;
     const opening = markdownFenceStart(fenceLine);
     if (!container.lazy && opening) {
       fence = opening;
@@ -1502,10 +1465,10 @@ function findFirstH1(markdown: string, mdx = false): string | undefined {
       continue;
     }
     if (hasHeadingContent(raw, false)) {
-      indentedCode = !mdx && !paragraphOpen && /^ {4}/.test(line);
+      indentedCode = !paragraphOpen && /^ {4}/.test(line);
     }
-    const headingLine = mdx ? line.trimStart() : line;
-    const atx = /^ {0,3}#(?:[ \t]+(.*))?$/.exec(mdx ? raw.trimStart() : raw);
+    const headingLine = line;
+    const atx = /^ {0,3}#(?:[ \t]+(.*))?$/.exec(raw);
     if (atx && containerIndent === 0) {
       const content = atx[1] ?? "";
       return /^#+[ \t]*$/.test(content) ? "" : content.replace(/[ \t]+#+[ \t]*$/, "").trim();
