@@ -1156,6 +1156,28 @@ jobs:
       "deno task docs:api-reference:check",
       "the lint shard owns the generated API reference staleness check",
     );
+    // `docs:validate` is a local task. These two of its checks once failed on
+    // main for weeks because no CI job ran them.
+    const lintChain = String(tasks["lint:ci"]).split(" && ");
+    for (
+      const command of [
+        "deno run --allow-read scripts/docs/validate-api-reference.ts",
+        "deno task docs:check-links",
+      ]
+    ) {
+      assertEquals(
+        lintChain.filter((entry) => entry === command).length,
+        1,
+        `the lint shard must run "${command}" once`,
+      );
+      assertStringIncludes(
+        String(tasks["docs:validate"]),
+        command === "deno task docs:check-links"
+          ? String(tasks["docs:check-links"])
+          : command,
+        `docs:validate must keep running "${command}"`,
+      );
+    }
 
     const coverageShards = asRecord(
       asRecord(ci.jobs, "cicd jobs")["coverage-shards"],
