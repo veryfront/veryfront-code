@@ -1,12 +1,14 @@
 import { lstat as inspectLink } from "node:fs/promises";
 import { type SourceOutputIndex, withKnowledgeSourceClaim } from "./source-output-index.ts";
 import {
-  acquireKnowledgeOutputClaim,
+  acquireKnowledgeTargetOutputClaim,
+  knowledgeOutputClaimPath,
   readKnowledgeClaimOwner,
   readProvenKnowledgeOutputStage,
+  releaseKnowledgeTargetOutputClaim,
 } from "./output-claim.ts";
 import { publishKnowledgeOutput } from "./output-publication.ts";
-import { basename, dirname, extname, join, normalize } from "veryfront/platform/path";
+import { basename, dirname, extname, join, normalize, relative } from "veryfront/platform/path";
 import { importFirstPartyExtensionModule } from "veryfront/extensions/first-party-import";
 import type {
   DocumentExtractionOptions,
@@ -22,8 +24,8 @@ import {
   readKnowledgeIngestSourceKey,
   readProvableLegacyLocalKnowledgeSource,
 } from "./command-helpers.ts";
-import { isTextKnowledgeCompanionPath, KNOWLEDGE_OUTPUT_CLAIM_DIRECTORY } from "./source-policy.ts";
-import { computeHash } from "veryfront/utils";
+import { isTextKnowledgeCompanionPath } from "./source-policy.ts";
+import { computeHash, computeHashBytes } from "veryfront/utils";
 
 export interface KnowledgeParserResult {
   success: true;
@@ -1783,7 +1785,60 @@ export class KnowledgeAllocationSession {
 }
 
 /** Keep allocation callers on the shared, generation-aware claim protocol. */
-const acquireKnowledgeCandidate = acquireKnowledgeOutputClaim;
+const acquireKnowledgeCandidate = acquireKnowledgeTargetOutputClaim;
+
+/** Exact paths share candidate reservations but deliberately permit sequential replacement. */
+async function writeExactKnowledgeOutput(
+  outputDir: string,
+  path: string,
+  content: string | Uint8Array<ArrayBuffer>,
+  signal: AbortSignal | undefined,
+): Promise<void> {
+  signal?.throwIfAborted();
+  const name = relative(outputDir, path).replaceAll("\\", "/");
+  // Markdown shares its stem with default allocation. NUL cannot occur in a filename,
+  // so asset claims cannot collide with any Markdown stem, including extensionless assets.
+  const candidate = name.endsWith(".md") ? name.slice(0, -3) : `\0asset\0${name}`;
+  const bytes = typeof content === "string" ? new TextEncoder().encode(content) : content;
+  const claim = await acquireKnowledgeTargetOutputClaim(
+    outputDir,
+    candidate,
+    name,
+    await computeHash(JSON.stringify(["exact-path", name])),
+    await computeHashBytes(bytes),
+  );
+  if (claim.kind === "busy") throw new Error(`Knowledge output is busy or reserved: ${name}`);
+  const stage = join(dirname(claim.path), `${claim.generation}.output`);
+  try {
+    signal?.throwIfAborted();
+    let mode: number | null = null;
+    try {
+      const existing = await Deno.lstat(path);
+      if (!existing.isFile || existing.isSymlink) {
+        throw new Error(`Knowledge output is not a regular file: ${name}`);
+      }
+      mode = existing.mode;
+    } catch (error) {
+      if (!(error instanceof Deno.errors.NotFound)) throw error;
+    }
+    await Deno.writeFile(stage, bytes, {
+      createNew: true,
+      signal,
+      ...(mode === null ? {} : { mode: mode & 0o777 }),
+    });
+    if (mode !== null) await Deno.chmod(stage, mode & 0o777);
+    signal?.throwIfAborted();
+    await Deno.rename(stage, path);
+  } finally {
+    try {
+      await Deno.remove(stage).catch((error) => {
+        if (!(error instanceof Deno.errors.NotFound)) throw error;
+      });
+    } finally {
+      await releaseKnowledgeTargetOutputClaim(claim);
+    }
+  }
+}
 
 /** Re-read every reuse candidate; cached conflicts only avoid redundant probes. */
 async function writeKnowledgeFile(
@@ -1889,12 +1944,7 @@ async function writeKnowledgeFile(
         signal?.throwIfAborted();
         try {
           const name = basename(path).slice(0, -3);
-          const claimPath = join(
-            outputDir,
-            KNOWLEDGE_OUTPUT_CLAIM_DIRECTORY,
-            "v1",
-            `${await computeHash(name)}.lock`,
-          );
+          const claimPath = await knowledgeOutputClaimPath(outputDir, name);
           try {
             if (await readKnowledgeClaimOwner(claimPath) === reservationOwner) {
               throw new Error(`Knowledge output is busy or reserved: ${name}.md`);
@@ -1996,6 +2046,7 @@ async function writeKnowledgeFile(
         const lock = await acquireKnowledgeCandidate(
           outputDir,
           candidate,
+          `${candidate}.md`,
           reservationOwner,
           publicationHash,
         );
@@ -2090,7 +2141,7 @@ async function writeKnowledgeFile(
           recordWrite(candidate, source);
           return { slug: candidate, path };
         } finally {
-          await Deno.remove(lock.path);
+          await releaseKnowledgeTargetOutputClaim(lock);
         }
       }
     },
@@ -2250,7 +2301,7 @@ async function preserveOkfCompanion(input: {
   const outputPath = join(input.outputDir, ...relativePath.split("/"));
   await Deno.mkdir(dirname(outputPath), { recursive: true });
   input.signal?.throwIfAborted();
-  await Deno.writeFile(outputPath, bytes, { signal: input.signal });
+  await writeExactKnowledgeOutput(input.outputDir, outputPath, bytes, input.signal);
   return {
     success: true,
     source_path: input.filePath,
@@ -2288,7 +2339,7 @@ async function preserveOkfDocument(input: {
   const outputPath = join(input.outputDir, ...relativePath.split("/"));
   await Deno.mkdir(dirname(outputPath), { recursive: true });
   input.signal?.throwIfAborted();
-  await Deno.writeTextFile(outputPath, source, { signal: input.signal });
+  await writeExactKnowledgeOutput(input.outputDir, outputPath, source, input.signal);
   const title = typeof inspected.metadata.title === "string" && inspected.metadata.title.trim()
     ? inspected.metadata.title
     : titleizeFilename(relativePath);
@@ -2698,7 +2749,7 @@ export async function runKnowledgeParsers(input: {
         outputPath = join(input.outputDir, `${slug}.md`);
         await allocationSession.directWrite(
           input.outputDir,
-          () => Deno.writeTextFile(outputPath, markdown, { signal: deps.signal }),
+          () => writeExactKnowledgeOutput(input.outputDir, outputPath, markdown, deps.signal),
         );
       } else {
         ({ slug, path: outputPath } = await writeKnowledgeFile(

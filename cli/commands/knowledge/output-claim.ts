@@ -196,18 +196,59 @@ export async function readKnowledgeClaimOwner(path: string): Promise<string | un
   );
 }
 
+type OwnedClaim = { kind: "owned"; path: string; generation: string };
+type ClaimResult = OwnedClaim | { kind: "busy"; owner: string | undefined };
+type OwnedTargetOutputClaim = OwnedClaim & { target: OwnedClaim };
+
+/** The hashed namespace remains stable for existing reservations and publication proofs. */
+export async function knowledgeOutputClaimPath(
+  outputDir: string,
+  candidate: string,
+): Promise<string> {
+  return join(
+    outputDir,
+    KNOWLEDGE_OUTPUT_CLAIM_DIRECTORY,
+    "v1",
+    `${await computeHash(candidate)}.lock`,
+  );
+}
+
+/** Native directory entries compare target names without approximating filesystem Unicode rules. */
+export function knowledgeTargetClaimPath(outputDir: string, target: string): string {
+  let directory = join(outputDir, KNOWLEDGE_OUTPUT_CLAIM_DIRECTORY, "targets-v1");
+  for (const segment of target.replaceAll("\\", "/").split("/")) {
+    if (!segment || segment === "." || segment === ".." || segment.includes("\0")) {
+      throw new Error("Invalid knowledge output reservation target");
+    }
+    // The two fixed entries distinguish a file from any descendant with the same basename.
+    directory = join(directory, "children", segment);
+  }
+  return join(directory, "claim");
+}
+
 /** Reserve without stealing; only the caller may remove the returned owned generation. */
 export async function acquireKnowledgeOutputClaim(
   outputDir: string,
   candidate: string,
   owner: string,
   publicationHash: string | null = null,
-): Promise<
-  { kind: "owned"; path: string; generation: string } | { kind: "busy"; owner: string | undefined }
-> {
-  const directory = join(outputDir, KNOWLEDGE_OUTPUT_CLAIM_DIRECTORY, "v1");
+): Promise<ClaimResult> {
+  return await acquireClaim(
+    await knowledgeOutputClaimPath(outputDir, candidate),
+    `${candidate}.md`,
+    owner,
+    publicationHash,
+  );
+}
+
+async function acquireClaim(
+  path: string,
+  label: string,
+  owner: string,
+  publicationHash: string | null,
+): Promise<ClaimResult> {
+  const directory = dirname(path);
   await Deno.mkdir(directory, { recursive: true });
-  let path = join(directory, `${await computeHash(candidate)}.lock`);
   const generation = crypto.randomUUID();
   const prepared = join(directory, `${generation}.prepared`);
   if (publicationHash !== null && !HASH.test(publicationHash)) {
@@ -232,16 +273,56 @@ export async function acquireKnowledgeOutputClaim(
         if (
           !(error instanceof Deno.errors.AlreadyExists) &&
           !(error instanceof Error && "code" in error && error.code === "EEXIST")
-        ) throw new Error(`Cannot reserve knowledge output: ${candidate}.md`);
+        ) throw new Error(`Cannot reserve knowledge output: ${label}`);
         const claim = await inspectStableClaim(path);
         if (claim.kind === "busy") return claim;
         if (claim.kind === "dead") path = claim.next;
         else if (++absentRetries >= 3) break;
       }
     }
-    throw new Error(`Knowledge output reservation recovery limit reached: ${candidate}.md`);
+    throw new Error(`Knowledge output reservation recovery limit reached: ${label}`);
   } finally {
     await Deno.remove(prepared);
+  }
+}
+
+/** Real outputs hold native identity and legacy hashed claims through publication. */
+export async function acquireKnowledgeTargetOutputClaim(
+  outputDir: string,
+  candidate: string,
+  targetName: string,
+  owner: string,
+  publicationHash: string | null = null,
+): Promise<OwnedTargetOutputClaim | { kind: "busy"; owner: string | undefined }> {
+  const target = await acquireClaim(
+    knowledgeTargetClaimPath(outputDir, targetName),
+    targetName,
+    owner,
+    publicationHash,
+  );
+  if (target.kind === "busy") return target;
+  let output: ClaimResult;
+  try {
+    output = await acquireKnowledgeOutputClaim(outputDir, candidate, owner, publicationHash);
+  } catch (error) {
+    await Deno.remove(target.path);
+    throw error;
+  }
+  if (output.kind === "busy") {
+    await Deno.remove(target.path);
+    return output;
+  }
+  return { ...output, target };
+}
+
+/** A failed second acquisition never releases another writer's generation. */
+export async function releaseKnowledgeTargetOutputClaim(
+  claim: OwnedTargetOutputClaim,
+): Promise<void> {
+  try {
+    await Deno.remove(claim.path);
+  } finally {
+    await Deno.remove(claim.target.path);
   }
 }
 
@@ -252,7 +333,7 @@ export async function readProvenKnowledgeOutputStage(
 ): Promise<{ stagePath: string; content: string } | undefined> {
   const directory = join(outputDir, KNOWLEDGE_OUTPUT_CLAIM_DIRECTORY, "v1");
   const output = join(outputDir, `${candidate}.md`);
-  let claimPath = join(directory, `${await computeHash(candidate)}.lock`);
+  let claimPath = await knowledgeOutputClaimPath(outputDir, candidate);
   for (let depth = 0; depth < MAX_GENERATIONS; depth += 1) {
     const claim = await inspectStableClaim(claimPath);
     if (claim.kind !== "dead") return undefined;

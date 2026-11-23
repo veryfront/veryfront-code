@@ -1,9 +1,14 @@
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { assert, assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import {
+  assert,
+  assertEquals,
+  assertRejects,
+  assertStringIncludes,
+} from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { makeTempDir } from "#veryfront/testing/deno-compat.ts";
-import { join, normalize } from "veryfront/platform/path";
-import { computeHash } from "veryfront/utils";
+import { dirname, join, normalize } from "veryfront/platform/path";
+import { computeHash, computeHashBytes } from "veryfront/utils";
 import { inspectOkfDocument } from "veryfront/knowledge";
 import {
   ingestResolvedSources,
@@ -11,7 +16,17 @@ import {
   runKnowledgeParsers,
 } from "../../../cli/commands/knowledge/command.ts";
 import { readKnowledgeIngestSourceKey } from "../../../cli/commands/knowledge/command-helpers.ts";
+import type { KnowledgeParserInput } from "../../../cli/commands/knowledge/parser.ts";
 import { KnowledgeAllocationSession } from "../../../cli/commands/knowledge/parser.ts";
+import {
+  acquireKnowledgeOutputClaim,
+  acquireKnowledgeTargetOutputClaim,
+  knowledgeOutputClaimPath,
+  knowledgeTargetClaimPath,
+  readKnowledgeClaimOwner,
+  readProvenKnowledgeOutputStage,
+  releaseKnowledgeTargetOutputClaim,
+} from "../../../cli/commands/knowledge/output-claim.ts";
 import {
   createIndexReceipt,
   createKnowledgeCommandArgs,
@@ -245,6 +260,37 @@ describe("local allocation sessions", () => {
           "busy or reserved",
         );
       } else {
+        let nativeAlias = false;
+        try {
+          nativeAlias =
+            (await Deno.stat(join(outputDir, "ORIGINAL.MD"))).ino === (await Deno.stat(target)).ino;
+        } catch (error) {
+          if (!(error instanceof Deno.errors.NotFound)) throw error;
+        }
+        if (nativeAlias) {
+          const orphan = await readProvenKnowledgeOutputStage(outputDir, "original");
+          assert(orphan !== undefined);
+          const orphanBytes = await Deno.readFile(orphan.stagePath);
+          const alias = await acquireKnowledgeTargetOutputClaim(
+            outputDir,
+            "\0asset\0ORIGINAL.MD",
+            "ORIGINAL.MD",
+            "a".repeat(64),
+          );
+          assert(alias.kind === "owned");
+          try {
+            await assertRejects(
+              () => runKnowledgeParser(input, { allocationSession: session }),
+              Error,
+              "busy or reserved",
+            );
+            assertEquals(await Deno.readFile(orphan.stagePath), orphanBytes);
+            assertEquals((await Deno.lstat(target)).nlink, 2);
+            assertStringIncludes(await Deno.readTextFile(target), "Original complete body");
+          } finally {
+            await releaseKnowledgeTargetOutputClaim(alias);
+          }
+        }
         const result = await runKnowledgeParser(input, { allocationSession: session });
         assertEquals(result.sandbox_output_path, target);
         const content = await Deno.readTextFile(target);
@@ -1647,17 +1693,12 @@ console.log(JSON.stringify({requested,fresh}));
           sourceKey: "a-key",
         });
         await entered.promise;
-        const lockPath = join(
-          outputDir,
-          ".veryfront",
-          "knowledge-output-claims",
-          "v1",
-          `${await computeHash(
-            sameSource
-              ? `source/${await computeHash(JSON.stringify(["sourceKey", "a-key"]))}`
-              : "shared",
-          )}.lock`,
-        );
+        const lockPath = sameSource
+          ? await knowledgeOutputClaimPath(
+            outputDir,
+            `source/${await computeHash(JSON.stringify(["sourceKey", "a-key"]))}`,
+          )
+          : knowledgeTargetClaimPath(outputDir, "shared.md");
         let injected = false;
         Deno.link = async (oldPath, newPath) => {
           try {
@@ -1837,6 +1878,7 @@ console.log(JSON.stringify({requested,fresh}));
       pending = runKnowledgeParser(input);
       await entered.promise;
       const error = await assertRejects(() => runKnowledgeParser(input), Error, "busy or reserved");
+      assert(error instanceof Error);
       assert(!error.message.includes(root));
       release.resolve();
       await pending;
@@ -1998,6 +2040,7 @@ console.log(JSON.stringify({requested,fresh}));
         const parse = () => runKnowledgeParser({ ...input, sourceKey: '["upload","same"]' });
         if (keyed) {
           const error = await assertRejects(parse, Error, "busy or reserved");
+          assert(error instanceof Error);
           assert(!error.message.includes(root));
         } else assertEquals((await parse()).slug, "shared-2");
         assertEquals(await Deno.readTextFile(first.sandbox_output_path), before);
@@ -2872,4 +2915,467 @@ describe("complete knowledge output publication", () => {
       await Deno.remove(root, { recursive: true });
     }
   });
+});
+
+describe("cross-process exact knowledge output", () => {
+  for (const record of ["malformed", "foreign", "unverifiable"]) {
+    it(`preserves a ${record} exact-path reservation`, async () => {
+      const root = await makeTempDir({ prefix: "knowledge-exact-unverifiable-" });
+      try {
+        const outputDir = join(root, "out");
+        const directory = join(outputDir, ".veryfront/knowledge-output-claims/v1");
+        await Deno.mkdir(directory, { recursive: true });
+        const claimPath = join(directory, `${await computeHash("shared")}.lock`);
+        const original = record === "malformed" ? "not an owned reservation" : JSON.stringify({
+          version: 2,
+          owner: "a".repeat(64),
+          scope: record === "unverifiable" ? null : "b".repeat(64),
+          pid: 2147483647,
+          generation: crypto.randomUUID(),
+          publicationHash: null,
+        });
+        await Deno.writeTextFile(claimPath, original);
+        const filePath = join(root, "source.md");
+        await Deno.writeTextFile(filePath, "# Shared\n\nComplete source.\n");
+        const target = join(outputDir, "shared.md");
+        await Deno.writeTextFile(target, "prior complete output");
+        const parser = new URL("../../../cli/commands/knowledge/parser.ts", import.meta.url).href;
+        const config = await Deno.realPath(new URL("../../../deno.json", import.meta.url));
+        const output = await new Deno.Command(Deno.execPath(), {
+          args: [
+            "eval",
+            "--frozen",
+            "--cached-only",
+            "--config",
+            config,
+            `import { runKnowledgeParser } from ${
+              JSON.stringify(parser)
+            }; await runKnowledgeParser(${
+              JSON.stringify({ filePath, outputDir, slug: "shared" })
+            });`,
+          ],
+          stdout: "piped",
+          stderr: "piped",
+        }).output();
+        assertEquals(output.success, false);
+        assertStringIncludes(new TextDecoder().decode(output.stderr), "busy or reserved");
+        assertEquals(await Deno.readTextFile(target), "prior complete output");
+        assertEquals(await Deno.readTextFile(claimPath), original);
+        await assertRejects(
+          () => Deno.stat(knowledgeTargetClaimPath(outputDir, "shared.md")),
+          Deno.errors.NotFound,
+        );
+      } finally {
+        await Deno.remove(root, { recursive: true });
+      }
+    });
+  }
+  for (const kind of ["slug", "document", "companion", "extensionless"] as const) {
+    for (const interrupted of [false, true]) {
+      it(`${kind} exact writes ${interrupted ? "recover a dead reservation" : "exclude a live writer"} without changing paths`, async () => {
+        const root = await makeTempDir({ prefix: "knowledge-exact-process-" });
+        let child: Deno.ChildProcess | undefined;
+        let reaped = false;
+        try {
+          const outputDir = join(root, "out");
+          const companion = kind === "companion" || kind === "extensionless";
+          const relativePath = kind === "extensionless"
+            ? "shared"
+            : companion
+            ? "bin/shared.wasm"
+            : "shared.md";
+          const target = join(outputDir, relativePath);
+          await Deno.mkdir(dirname(target), { recursive: true });
+          const prior = new TextEncoder().encode("previous complete output");
+          const hadPrior = kind !== "slug" || interrupted;
+          if (hadPrior) await Deno.writeFile(target, prior);
+          const inputs: KnowledgeParserInput[] = [];
+          const bodies: Uint8Array[] = [];
+          for (const marker of ["first", "second"]) {
+            const filePath = join(root, `${marker}.${companion ? "wasm" : "md"}`);
+            let bytes = companion
+              ? new Uint8Array([0xff, marker === "first" ? 1 : 2, 0x00, 0xfe])
+              : new TextEncoder().encode(`# Shared\n\n${marker} source bytes.\n`);
+            await Deno.writeFile(filePath, bytes);
+            if (kind === "document") {
+              const generated = await runKnowledgeParser({
+                filePath,
+                outputDir: join(root, marker),
+              });
+              bytes = await Deno.readFile(generated.sandbox_output_path);
+              await Deno.writeFile(filePath, bytes);
+            }
+            bodies.push(bytes);
+            inputs.push({
+              filePath,
+              ...(kind === "slug" ? { slug: "shared" } : {
+                okfRelativePath: relativePath,
+                ...(companion ? { okfRole: "companion" as const } : {}),
+              }),
+            });
+          }
+          const ready = join(root, "ready"), release = join(root, "release");
+          const parser = new URL("../../../cli/commands/knowledge/parser.ts", import.meta.url).href;
+          const config = await Deno.realPath(new URL("../../../deno.json", import.meta.url));
+          const invocation = (input: KnowledgeParserInput) =>
+            `await runKnowledgeParser(${JSON.stringify({ ...input, outputDir })});`;
+          const prefix = `import { runKnowledgeParser } from ${JSON.stringify(parser)};`;
+          const barrier = `
+            const writeText = Deno.writeTextFile, writeBytes = Deno.writeFile;
+            let paused = false;
+            async function pause(path) {
+              if (!paused && (String(path) === ${
+            JSON.stringify(target)
+          } || String(path).endsWith(".output"))) {
+                paused = true;
+                await writeText(${JSON.stringify(ready)}, "ready");
+                while (true) {
+                  try { await Deno.stat(${JSON.stringify(release)}); break; }
+                  catch (error) { if (!(error instanceof Deno.errors.NotFound)) throw error; }
+                  await new Promise((resolve) => setTimeout(resolve, 10));
+                }
+              }
+            }
+            Deno.writeTextFile = async (path, data, options) => { await pause(path); return await writeText(path, data, options); };
+            Deno.writeFile = async (path, data, options) => {
+              if (String(path).endsWith(".output")) {
+                await writeBytes(path, data.subarray(0, Math.max(1, Math.floor(data.length / 2))), options);
+                await pause(path);
+                return await writeBytes(path, data, { ...options, createNew: false });
+              }
+              await pause(path); return await writeBytes(path, data, options);
+            };
+          `;
+          const args = ["eval", "--frozen", "--cached-only", "--config", config];
+          child = new Deno.Command(Deno.execPath(), {
+            args: [...args, prefix + barrier + invocation(inputs[0]!)],
+            stdout: "null",
+            stderr: "piped",
+          }).spawn();
+          const deadline = Date.now() + 15_000;
+          while (true) {
+            try {
+              await Deno.stat(ready);
+              break;
+            } catch (error) {
+              if (!(error instanceof Deno.errors.NotFound)) throw error;
+            }
+            assert(Date.now() < deadline, "Exact writer did not reach publication barrier");
+            await new Promise((resolve) => setTimeout(resolve, 10));
+          }
+          const claimDirectory = join(outputDir, ".veryfront/knowledge-output-claims/v1");
+          const claimPath = join(
+            claimDirectory,
+            `${await computeHash(companion ? `\0asset\0${relativePath}` : "shared")}.lock`,
+          );
+          const originalClaim = await Deno.readTextFile(claimPath);
+          const nativePath = knowledgeTargetClaimPath(outputDir, relativePath);
+          const originalNativeClaim = await Deno.readTextFile(nativePath);
+          const generation = JSON.parse(originalClaim).generation;
+          const partial = await Deno.readFile(join(claimDirectory, `${generation}.output`));
+          assert(partial.length > 0);
+          assertEquals(
+            await computeHashBytes(partial) === JSON.parse(originalClaim).publicationHash,
+            false,
+          );
+          if (kind === "extensionless" && !interrupted) {
+            const neighbor = join(root, "neighbor.md");
+            await Deno.writeTextFile(neighbor, "# Shared\n\nIndependent Markdown source.\n");
+            for (const explicit of [true, false]) {
+              const neighborInput = {
+                filePath: neighbor,
+                outputDir,
+                ...(explicit ? { slug: "shared" } : {}),
+              };
+              const independent = await new Deno.Command(Deno.execPath(), {
+                args: [
+                  ...args,
+                  prefix +
+                  `console.log(JSON.stringify(await runKnowledgeParser(${
+                    JSON.stringify(neighborInput)
+                  })));`,
+                ],
+                stdout: "piped",
+                stderr: "piped",
+              }).output();
+              assert(independent.success, new TextDecoder().decode(independent.stderr));
+              assertEquals(
+                JSON.parse(new TextDecoder().decode(independent.stdout)).sandbox_output_path,
+                join(outputDir, "shared.md"),
+              );
+              assertStringIncludes(
+                await Deno.readTextFile(join(outputDir, "shared.md")),
+                "Independent Markdown source.",
+              );
+              assertEquals(await Deno.readFile(target), prior);
+            }
+          }
+          const blocked = await new Deno.Command(Deno.execPath(), {
+            args: [...args, prefix + invocation(inputs[1]!)],
+            stdout: "piped",
+            stderr: "piped",
+          }).output();
+          assertEquals(blocked.success, false, new TextDecoder().decode(blocked.stderr));
+          assertStringIncludes(new TextDecoder().decode(blocked.stderr), "busy or reserved");
+          if (hadPrior) assertEquals(await Deno.readFile(target), prior);
+          else {
+            await assertRejects(() => Deno.stat(target), Deno.errors.NotFound);
+            // A default allocator observes the exact writer's reservation and uses its next path.
+            const defaultInput = { filePath: inputs[1]!.filePath, outputDir };
+            const allocated = await new Deno.Command(Deno.execPath(), {
+              args: [
+                ...args,
+                prefix +
+                `console.log(JSON.stringify(await runKnowledgeParser(${
+                  JSON.stringify(defaultInput)
+                })));`,
+              ],
+              stdout: "piped",
+              stderr: "piped",
+            }).output();
+            assert(allocated.success, new TextDecoder().decode(allocated.stderr));
+            const defaultResult = JSON.parse(new TextDecoder().decode(allocated.stdout));
+            const alternative = join(outputDir, "shared-2.md");
+            assertEquals(defaultResult.sandbox_output_path, alternative);
+            assertStringIncludes(
+              await Deno.readTextFile(alternative),
+              new TextDecoder().decode(bodies[1]),
+            );
+            await Deno.remove(alternative);
+            await assertRejects(() => Deno.stat(target), Deno.errors.NotFound);
+          }
+          if (interrupted) {
+            child.kill("SIGKILL");
+            await child.status;
+          } else {
+            await Deno.writeTextFile(release, "release");
+            assertEquals((await child.status).success, true);
+          }
+          reaped = true;
+          await new Response(child.stderr).arrayBuffer();
+          if (!interrupted) {
+            const written = await Deno.readFile(target);
+            if (kind === "slug") {
+              assertStringIncludes(
+                new TextDecoder().decode(written),
+                new TextDecoder().decode(bodies[0]),
+              );
+            } else assertEquals(written, bodies[0]);
+          }
+          const claimRecord: unknown = JSON.parse(originalClaim);
+          if (
+            interrupted && typeof claimRecord === "object" && claimRecord !== null &&
+            "scope" in claimRecord && claimRecord.scope === null
+          ) {
+            await assertRejects(
+              () => runKnowledgeParser({ ...inputs[1]!, outputDir }),
+              Error,
+              "busy or reserved",
+            );
+            assertEquals(await Deno.readTextFile(claimPath), originalClaim);
+            assertEquals(await Deno.readTextFile(nativePath), originalNativeClaim);
+            assertEquals(await Deno.readFile(target), prior);
+            return;
+          }
+          // Exact paths intentionally permit sequential replacement by another source.
+          const result = await runKnowledgeParser({ ...inputs[1]!, outputDir });
+          assertEquals(result.sandbox_output_path, target);
+          if (interrupted) {
+            assertEquals(await Deno.readTextFile(claimPath), originalClaim);
+            assertEquals(await Deno.readTextFile(nativePath), originalNativeClaim);
+            assertEquals(await readKnowledgeClaimOwner(nativePath), undefined);
+          } else {
+            await assertRejects(() => Deno.stat(claimPath), Deno.errors.NotFound);
+            await assertRejects(() => Deno.stat(nativePath), Deno.errors.NotFound);
+          }
+          const written = await Deno.readFile(target);
+          if (kind === "slug") {
+            const text = new TextDecoder().decode(written);
+            assertStringIncludes(text, new TextDecoder().decode(bodies[1]));
+            assertEquals(text.includes("first source bytes"), false);
+          } else assertEquals(written, bodies[1]);
+          await assertRejects(
+            () => Deno.stat(join(outputDir, "shared-2.md")),
+            Deno.errors.NotFound,
+          );
+        } finally {
+          if (child && !reaped) {
+            child.kill("SIGKILL");
+            await child.status;
+            await new Response(child.stderr).arrayBuffer();
+          }
+          await Deno.remove(root, { recursive: true });
+        }
+      });
+    }
+  }
+});
+
+describe("filesystem-native knowledge target reservations", () => {
+  it("releases only its native generation when the legacy claim cannot be acquired", async () => {
+    const root = await makeTempDir({ prefix: "knowledge-native-acquire-failure-" });
+    const link = Deno.link;
+    try {
+      const owner = "a".repeat(64), contender = "b".repeat(64);
+      const legacy = await acquireKnowledgeOutputClaim(root, "shared", owner);
+      assert(legacy.kind === "owned");
+      const original = await Deno.readTextFile(legacy.path);
+      const nativePath = knowledgeTargetClaimPath(root, "shared.md");
+      assertEquals(
+        await acquireKnowledgeTargetOutputClaim(root, "shared", "shared.md", contender),
+        { kind: "busy", owner },
+      );
+      assertEquals(await Deno.readTextFile(legacy.path), original);
+      await assertRejects(() => Deno.stat(nativePath), Deno.errors.NotFound);
+      await Deno.remove(legacy.path);
+      const outputPath = await knowledgeOutputClaimPath(root, "shared");
+      Deno.link = async (from, to) => {
+        if (String(to) === outputPath) {
+          throw new Deno.errors.PermissionDenied("injected legacy acquisition failure");
+        }
+        await link(from, to);
+      };
+      await assertRejects(
+        () => acquireKnowledgeTargetOutputClaim(root, "shared", "shared.md", contender),
+        Error,
+        "Cannot reserve knowledge output",
+      );
+      await assertRejects(() => Deno.stat(nativePath), Deno.errors.NotFound);
+      Deno.link = link;
+      const retry = await acquireKnowledgeTargetOutputClaim(root, "shared", "shared.md", contender);
+      assert(retry.kind === "owned");
+      await releaseKnowledgeTargetOutputClaim(retry);
+      await assertRejects(() => Deno.stat(nativePath), Deno.errors.NotFound);
+      await assertRejects(() => Deno.stat(outputPath), Deno.errors.NotFound);
+    } finally {
+      Deno.link = link;
+      await Deno.remove(root, { recursive: true });
+    }
+  });
+  const cases = [
+    { first: "Shared.MD", second: "shared.md", mode: "explicit" },
+    { first: "Shared.MD", second: "shared.md", mode: "default" },
+    { first: "Shared.md", second: "shared.md", mode: "explicit" },
+    { first: "Shared.md", second: "shared.md", mode: "default" },
+    { first: "Café.md", second: "Cafe\u0301.md", mode: "explicit" },
+    { first: "Σ.md", second: "ς.md", mode: "explicit" },
+    { first: "left/shared.md", second: "right/shared.md", mode: "explicit" },
+    { first: "left/Shared.MD", second: "LEFT/shared.md", mode: "explicit" },
+    { first: "first.md", second: "second.md", mode: "explicit" },
+  ];
+  for (const fixture of cases) {
+    it(`${fixture.mode} writers follow native equality for ${fixture.first} and ${fixture.second}`, async () => {
+      const root = await makeTempDir({ prefix: "knowledge-native-target-" });
+      let child: Deno.ChildProcess | undefined;
+      let reaped = false;
+      try {
+        const outputDir = join(root, "out"), probeDir = join(root, "probe");
+        for (const directory of [outputDir, probeDir]) {
+          await Deno.mkdir(dirname(join(directory, fixture.first)), { recursive: true });
+          await Deno.mkdir(dirname(join(directory, fixture.second)), { recursive: true });
+        }
+        await Deno.writeTextFile(join(probeDir, fixture.first), "native equality probe");
+        let aliases = false;
+        try {
+          const [first, second] = await Promise.all([
+            Deno.stat(join(probeDir, fixture.first)),
+            Deno.stat(join(probeDir, fixture.second)),
+          ]);
+          aliases = first.dev === second.dev && first.ino === second.ino;
+        } catch (error) {
+          if (!(error instanceof Deno.errors.NotFound)) throw error;
+        }
+        const original = "---\ntype: Topic\ntitle: Original\n---\n# Original\n\nORIGINAL_SOURCE\n";
+        const filePath = join(root, "original.md"), neighbor = join(root, "neighbor.md");
+        await Deno.writeTextFile(filePath, original);
+        await Deno.writeTextFile(neighbor, "# Shared\n\nNEIGHBOR_SOURCE\n");
+        const ready = join(root, "ready"), release = join(root, "release");
+        const parser = new URL("../../../cli/commands/knowledge/parser.ts", import.meta.url).href;
+        const config = fileURLToPath(new URL("../../../deno.json", import.meta.url));
+        const args = ["eval", "--frozen", "--cached-only", "--config", config];
+        const prefix = `import { runKnowledgeParser } from ${JSON.stringify(parser)};`;
+        const firstInput = { filePath, outputDir, okfRelativePath: fixture.first };
+        const script = prefix + `
+          const write = Deno.writeFile;
+          Deno.writeFile = async (path, data, options) => {
+            if (String(path).endsWith(".output")) {
+              await Deno.writeTextFile(${JSON.stringify(ready)}, "ready");
+              while (true) {
+                try { await Deno.stat(${JSON.stringify(release)}); break; }
+                catch (error) { if (!(error instanceof Deno.errors.NotFound)) throw error; }
+                await new Promise((resolve) => setTimeout(resolve, 10));
+              }
+            }
+            return await write(path, data, options);
+          };
+          await runKnowledgeParser(${JSON.stringify(firstInput)});
+        `;
+        child = new Deno.Command(Deno.execPath(), {
+          args: [...args, script],
+          stdout: "null",
+          stderr: "piped",
+        }).spawn();
+        const deadline = Date.now() + 15_000;
+        while (true) {
+          try {
+            await Deno.stat(ready);
+            break;
+          } catch (error) {
+            if (!(error instanceof Deno.errors.NotFound)) throw error;
+          }
+          assert(Date.now() < deadline, "Native target writer did not reach publication barrier");
+          await new Promise((resolve) => setTimeout(resolve, 10));
+        }
+        const nextInput = {
+          filePath: neighbor,
+          outputDir,
+          ...(fixture.mode === "explicit" ? { slug: fixture.second.slice(0, -3) } : {}),
+        };
+        const contender = await new Deno.Command(Deno.execPath(), {
+          args: [
+            ...args,
+            prefix +
+            `console.log(JSON.stringify(await runKnowledgeParser(${JSON.stringify(nextInput)})));`,
+          ],
+          stdout: "piped",
+          stderr: "piped",
+        }).output();
+        if (aliases && fixture.mode === "explicit") {
+          assertEquals(contender.success, false);
+          assertStringIncludes(new TextDecoder().decode(contender.stderr), "busy or reserved");
+          await assertRejects(
+            () => Deno.stat(join(outputDir, fixture.first)),
+            Deno.errors.NotFound,
+          );
+        } else {
+          assert(contender.success, new TextDecoder().decode(contender.stderr));
+          const result = JSON.parse(new TextDecoder().decode(contender.stdout));
+          const expected = aliases ? "shared-2.md" : fixture.second;
+          assertEquals(result.sandbox_output_path, join(outputDir, expected));
+          assertStringIncludes(
+            await Deno.readTextFile(result.sandbox_output_path),
+            "NEIGHBOR_SOURCE",
+          );
+        }
+        await Deno.writeTextFile(release, "release");
+        assert((await child.status).success);
+        reaped = true;
+        await new Response(child.stderr).arrayBuffer();
+        assertEquals(await Deno.readTextFile(join(outputDir, fixture.first)), original);
+        if (!aliases) {
+          assertStringIncludes(
+            await Deno.readTextFile(join(outputDir, fixture.second)),
+            "NEIGHBOR_SOURCE",
+          );
+        }
+      } finally {
+        if (child && !reaped) {
+          child.kill("SIGKILL");
+          await child.status;
+          await new Response(child.stderr).arrayBuffer();
+        }
+        await Deno.remove(root, { recursive: true });
+      }
+    });
+  }
 });
