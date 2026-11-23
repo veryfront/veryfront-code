@@ -72,7 +72,9 @@ function assertCredentialHeaders(init: RequestInit | undefined): void {
 const argv = commandFor(scenario);
 argv.push("--project-dir", projectDir);
 if (!scenario?.startsWith("ndjson")) argv.push("--json");
-if (!scenario?.startsWith("login-")) argv.push("--credential-file", `${projectDir}/credential`);
+if (!scenario?.startsWith("login-") && scenario !== "get-no-credential") {
+  argv.push("--credential-file", `${projectDir}/credential`);
+}
 if (scenario === "api-key") argv.push("--credential-mode", "api-key");
 setJsonMode(!scenario?.startsWith("ndjson"));
 let requests = 0;
@@ -114,7 +116,7 @@ await withMockFetch(
         detail: "The request was rejected.",
       }, { status }));
     }
-    if (scenario === "stream-network") {
+    if (scenario === "stream-network" || scenario === "get-network") {
       return Promise.reject(new TypeError("Fixture network failure"));
     }
     if (scenario === "stream-malformed") {
@@ -150,7 +152,8 @@ await withMockFetch(
     );
   },
   () =>
-    scenario?.startsWith("terminal-")
+    scenario?.startsWith("terminal-") || scenario === "get-network" ||
+      scenario === "get-no-credential"
       ? routeCommand(parseCliArgs(argv))
       : handleProjectCommand(parseCliArgs(argv)),
 );

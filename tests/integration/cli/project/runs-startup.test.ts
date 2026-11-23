@@ -45,7 +45,7 @@ Deno.test("canonical CLI entry preserves machine and human usage errors", async 
     else assertEquals(lines.length > 1, true);
     const envelope = JSON.parse(lines.join("\n"));
     assertEquals(envelope.success, false);
-    assertEquals(envelope.command, streaming ? "project runs" : "project");
+    assertEquals(envelope.command, "project runs");
     assertEquals(envelope.error.code, "USAGE_ERROR");
   }
 });
