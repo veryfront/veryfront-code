@@ -456,6 +456,7 @@ function createManagedBrokerIngressHandler<TIngress>(options: {
               runtime,
               messages: prepared.messages,
               requestSignal: request.signal,
+              output: prepared.output,
               runId,
               ...parsed.stream,
               onSettled: async () => {
@@ -584,6 +585,7 @@ async function createSseResponse(input: {
   runtime: ManagedExecutorRuntime;
   messages: HostedChatRuntimeStreamInput["messages"];
   requestSignal: AbortSignal;
+  output?: ManagedBrokerOutput;
   runId: string;
   threadId: string;
   agentId: string;
@@ -591,15 +593,11 @@ async function createSseResponse(input: {
   onSettled(): Promise<void>;
   trackExecution(execution: Promise<void>): void;
 }): Promise<Response> {
-  const result = await input.runtime.agent.stream({
-    messages: input.messages,
-    abortSignal: input.requestSignal,
-  });
-  const source = result.toUIMessageStream({
-    messageMetadata: ({ part }) => buildManagedBrokerMessageMetadata(input.runtime, part),
-  });
   const completion = Promise.withResolvers<void>();
   let natural = false;
+  let failure: unknown;
+  let terminalOutput: unknown;
+  let terminalMetadata: HostedLifecycleTerminalState["metadata"];
   let cleanup: Promise<void> | undefined;
   const settlement = Promise.withResolvers<void>();
   const invalidateRequestAbort = () =>
@@ -617,21 +615,58 @@ async function createSseResponse(input: {
     }
     if (!cleanup) {
       cleanup = Promise.resolve().then(async () => {
+        let finalizationFailed = false;
+        let finalizationError: unknown;
+        try {
+          if (input.output) {
+            const output = input.output;
+            const paused = hasHostedAgentPauseStopped(input.runtime);
+            await input.runtime.runOwned(() =>
+              output.finish({
+                completed: !paused && natural && reason === "completed" &&
+                  !input.requestSignal.aborted,
+                ...(paused ? { paused: true as const } : {}),
+                ...(!paused && terminalOutput !== undefined ? { output: terminalOutput } : {}),
+                ...(paused || failure === undefined || input.requestSignal.aborted
+                  ? {}
+                  : { error: failure }),
+                ...(terminalMetadata ? { metadata: terminalMetadata } : {}),
+              })
+            );
+          }
+        } catch (error) {
+          finalizationFailed = true;
+          finalizationError = error;
+          invalidateHostedAgentPauseSettlement(input.runtime, error);
+        }
         recordHostedAgentPauseFlush(
           input.runtime,
-          natural && reason === "completed" && !input.requestSignal.aborted,
+          !finalizationFailed && natural && reason === "completed" && !input.requestSignal.aborted,
         );
-        const closure = await input.runtime.close(reason).catch((error) => {
-          invalidateHostedAgentPauseSettlement(input.runtime, error);
-          return undefined;
-        });
+        const closure = await input.runtime.close(finalizationFailed ? "canceled" : reason).catch(
+          (error) => {
+            invalidateHostedAgentPauseSettlement(input.runtime, error);
+            return undefined;
+          },
+        );
         await input.runtime.settled;
         recordHostedAgentPauseCleanup(
           input.runtime,
-          reason === "completed" && closure?.reason === "completed" &&
+          !finalizationFailed && reason === "completed" && closure?.reason === "completed" &&
             closure.release !== "reaper-required",
         );
-        await input.onSettled();
+        try {
+          await input.onSettled();
+        } catch (error) {
+          if (finalizationFailed) {
+            throw new AggregateError(
+              [finalizationError, error],
+              "SSE persistence and retirement failed",
+            );
+          }
+          throw error;
+        }
+        if (finalizationFailed) throw finalizationError;
       });
       void cleanup.then(settlement.resolve, settlement.reject);
     }
@@ -639,8 +674,40 @@ async function createSseResponse(input: {
   };
   const agentUIStream = (async function* () {
     try {
+      const result = await input.runtime.agent.stream({
+        messages: input.messages,
+        abortSignal: input.requestSignal,
+      });
+      const source = result.toUIMessageStream({
+        onFinish: ({ responseMessage }) => {
+          terminalOutput = responseMessage;
+        },
+        messageMetadata: ({ part }) => {
+          const metadata = buildManagedBrokerMessageMetadata(input.runtime, part);
+          terminalMetadata = {
+            modelId: metadata.modelId,
+            ...(metadata.usage ? { usage: metadata.usage } : {}),
+            ...(metadata.usageCaptureStatus
+              ? { usageCaptureStatus: metadata.usageCaptureStatus }
+              : {}),
+          };
+          return metadata;
+        },
+      });
       for await (const chunk of source) {
+        if (input.output) {
+          const output = input.output;
+          await input.runtime.runOwned(() => output.write(chunk));
+        }
         if (chunk.type === "error" || (chunk.type === "finish" && chunk.finishReason === "error")) {
+          if (failure === undefined) {
+            const code = chunk.type === "error"
+              ? getExecutorAgentFailureCodeSchema().safeParse(chunk.code)
+              : undefined;
+            failure = code?.success
+              ? new ExecutorAgentError(code.data)
+              : new Error("Agent stream failed");
+          }
           invalidateHostedAgentPauseSettlement(
             input.runtime,
             new Error("Agent stream failed after pause acknowledgement"),
@@ -648,8 +715,9 @@ async function createSseResponse(input: {
         }
         yield chunk;
       }
-      natural = true;
+      natural = failure === undefined;
     } catch (error) {
+      failure ??= error;
       invalidateHostedAgentPauseSettlement(input.runtime, error);
       throw error;
     } finally {

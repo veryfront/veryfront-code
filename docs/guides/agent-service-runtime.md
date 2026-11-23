@@ -762,6 +762,8 @@ conversation, message, project and actor bindings before allocation. It preserve
 the signed resume decision and owns persistence cleanup. This adapter alone does
 not register a serving process, advertise the publication protocol or enable
 account-chat execution.
+SSE output is persisted before forwarding each chunk, and its terminal event
+waits for canonical finalization. Persistence failures cannot acknowledge success.
 
 Configure each direct
 adapter's owner in trusted service configuration; project owners reject requests

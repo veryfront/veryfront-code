@@ -2,7 +2,11 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assert, assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { managedStart } from "../../../tests/fixtures/managed-executor-start.ts";
-import type { ManagedExecutorStartInput } from "../hosted/managed-executor-broker.ts";
+import type {
+  ManagedExecutorRuntime,
+  ManagedExecutorStartInput,
+} from "../hosted/managed-executor-broker.ts";
+import { agUiSseEventTypes, parseAgUiSseResponse } from "../ag-ui/sse-parser.ts";
 import { createCanonicalManagedBrokerHandler } from "./canonical-managed-broker.ts";
 import {
   invocation,
@@ -37,6 +41,7 @@ async function fixture(input: {
   aborted?: boolean;
   resume?: boolean;
   probeAppend?: boolean;
+  stream?: boolean;
 } = {}) {
   const base = invocation();
   const body = invocation({
@@ -72,6 +77,7 @@ async function fixture(input: {
     signed.request.headers.set("x-veryfront-run-terminal-token", terminal);
   }
   const calls: { url: URL; authorization: string | null }[] = [];
+  const finalizations: { status: string; terminalBound: boolean }[] = [];
   const appends: Array<
     { expected_previous_event_id?: number; expected_previous_external_event_sequence?: number }
   > = [];
@@ -82,7 +88,7 @@ async function fixture(input: {
   let started: ManagedExecutorStartInput | undefined;
   const handler = createCanonicalManagedBrokerHandler({
     apiUrl: "https://api.example.test",
-    responseMode: "detached",
+    responseMode: input.stream ? "sse" : "detached",
     resolveProvider: () => "synthetic",
     resolveIngressOptions: () => ({
       ...options(signed.publicKeyPem),
@@ -93,6 +99,15 @@ async function fixture(input: {
     fetch: (value, init) => {
       const url = new URL(String(value));
       calls.push({ url, authorization: new Headers(init?.headers).get("authorization") });
+      if (url.pathname.endsWith("/finalize")) {
+        const body = JSON.parse(String(init?.body));
+        finalizations.push({
+          status: body.status,
+          terminalBound:
+            new Headers(init?.headers).get("x-veryfront-run-terminal-token") === terminal,
+        });
+        return Promise.resolve(Response.json({ id: canonicalId, status: body.status }));
+      }
       if (url.pathname.endsWith("/events")) {
         const body = JSON.parse(String(init?.body));
         appends.push(body);
@@ -164,6 +179,42 @@ async function fixture(input: {
     broker: {
       async start(value) {
         started = value;
+        if (input.stream) {
+          value.bindSessionOwnedWork!((operation) => operation());
+          const settled = Promise.withResolvers<void>();
+          const runtime: ManagedExecutorRuntime = {
+            definition: { id: "builder", name: "Builder", description: "", instructions: "Work" },
+            modelId: value.installation.grant.defaultModelId,
+            runtimeKind: "framework",
+            accepted: false,
+            settled: settled.promise,
+            runOwned: (operation) => operation(),
+            accept() {
+              Object.defineProperty(runtime, "accepted", { value: true });
+            },
+            close(reason = "canceled") {
+              settled.resolve();
+              return Promise.resolve({ reason, release: "released" });
+            },
+            agent: {
+              async stream() {
+                return {
+                  steps: Promise.resolve([]),
+                  toUIMessageStream() {
+                    return (async function* () {
+                      yield { type: "start", messageId: base.run.messageId } as const;
+                      yield { type: "text-start", id: "text-1" } as const;
+                      yield { type: "text-delta", id: "text-1", delta: "Scoped output" } as const;
+                      yield { type: "text-end", id: "text-1" } as const;
+                      yield { type: "finish", finishReason: "stop" } as const;
+                    })();
+                  },
+                };
+              },
+            },
+          };
+          return runtime;
+        }
         if (input.probeAppend) {
           value.bindSessionOwnedWork!((operation) => operation());
           for (const text of ["First private replay", "Second private replay"]) {
@@ -206,10 +257,46 @@ async function fixture(input: {
     },
   });
   const response = await handler.handle(signed.request);
-  return { response, calls, appends, prepared, cleaned, started };
+  return {
+    response,
+    calls,
+    appends,
+    finalizations,
+    prepared,
+    get cleaned() {
+      return cleaned;
+    },
+    started,
+    close: () => handler.close(),
+  };
 }
 
 describe("canonical managed broker preparation", () => {
+  it("persists and finalizes a signed canonical SSE turn with separate append and terminal authority", async () => {
+    const result = await fixture({ stream: true });
+    try {
+      assertEquals(result.response.status, 200);
+      const parsed = await parseAgUiSseResponse(result.response);
+      assert(parsed.events.some((event) => event.type === agUiSseEventTypes.runFinished));
+      assert(result.appends.length > 0);
+      assertEquals(result.finalizations, [{ status: "completed", terminalBound: true }]);
+      const finalization = result.calls.filter((call) => call.url.pathname.endsWith("/finalize"));
+      assertEquals(finalization.map((call) => [call.url.pathname, call.authorization]), [[
+        `/runs/${canonicalId}/finalize`,
+        "Bearer api-auth-token",
+      ]]);
+      assertEquals(
+        result.calls.filter((call) => call.url.pathname.endsWith("/events")).every((call) =>
+          call.authorization === "Bearer run-event-token"
+        ),
+        true,
+      );
+    } finally {
+      await result.close();
+    }
+    assertEquals(result.cleaned, 1);
+  });
+
   it("reads execution lifecycle with execution authority before constructing persistence", async () => {
     const result = await fixture();
     assertEquals(result.response.status, 500);

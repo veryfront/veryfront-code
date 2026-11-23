@@ -981,6 +981,7 @@ function runtimeFixture(
   streamFailure = false,
   terminalChunk?: "error" | "coded-error" | "empty-response-error" | "finish-error",
   finishWithUsage?: true,
+  streamOpenFailure = false,
 ) {
   const release = Promise.withResolvers<void>();
   const settled = Promise.withResolvers<void>();
@@ -1006,6 +1007,7 @@ function runtimeFixture(
     agent: {
       async stream() {
         streamCalls++;
+        if (streamOpenFailure) throw new Error("synthetic stream setup failed");
         return {
           steps: Promise.resolve([]),
           toUIMessageStream(streamOptions = {}) {
@@ -1085,11 +1087,13 @@ async function handler(
     waitForAuthorization?: boolean;
     throwingObserver?: boolean;
     streamFailure?: boolean;
+    streamOpenFailure?: boolean;
     terminalChunk?: "error" | "coded-error" | "empty-response-error" | "finish-error";
     finishWithUsage?: true;
     missingOutput?: boolean;
     waitForOutput?: boolean;
     outputFailure?: boolean;
+    writeFailure?: boolean;
     cleanupFailure?: boolean;
     startError?: Error;
   } = {},
@@ -1099,6 +1103,7 @@ async function handler(
     options.streamFailure,
     options.terminalChunk,
     options.finishWithUsage,
+    options.streamOpenFailure,
   );
   let prepareCalls = 0;
   let brokerStarts = 0;
@@ -1109,6 +1114,7 @@ async function handler(
   const outputFinishErrors: unknown[] = [];
   const outputFinishMetadata: unknown[] = [];
   const outputRelease = Promise.withResolvers<void>();
+  const outputEntered = Promise.withResolvers<void>();
   let prepareSignal: AbortSignal | undefined;
   const prepareEntered = Promise.withResolvers<void>();
   const prepareRelease = Promise.withResolvers<void>();
@@ -1160,6 +1166,7 @@ async function handler(
         output: options.missingOutput ? undefined : {
           async write(chunk: { type: string }) {
             outputChunks.push(chunk.type);
+            if (options.writeFailure) throw new Error("SSE output write failed");
           },
           async finish(
             outcome: { completed: boolean; paused?: true; error?: unknown; metadata?: unknown },
@@ -1168,6 +1175,7 @@ async function handler(
             outputPauses.push(outcome.paused);
             outputFinishErrors.push(outcome.error);
             outputFinishMetadata.push(outcome.metadata);
+            outputEntered.resolve();
             if (options.outputFailure) throw new Error("Output flush failed");
             if (options.waitForOutput) await outputRelease.promise;
           },
@@ -1199,6 +1207,7 @@ async function handler(
     outputFinishErrors,
     outputFinishMetadata,
     releaseOutput: outputRelease.resolve,
+    outputEntered: outputEntered.promise,
     abortExecution: () => executionController.abort(),
     get prepareCalls() {
       return prepareCalls;
@@ -1216,6 +1225,113 @@ async function handler(
 }
 
 describe("managed broker handler", () => {
+  it("persists SSE output and usage before acknowledging canonical completion", async () => {
+    const f = await handler("sse", { finishWithUsage: true });
+    try {
+      const response = await f.managed.handle(f.first.request);
+      f.fixture.release();
+      const parsed = await parseAgUiSseResponse(response);
+      assert(parsed.events.some((event) => event.type === agUiSseEventTypes.runFinished));
+      assertEquals(f.outputChunks, ["text-delta", "finish"]);
+      assertEquals(f.outputFinishes, [true]);
+      assertEquals(f.outputFinishMetadata, [{
+        modelId: f.fixture.runtime.modelId,
+        usage: { inputTokens: 12, outputTokens: 7 },
+        usageCaptureStatus: "complete",
+      }]);
+    } finally {
+      f.fixture.release();
+      await f.managed.close();
+    }
+  });
+
+  it("retains SSE admission until canonical finalization acknowledges its write", async () => {
+    const f = await handler("sse", { waitForOutput: true });
+    try {
+      const response = await f.managed.handle(f.first.request);
+      let finished = false;
+      const body = response.text().then((value) => {
+        finished = true;
+        return value;
+      });
+      f.fixture.release();
+      let deadline: ReturnType<typeof setTimeout> | undefined;
+      try {
+        await Promise.race([
+          f.outputEntered,
+          new Promise((_, reject) => {
+            deadline = setTimeout(() => reject(new Error("SSE did not finalize output")), 1000);
+          }),
+        ]);
+      } finally {
+        clearTimeout(deadline);
+      }
+      assertEquals(finished, false);
+      assertEquals(f.managed.active, 1);
+      f.releaseOutput();
+      await body;
+    } finally {
+      f.releaseOutput();
+      f.fixture.release();
+      await f.managed.close();
+    }
+  });
+
+  it("finalizes SSE executor errors as failures instead of completed runs", async () => {
+    const f = await handler("sse", { terminalChunk: "coded-error" });
+    try {
+      const response = await f.managed.handle(f.first.request);
+      f.fixture.release();
+      await response.text();
+      assertEquals(f.outputFinishes, [false]);
+      assert(f.outputFinishErrors[0] instanceof ExecutorAgentError);
+      assertEquals(f.outputFinishErrors[0].code, "INSUFFICIENT_CREDITS");
+    } finally {
+      f.fixture.release();
+      await f.managed.close();
+    }
+  });
+
+  for (const failure of ["writeFailure", "outputFailure"] as const) {
+    it(`does not acknowledge SSE completion after ${failure} and retires the executor`, async () => {
+      const f = await handler("sse", { [failure]: true });
+      try {
+        const response = await f.managed.handle(f.first.request);
+        f.fixture.release();
+        const parsed = await parseAgUiSseResponse(response);
+        assertEquals(
+          parsed.events.some((event) => event.type === agUiSseEventTypes.runFinished),
+          false,
+        );
+        assert(parsed.events.some((event) => event.type === agUiSseEventTypes.runError));
+        assertEquals(f.outputFinishes.length, 1);
+      } finally {
+        f.fixture.release();
+        await f.managed.close();
+      }
+      assertEquals(f.fixture.closeReasons, ["canceled"]);
+      assertEquals(f.cleanupCalls, 1);
+    });
+  }
+
+  it("finalizes an SSE stream setup failure before retiring its canonical output", async () => {
+    const f = await handler("sse", { streamOpenFailure: true });
+    try {
+      const response = await f.managed.handle(f.first.request);
+      const parsed = await parseAgUiSseResponse(response);
+      assert(parsed.events.some((event) => event.type === agUiSseEventTypes.runError));
+      assertEquals(
+        parsed.events.some((event) => event.type === agUiSseEventTypes.runFinished),
+        false,
+      );
+      assertEquals(f.outputFinishes, [false]);
+      assert(f.outputFinishErrors[0] instanceof Error);
+    } finally {
+      await f.managed.close();
+    }
+    assertEquals(f.cleanupCalls, 1);
+  });
+
   it("binds signed broker authority to trusted managed hosted knowledge", async () => {
     const first = await request();
     const fixture = runtimeFixture();
@@ -1879,6 +1995,7 @@ describe("managed broker handler", () => {
       assertEquals(f.fixture.closeReasons, ["canceled"]);
       assertEquals(f.managed.active, 0);
       assertEquals(f.cleanupCalls, 1);
+      assertEquals(f.outputFinishes, [false]);
     } finally {
       f.fixture.release();
       await closing;
