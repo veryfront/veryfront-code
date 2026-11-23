@@ -92,6 +92,25 @@ describe("cli/commands/project", () => {
   });
 
   describe("projectCommand", () => {
+    for (const argv of [["project"], ["project", "help"]]) {
+      it(`lists delete and runs in the usage for "veryfront ${argv.join(" ")}"`, async () => {
+        const originalLog = console.log;
+        const output: string[] = [];
+        console.log = (...args: unknown[]) => output.push(args.map(String).join(" "));
+        try {
+          await projectCommand({ _: argv } as ParsedArgs);
+        } finally {
+          console.log = originalLog;
+        }
+
+        const usage = output.join("\n");
+        assertStringIncludes(usage, "veryfront project delete [slug] [options]");
+        assertStringIncludes(usage, "veryfront project runs <command> [options]");
+        assertStringIncludes(usage, "delete   Delete a cloud project and everything it owns");
+        assertStringIncludes(usage, "runs     Inspect and control project runs");
+      });
+    }
+
     it("fails a misspelled subcommand instead of exiting zero", async () => {
       // A cleanup script that runs `veryfront project delet app` must not read
       // printed usage plus exit code 0 as a completed teardown.
