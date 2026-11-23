@@ -4736,8 +4736,8 @@ describe("runKnowledgeParser", () => {
         "formats": ["mdx"],
       },
       {
-        "name": "new nested item has no inherited paragraph",
-        "body": "Intro\n- -\ntext\n  # Real title",
+        "name": "new nested item retains the inherited paragraph",
+        "body": "Intro\n- -\ntext\n  # Nested title\n\n# Real title",
         "formats": ["md", "pdf", "html", "docx"],
       },
       {
@@ -4871,10 +4871,12 @@ describe("runKnowledgeParser", () => {
         body: "1. item\n</script>\n</span>\n  # Real title\n\n# Later title",
         formats: ["md", "pdf"],
       },
-      // An empty item can follow indented code, so its indented H1 remains nested.
+      // Active code interruption keeps an empty marker as text; the following H1 is root-owned.
       {
-        name: "CommonMark empty item after indented code",
+        name: "CommonMark empty marker after indented code stays paragraph text",
         body: "    example\n-\n  # Nested title\n\n# Real title",
+        title: "Nested title",
+        slug: "nested-title",
         formats: ["md", "pdf"],
       },
       {
@@ -5472,10 +5474,10 @@ describe("runKnowledgeParser", () => {
         ],
       },
       {
-        "name": "reference-only quoted hyphens remain paragraph text",
+        "name": "reference-only quoted hyphens close the paragraph as a thematic break",
         "body": "> [ref]: /url\n> ---\nReal title\n===\n\n# Later title",
-        "title": "Later title",
-        "slug": "later-title",
+        "title": "Real title",
+        "slug": "real-title",
         "formats": [
           "md",
           "pdf",
@@ -5799,8 +5801,8 @@ describe("runKnowledgeParser", () => {
       {
         "name": "reference-only thematic break follows CommonMark contract",
         "body": "> [ref]: /url\n> ---\nCandidate\n===\n\n# Fallback",
-        "title": "Fallback",
-        "slug": "fallback",
+        "title": "Candidate",
+        "slug": "candidate",
         "formats": [
           "md",
           "pdf",
@@ -6198,8 +6200,8 @@ describe("runKnowledgeParser", () => {
       {
         "name": "fully matched indented definition remains a definition",
         "body": "> [first]: /one\n>   [second]: /two\n> ---\nDocument title\n===\n\n# Fallback",
-        "title": "Fallback",
-        "slug": "fallback",
+        "title": "Document title",
+        "slug": "document-title",
         "formats": [
           "md",
           "pdf",
@@ -6210,8 +6212,8 @@ describe("runKnowledgeParser", () => {
       {
         "name": "unindented lazy definition remains a definition",
         "body": "> [first]: /one\n[second]: /two\n> ---\nDocument title\n===\n\n# Fallback",
-        "title": "Fallback",
-        "slug": "fallback",
+        "title": "Document title",
+        "slug": "document-title",
         "formats": [
           "md",
           "pdf",
@@ -6976,10 +6978,10 @@ describe("runKnowledgeParser", () => {
         "formats": ["mdx"],
       },
       {
-        "name": "nested quote starts its own empty item",
+        "name": "nested quote inherits paragraph interruption for an empty marker",
         "body": "> Note\n> > *\ncontinued\n===\n# Real title",
-        "title": "continued",
-        "slug": "continued",
+        "title": "Real title",
+        "slug": "real-title",
         "formats": ["md", "pdf"],
       },
       {
@@ -7488,13 +7490,12 @@ describe("runKnowledgeParser", () => {
       },
       { content: "- Item\n<span>\n</span>\n\n  # Real title", title: "Real title" },
       { content: "> Note\n</span>\n<script>\n\n# Real title" },
-      // CommonMark §5.2 permits an empty item after code; its fence closes on root dedent.
-      { content: "    /url\n-\n  > text\n<widget>\n  ````\n# Real title", title: "Real title" },
+      // Code interruption and nested prefixes retain ownership through lazy continuations.
+      { content: "    /url\n-\n  > text\n<widget>\n  ````\n# Real title" },
       {
         content: "    <script>\n-\n  - ```\n  > text\n\n    - item\n<widget>\n  ```\n# Real title",
-        title: "Real title",
       },
-      { content: '    code\n\t\n- -\n[ref]: /url "\n  # Real title', title: "Real title" },
+      { content: '    code\n\t\n- -\n[ref]: /url "\n  # Real title' },
       { content: "    code\n2. item\n   # Nested title", title: "Nested title" },
       { content: "> ```\n> text\n<span>\n # Hidden" },
       { content: "> <div>\n\n  ```\n # Hidden" },
