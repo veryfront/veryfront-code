@@ -304,9 +304,19 @@ export function toConversationHostedTerminalState(input: {
   };
 }
 
+type HostedTerminalIdentityOptions = Omit<CreateConversationHostedTerminalAdapterOptions, "run"> & {
+  run: Pick<ConversationRunProjection, "runId" | "conversationId"> | null;
+};
+
 /** Create conversation hosted terminal adapter. */
 export function createConversationHostedTerminalAdapter(
+  options: HostedTerminalIdentityOptions,
+): ConversationHostedTerminalAdapter;
+export function createConversationHostedTerminalAdapter(
   options: CreateConversationHostedTerminalAdapterOptions,
+): ConversationHostedTerminalAdapter;
+export function createConversationHostedTerminalAdapter(
+  options: HostedTerminalIdentityOptions,
 ): ConversationHostedTerminalAdapter {
   let durableRunFinalized = false;
 
