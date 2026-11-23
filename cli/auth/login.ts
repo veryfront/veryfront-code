@@ -730,6 +730,7 @@ async function describeExistingSession(
     return "next";
   };
   const rejectCandidate = async (
+    apiToken: string,
     apiTokenSource: ApiTokenSource,
     authoritative: boolean,
     source: ExistingCredentialSource,
@@ -737,7 +738,7 @@ async function describeExistingSession(
   ): Promise<"failure-output" | "stop" | "next"> => {
     if (
       apiTokenSource === "token-store" &&
-      await deleteTokenRejectedBy(getApiUrl(validationEnv), env)
+      await deleteTokenRejectedBy(apiToken, getApiUrl(validationEnv), env)
     ) {
       hasStoredToken = false;
     }
@@ -770,7 +771,7 @@ async function describeExistingSession(
       throw error;
     }
     if (!identity) {
-      return rejectCandidate(apiTokenSource, authoritative, source, validationEnv);
+      return rejectCandidate(apiToken, apiTokenSource, authoritative, source, validationEnv);
     }
 
     if (isJsonMode()) {
@@ -938,11 +939,12 @@ function warnRejectedCredentialSource(source: ApiTokenSource, humanOutput: boole
 }
 
 async function removeRejectedStoredToken(
+  rejectedToken: string,
   env: EnvironmentConfig,
   validationEnv: EnvironmentConfig,
   humanOutput: boolean,
 ): Promise<void> {
-  if (!(await deleteTokenRejectedBy(getApiUrl(validationEnv), env))) return;
+  if (!(await deleteTokenRejectedBy(rejectedToken, getApiUrl(validationEnv), env))) return;
   if (humanOutput) {
     console.log("  " + warning("Session expired. Please log in again."));
   }
@@ -1010,7 +1012,12 @@ export async function ensureAuthenticated(
     warnRejectedCredentialSource(candidate.apiTokenSource, humanOutput);
     if (candidate.authoritative) return null;
     if (candidate.apiTokenSource === "token-store") {
-      await removeRejectedStoredToken(env, candidate.validationEnv, humanOutput);
+      await removeRejectedStoredToken(
+        candidate.apiToken,
+        env,
+        candidate.validationEnv,
+        humanOutput,
+      );
     }
     return authenticateCandidate(index + 1);
   }
@@ -1053,7 +1060,7 @@ async function reportCredential(
     throw error;
   }
   if (!credential) {
-    if (source === "token-store") await deleteTokenRejectedBy(getApiUrl(env), env);
+    if (source === "token-store") await deleteTokenRejectedBy(token, getApiUrl(env), env);
     return null;
   }
   const displayedSource = source === "env-file" ? "env" : source;

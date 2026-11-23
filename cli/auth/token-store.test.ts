@@ -112,7 +112,7 @@ describe("Token Store", () => {
     it("keeps a login saved for a different API", async () => {
       await saveToken(testToken, { ...testEnv, apiUrl: PROD });
 
-      assertEquals(await deleteTokenRejectedBy(STAGING, testEnv), false);
+      assertEquals(await deleteTokenRejectedBy(testToken, STAGING, testEnv), false);
       assertEquals(await readToken(testEnv), testToken);
     });
 
@@ -120,7 +120,7 @@ describe("Token Store", () => {
       await saveToken(testToken, { ...testEnv, apiUrl: PROD });
 
       assertEquals(
-        await deleteTokenRejectedBy("https://API.prod.example.test:443/api/", testEnv),
+        await deleteTokenRejectedBy(testToken, "https://API.prod.example.test:443/api/", testEnv),
         true,
       );
       assertEquals(await readToken(testEnv), null);
@@ -130,7 +130,7 @@ describe("Token Store", () => {
       await saveToken(testToken, { ...testEnv, apiUrl: PROD });
       await Deno.remove(getTokenLocation(testEnv).replace(/token$/, "token-api.json"));
 
-      assertEquals(await deleteTokenRejectedBy(STAGING, testEnv), true);
+      assertEquals(await deleteTokenRejectedBy(testToken, STAGING, testEnv), true);
       assertEquals(await readToken(testEnv), null);
     });
 
@@ -139,7 +139,7 @@ describe("Token Store", () => {
       await deleteToken(testEnv);
       await Deno.writeTextFile(getTokenLocation(testEnv), `${testToken}\n`);
 
-      assertEquals(await deleteTokenRejectedBy(STAGING, testEnv), true);
+      assertEquals(await deleteTokenRejectedBy(testToken, STAGING, testEnv), true);
     });
 
     it("names the login in its record by SHA-256, never by the token itself", async () => {
@@ -151,13 +151,13 @@ describe("Token Store", () => {
       await saveToken(testToken, { ...testEnv, apiUrl: PROD });
 
       await Deno.writeTextFile(recordPath, JSON.stringify({ apiUrl: PROD, tokenSha256 }));
-      assertEquals(await deleteTokenRejectedBy(STAGING, testEnv), false);
+      assertEquals(await deleteTokenRejectedBy(testToken, STAGING, testEnv), false);
 
       await Deno.writeTextFile(
         recordPath,
         JSON.stringify({ apiUrl: PROD, tokenSha256: testToken }),
       );
-      assertEquals(await deleteTokenRejectedBy(STAGING, testEnv), true);
+      assertEquals(await deleteTokenRejectedBy(testToken, STAGING, testEnv), true);
     });
 
     it("treats a record describing a replaced login as unrecorded", async () => {
@@ -167,7 +167,7 @@ describe("Token Store", () => {
       await Deno.writeTextFile(getTokenLocation(testEnv), "replaced-token\n");
 
       assertEquals(await isTokenSavedForOtherApi("replaced-token", STAGING, testEnv), false);
-      assertEquals(await deleteTokenRejectedBy(STAGING, testEnv), true);
+      assertEquals(await deleteTokenRejectedBy("replaced-token", STAGING, testEnv), true);
       assertEquals(await readToken(testEnv), null);
     });
 
@@ -179,7 +179,31 @@ describe("Token Store", () => {
       );
 
       assertEquals(await isTokenSavedForOtherApi(testToken, STAGING, testEnv), false);
-      assertEquals(await deleteTokenRejectedBy(STAGING, testEnv), true);
+      assertEquals(await deleteTokenRejectedBy(testToken, STAGING, testEnv), true);
+      assertEquals(await readToken(testEnv), null);
+    });
+
+    it("recognises its record for a login saved with surrounding whitespace", async () => {
+      await saveToken(`  ${testToken}\n`, { ...testEnv, apiUrl: PROD });
+
+      assertEquals(await readToken(testEnv), testToken);
+      assertEquals(await isTokenSavedForOtherApi(testToken, STAGING, testEnv), true);
+      assertEquals(await deleteTokenRejectedBy(testToken, STAGING, testEnv), false);
+      assertEquals(await readToken(testEnv), testToken);
+    });
+
+    it("keeps a login that replaced the rejected one", async () => {
+      // Validation of the old token was in flight when a new login was saved.
+      await saveToken("new-token", { ...testEnv, apiUrl: PROD });
+
+      assertEquals(await deleteTokenRejectedBy(testToken, PROD, testEnv), false);
+      assertEquals(await readToken(testEnv), "new-token");
+    });
+
+    it("matches the rejected login the way it is stored", async () => {
+      await saveToken(testToken, { ...testEnv, apiUrl: PROD });
+
+      assertEquals(await deleteTokenRejectedBy(` ${testToken}\n`, PROD, testEnv), true);
       assertEquals(await readToken(testEnv), null);
     });
 

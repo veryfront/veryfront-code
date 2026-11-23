@@ -46,13 +46,20 @@ export async function readToken(env?: EnvironmentConfig): Promise<string | null>
     const tokenPath = getTokenPath(env);
 
     if (!(await fs.exists(tokenPath))) return null;
-    const content = await fs.readTextFile(tokenPath);
-    const token = applyIntrinsic(stringTrim, content, []) as string;
-    return token || null;
+    return normalizeStoredToken(await fs.readTextFile(tokenPath));
   } catch (error) {
     cliLogger.debug("Failed to read token:", error);
     return null;
   }
+}
+
+/**
+ * The stored login as `readToken` returns it. Everything that names the stored
+ * login (its API record, a rejection) goes through this, so a token saved with
+ * surrounding whitespace is still recognised as the same login.
+ */
+function normalizeStoredToken(token: string): string | null {
+  return (applyIntrinsic(stringTrim, token, []) as string) || null;
 }
 
 export async function saveToken(token: string, env?: EnvironmentConfig): Promise<void> {
@@ -71,7 +78,7 @@ export async function saveToken(token: string, env?: EnvironmentConfig): Promise
   try {
     const record: TokenApiRecord = {
       apiUrl: getApiUrl(env),
-      tokenSha256: await tokenFingerprint(token),
+      tokenSha256: await tokenFingerprint(normalizeStoredToken(token) ?? ""),
     };
     await fs.writeTextFile(apiPath, JSON.stringify(record));
     await fs.chmod(apiPath, TOKEN_FILE_PERMISSIONS);
@@ -100,18 +107,32 @@ export async function deleteToken(env?: EnvironmentConfig): Promise<void> {
 }
 
 /**
- * Remove the stored login after `apiUrl` rejected it, unless the login was
- * saved for a different API: one host not recognising a login says nothing
- * about whether the host it belongs to still accepts it. A login whose API
- * was never recorded for it (saved by an older CLI, or replaced since the
- * record was written) is removed as before. Returns whether it was removed.
+ * Remove the stored login after `apiUrl` rejected `rejectedToken`.
+ *
+ * Nothing is removed when the stored login is no longer `rejectedToken` (a new
+ * login replaced it while the request was in flight), or when it was saved
+ * for a different API: one host not recognising a login says nothing about
+ * whether the host it belongs to still accepts it. A login whose API was never
+ * recorded for it (saved by an older CLI, or replaced since the record was
+ * written) is removed as before. Returns whether the rejected login is no
+ * longer stored.
+ *
+ * There is no lock shared with `saveToken`, so a login saved in the instant
+ * between the comparison below and the removal can still be lost; the
+ * comparison narrows that to the time two file operations take, instead of
+ * the whole validation round trip.
  */
 export async function deleteTokenRejectedBy(
+  rejectedToken: string,
   apiUrl: string,
   env?: EnvironmentConfig,
 ): Promise<boolean> {
   const token = await readToken(env);
-  if (token !== null && await isTokenSavedForOtherApi(token, apiUrl, env)) return false;
+  // Already gone (a logout in between): nothing left to remove.
+  if (token === null) return true;
+  if (token !== normalizeStoredToken(rejectedToken)) return false;
+  if (await isTokenSavedForOtherApi(token, apiUrl, env)) return false;
+  if ((await readToken(env)) !== token) return false;
   await deleteToken(env);
   return true;
 }

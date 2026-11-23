@@ -537,6 +537,41 @@ describe("Login Module", { sanitizeOps: false, sanitizeResources: false }, () =>
       }
     });
 
+    it("keeps a login saved while the rejected one was being checked", async () => {
+      // Another process logs in again while this one is still waiting for the
+      // API to answer about the old token: the rejection is about the old
+      // token only, so the new login has to survive it.
+      const originalLog = console.log;
+      const projectDir = await makeTempDir({ prefix: "login-replaced-in-flight-" });
+
+      try {
+        setNonInteractive(true);
+        console.log = () => {};
+        const { withCwd } = await import("#veryfront/testing/cwd.ts");
+        const { ensureAuthenticated, whoami } = await import("./login.ts");
+        const checks: Array<[string, () => Promise<unknown>]> = [
+          ["whoami", () => whoami(testEnv)],
+          ["ensureAuthenticated", () => ensureAuthenticated(testEnv, projectDir)],
+          ["login", () => login(undefined, testEnv, projectDir)],
+        ];
+
+        for (const [name, check] of checks) {
+          await saveToken("old-token", testEnv);
+          await withMockFetch(async (_input, init) => {
+            const auth = String(new Headers(init?.headers).get("authorization") ?? "");
+            if (auth === "Bearer old-token") await saveToken("new-token", testEnv);
+            return new Response(null, { status: 401 });
+          }, () => withCwd(projectDir, check));
+          assertEquals(await readToken(testEnv), "new-token", name);
+        }
+      } finally {
+        console.log = originalLog;
+        resetInteractiveMode();
+        await safeDeleteToken();
+        await remove(projectDir, { recursive: true });
+      }
+    });
+
     it("falls back to a valid project dotenv credential after a rejected stored session", async () => {
       const originalFetch = globalThis.fetch;
       const originalToken = getEnv("VERYFRONT_API_TOKEN");
