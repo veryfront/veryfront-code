@@ -16,10 +16,18 @@ export const MAX_PORT_ATTEMPTS = 100;
 export const DEFAULT_API_URL = "https://api.veryfront.com";
 export const DEFAULT_LOCAL_API_URL = "https://api.veryfront.com";
 
-/** Select the matching hosted web environment for an operator-selected API. */
+/**
+ * Select the matching hosted web environment for an operator-selected API.
+ *
+ * Any host under veryfront.org (api.veryfront.org, api.staging.veryfront.org,
+ * a fully qualified "api.veryfront.org.") is staging, so its Studio and
+ * Preview links must stay on veryfront.org instead of falling back to production.
+ */
 export function getCloudDomain(apiUrl: string = DEFAULT_API_URL): string {
   try {
-    return new URL(apiUrl).hostname === "api.veryfront.org" ? "veryfront.org" : "veryfront.com";
+    const hostname = new URL(apiUrl).hostname.replace(/\.$/, "");
+    const isStaging = hostname === "veryfront.org" || hostname.endsWith(".veryfront.org");
+    return isStaging ? "veryfront.org" : "veryfront.com";
   } catch {
     return "veryfront.com";
   }
