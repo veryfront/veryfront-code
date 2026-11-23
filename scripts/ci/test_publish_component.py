@@ -357,6 +357,28 @@ class ReleaseReadinessTests(unittest.TestCase):
             finally:
                 publisher.subprocess.run=original
 
+    def test_reads_near_the_deadline_get_only_the_remaining_time(self):
+        facts=Facts();elapsed=[0];attempts=[];timeouts=[]
+        def public(url):
+            attempts.append(url)
+            if len(attempts)<=29:raise HTTPError(url,404,'Not Found',{},None)
+            return facts.public(url)
+        def run(command,**options):
+            timeouts.append(options['timeout'])
+            return subprocess.CompletedProcess(command,0,json.dumps(facts.source(command[4])).encode(),b'')
+        def sleep(seconds):elapsed[0]+=seconds
+        original=publisher.subprocess.run
+        publisher.subprocess.run=run
+        try:
+            with contextlib.redirect_stderr(io.StringIO()):
+                publisher.witness_when_ready(VERSION,ENV,public,clock=lambda:elapsed[0],sleep=sleep)
+        finally:
+            publisher.subprocess.run=original
+        self.assertEqual(elapsed[0],870)
+        self.assertEqual(timeouts,[30,30])
+        # Outside a deadline, and after one ends, each read keeps its own limit.
+        self.assertEqual(publisher.read_timeout(120),120)
+
     def test_rejected_source_reads_are_refused_at_once(self):
         def no_sleep(_):self.fail('A rejected source read must not be retried')
         for stderr in (b'gh: Not Found (HTTP 404)\n',b'gh: Forbidden (HTTP 403)\n',b'gh: Unprocessable (HTTP 422)\n'):

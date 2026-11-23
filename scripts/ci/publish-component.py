@@ -44,6 +44,17 @@ class Refused(ValueError):
         super().__init__('Code component publication refused: '+check);self.check=check
 
 
+# Set while witness_when_ready runs: the time at which it must stop, and its clock.
+ATTEMPT_BUDGET={}
+
+
+def read_timeout(limit):
+    # A read that starts close to the deadline gets only the time that is left,
+    # so one attempt cannot run minutes past it.
+    if not ATTEMPT_BUDGET:return limit
+    return max(1,min(limit,ATTEMPT_BUDGET['deadline']-ATTEMPT_BUDGET['clock']()))
+
+
 class TransientRead(Exception):
     # A read that failed without an answer about the release facts.
     def __init__(self,check):
@@ -76,7 +87,7 @@ class NoRedirect(HTTPRedirectHandler):
 
 def public_json(url):
     # Call sites construct only the fixed public registry/release routes below.
-    with build_opener(NoRedirect).open(Request(url,headers={'Accept':'application/json','User-Agent':'platform-component-publication'}),timeout=30) as response:
+    with build_opener(NoRedirect).open(Request(url,headers={'Accept':'application/json','User-Agent':'platform-component-publication'}),timeout=read_timeout(30)) as response:
         require(response.status==200,'public record status')
         raw=response.read(2*1024*1024+1)
         require(0<len(raw)<=2*1024*1024,'public record size')
@@ -99,7 +110,7 @@ def public_asset(asset_id,size):
     require(type(asset_id) is int and asset_id>0 and type(size) is int and 0<size<=TARBALL_LIMIT,'release asset request bounds')
     url='https://api.github.com/repos/veryfront/veryfront/releases/assets/'+str(asset_id)
     request=Request(url,headers={'Accept':'application/octet-stream','User-Agent':'platform-component-publication'})
-    with build_opener(AssetRedirect).open(request,timeout=120) as response:
+    with build_opener(AssetRedirect).open(request,timeout=read_timeout(120)) as response:
         # GitHub either streams the asset from the fixed route or redirects once.
         final=response.geturl()
         require(response.status==200 and (final==url or urlsplit(final).hostname==ASSET_HOST),'release asset response route')
@@ -113,7 +124,7 @@ def source_json(path):
     projection = '{sha}' if '/commits/' in path else '{status,base_commit:{sha:.base_commit.sha}}'
     check='source read '+('commit' if '/commits/' in path else 'comparison')
     try:
-        result=subprocess.run(['gh','api','--hostname','github.com',path,'--jq',projection],capture_output=True,timeout=60,check=False)
+        result=subprocess.run(['gh','api','--hostname','github.com',path,'--jq',projection],capture_output=True,timeout=read_timeout(60),check=False)
     except subprocess.TimeoutExpired:
         raise TransientRead(check+' timed out') from None
     if result.returncode!=0:
@@ -248,6 +259,14 @@ def witness_when_ready(version,env,read_public=public_json,read_source=source_js
     # so the read-only witness is repeated a bounded number of times inside the
     # same deadline. Every other status and every failed check refuses at once.
     deadline=clock()+15*60
+    ATTEMPT_BUDGET.update(deadline=deadline,clock=clock)
+    try:
+        return witness_until(deadline,version,env,read_public,read_source,clock,sleep,read_asset)
+    finally:
+        ATTEMPT_BUDGET.clear()
+
+
+def witness_until(deadline,version,env,read_public,read_source,clock,sleep,read_asset):
     transient=0
     while True:
         try:
