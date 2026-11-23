@@ -8,7 +8,9 @@ import {
 } from "#veryfront/config/environment-config.ts";
 import {
   deleteToken,
+  deleteTokenRejectedBy,
   getTokenLocation,
+  isTokenSavedForOtherApi,
   LOGIN_CHECK_TTL_MS,
   readToken,
   rememberAcceptedLogin,
@@ -100,6 +102,117 @@ describe("Token Store", () => {
 
     it("should not throw when deleting non-existent token", async () => {
       await deleteToken(testEnv);
+    });
+  });
+
+  describe("deleteTokenRejectedBy", () => {
+    const PROD = "https://api.prod.example.test/api";
+    const STAGING = "https://api.staging.example.test/api";
+
+    it("keeps a login saved for a different API", async () => {
+      await saveToken(testToken, { ...testEnv, apiUrl: PROD });
+
+      assertEquals(await deleteTokenRejectedBy(testToken, STAGING, testEnv), false);
+      assertEquals(await readToken(testEnv), testToken);
+    });
+
+    it("removes a login the API it was saved for rejects", async () => {
+      await saveToken(testToken, { ...testEnv, apiUrl: PROD });
+
+      assertEquals(
+        await deleteTokenRejectedBy(testToken, "https://API.prod.example.test:443/api/", testEnv),
+        true,
+      );
+      assertEquals(await readToken(testEnv), null);
+    });
+
+    it("removes a login saved before its API was recorded", async () => {
+      await saveToken(testToken, { ...testEnv, apiUrl: PROD });
+      await Deno.remove(getTokenLocation(testEnv).replace(/token$/, "token-api.json"));
+
+      assertEquals(await deleteTokenRejectedBy(testToken, STAGING, testEnv), true);
+      assertEquals(await readToken(testEnv), null);
+    });
+
+    it("forgets the recorded API on logout", async () => {
+      await saveToken(testToken, { ...testEnv, apiUrl: PROD });
+      await deleteToken(testEnv);
+      await Deno.writeTextFile(getTokenLocation(testEnv), `${testToken}\n`);
+
+      assertEquals(await deleteTokenRejectedBy(testToken, STAGING, testEnv), true);
+    });
+
+    it("names the login in its record by SHA-256, never by the token itself", async () => {
+      const recordPath = getTokenLocation(testEnv).replace(/token$/, "token-api.json");
+      const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(testToken));
+      const tokenSha256 = Array.from(new Uint8Array(digest))
+        .map((byte) => byte.toString(16).padStart(2, "0"))
+        .join("");
+      await saveToken(testToken, { ...testEnv, apiUrl: PROD });
+
+      await Deno.writeTextFile(recordPath, JSON.stringify({ apiUrl: PROD, tokenSha256 }));
+      assertEquals(await deleteTokenRejectedBy(testToken, STAGING, testEnv), false);
+
+      await Deno.writeTextFile(
+        recordPath,
+        JSON.stringify({ apiUrl: PROD, tokenSha256: testToken }),
+      );
+      assertEquals(await deleteTokenRejectedBy(testToken, STAGING, testEnv), true);
+    });
+
+    it("treats a record describing a replaced login as unrecorded", async () => {
+      // An older CLI, or a concurrent login, rewrites the token without
+      // touching the record, which then describes a login that is gone.
+      await saveToken(testToken, { ...testEnv, apiUrl: PROD });
+      await Deno.writeTextFile(getTokenLocation(testEnv), "replaced-token\n");
+
+      assertEquals(await isTokenSavedForOtherApi("replaced-token", STAGING, testEnv), false);
+      assertEquals(await deleteTokenRejectedBy("replaced-token", STAGING, testEnv), true);
+      assertEquals(await readToken(testEnv), null);
+    });
+
+    it("treats a record without a fingerprint as unrecorded", async () => {
+      await saveToken(testToken, { ...testEnv, apiUrl: PROD });
+      await Deno.writeTextFile(
+        getTokenLocation(testEnv).replace(/token$/, "token-api.json"),
+        JSON.stringify({ apiUrl: PROD }),
+      );
+
+      assertEquals(await isTokenSavedForOtherApi(testToken, STAGING, testEnv), false);
+      assertEquals(await deleteTokenRejectedBy(testToken, STAGING, testEnv), true);
+      assertEquals(await readToken(testEnv), null);
+    });
+
+    it("recognises its record for a login saved with surrounding whitespace", async () => {
+      await saveToken(`  ${testToken}\n`, { ...testEnv, apiUrl: PROD });
+
+      assertEquals(await readToken(testEnv), testToken);
+      assertEquals(await isTokenSavedForOtherApi(testToken, STAGING, testEnv), true);
+      assertEquals(await deleteTokenRejectedBy(testToken, STAGING, testEnv), false);
+      assertEquals(await readToken(testEnv), testToken);
+    });
+
+    it("keeps a login that replaced the rejected one", async () => {
+      // Validation of the old token was in flight when a new login was saved.
+      await saveToken("new-token", { ...testEnv, apiUrl: PROD });
+
+      assertEquals(await deleteTokenRejectedBy(testToken, PROD, testEnv), false);
+      assertEquals(await readToken(testEnv), "new-token");
+    });
+
+    it("matches the rejected login the way it is stored", async () => {
+      await saveToken(testToken, { ...testEnv, apiUrl: PROD });
+
+      assertEquals(await deleteTokenRejectedBy(` ${testToken}\n`, PROD, testEnv), true);
+      assertEquals(await readToken(testEnv), null);
+    });
+
+    it("says whether a login was saved for a different API", async () => {
+      await saveToken(testToken, { ...testEnv, apiUrl: PROD });
+
+      assertEquals(await isTokenSavedForOtherApi(testToken, STAGING, testEnv), true);
+      assertEquals(await isTokenSavedForOtherApi(testToken, `${PROD}/`, testEnv), false);
+      assertEquals(await isTokenSavedForOtherApi("other-token", STAGING, testEnv), false);
     });
   });
 

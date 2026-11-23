@@ -496,6 +496,82 @@ describe("Login Module", { sanitizeOps: false, sanitizeResources: false }, () =>
       }
     });
 
+    it("keeps a stored login that a different API host rejects", async () => {
+      // A login saved for one API (production) must survive a check against
+      // another (staging) that does not recognise it.
+      const originalLog = console.log;
+      const projectDir = await makeTempDir({ prefix: "login-other-host-" });
+      const savedEnv = { ...testEnv, apiUrl: "https://api.prod.example.test/api" };
+      const otherEnv = { ...testEnv, apiUrl: "https://api.staging.example.test/api" };
+
+      try {
+        setNonInteractive(true);
+        console.log = () => {};
+        const { withCwd } = await import("#veryfront/testing/cwd.ts");
+        const { ensureAuthenticated, whoami } = await import("./login.ts");
+        const checks: Array<[string, () => Promise<unknown>]> = [
+          ["whoami", () => whoami(otherEnv)],
+          ["ensureAuthenticated", () => ensureAuthenticated(otherEnv, projectDir)],
+          ["login", () => login(undefined, otherEnv, projectDir)],
+        ];
+
+        await withMockFetch(
+          () => Promise.resolve(new Response(null, { status: 401 })),
+          async () => {
+            for (const [name, check] of checks) {
+              await saveToken("stored-prod-token", savedEnv);
+              assertEquals(await withCwd(projectDir, check), null, name);
+              assertEquals(await readToken(testEnv), "stored-prod-token", name);
+            }
+
+            // The host the login was saved for still removes it when it rejects it.
+            assertEquals(await withCwd(projectDir, () => whoami(savedEnv)), null);
+            assertEquals(await readToken(testEnv), null);
+          },
+        );
+      } finally {
+        console.log = originalLog;
+        resetInteractiveMode();
+        await safeDeleteToken();
+        await remove(projectDir, { recursive: true });
+      }
+    });
+
+    it("keeps a login saved while the rejected one was being checked", async () => {
+      // Another process logs in again while this one is still waiting for the
+      // API to answer about the old token: the rejection is about the old
+      // token only, so the new login has to survive it.
+      const originalLog = console.log;
+      const projectDir = await makeTempDir({ prefix: "login-replaced-in-flight-" });
+
+      try {
+        setNonInteractive(true);
+        console.log = () => {};
+        const { withCwd } = await import("#veryfront/testing/cwd.ts");
+        const { ensureAuthenticated, whoami } = await import("./login.ts");
+        const checks: Array<[string, () => Promise<unknown>]> = [
+          ["whoami", () => whoami(testEnv)],
+          ["ensureAuthenticated", () => ensureAuthenticated(testEnv, projectDir)],
+          ["login", () => login(undefined, testEnv, projectDir)],
+        ];
+
+        for (const [name, check] of checks) {
+          await saveToken("old-token", testEnv);
+          await withMockFetch(async (_input, init) => {
+            const auth = String(new Headers(init?.headers).get("authorization") ?? "");
+            if (auth === "Bearer old-token") await saveToken("new-token", testEnv);
+            return new Response(null, { status: 401 });
+          }, () => withCwd(projectDir, check));
+          assertEquals(await readToken(testEnv), "new-token", name);
+        }
+      } finally {
+        console.log = originalLog;
+        resetInteractiveMode();
+        await safeDeleteToken();
+        await remove(projectDir, { recursive: true });
+      }
+    });
+
     it("falls back to a valid project dotenv credential after a rejected stored session", async () => {
       const originalFetch = globalThis.fetch;
       const originalToken = getEnv("VERYFRONT_API_TOKEN");
@@ -548,6 +624,74 @@ describe("Login Module", { sanitizeOps: false, sanitizeResources: false }, () =>
         resetInteractiveMode();
         await safeDeleteToken();
         await remove(envDir, { recursive: true });
+      }
+    });
+
+    it("authenticates and resolves with the project dotenv token, not a stored login saved for another API", async () => {
+      // A production login must not stay the preferred credential for a staging
+      // API: `up` authenticates first and then resolves its config again, and
+      // both have to settle on the same credential.
+      const originalToken = getEnv("VERYFRONT_API_TOKEN");
+      const projectDir = await makeTempDir({ prefix: "ensure-dotenv-other-host-" });
+      const requestedAuth: string[] = [];
+      const stagingEnv = {
+        ...testEnv,
+        apiUrl: "https://api.staging.example.test/api",
+        apiToken: "env-file-staging-token",
+      };
+      await saveToken("stored-prod-token", {
+        ...testEnv,
+        apiUrl: "https://api.prod.example.test/api",
+      });
+
+      try {
+        deleteEnv("VERYFRONT_API_TOKEN");
+        await Deno.writeTextFile(
+          `${projectDir}/.env`,
+          "VERYFRONT_API_TOKEN=env-file-staging-token\n",
+        );
+        await Deno.writeTextFile(
+          `${projectDir}/veryfront.json`,
+          JSON.stringify({ projectSlug: "staging-project" }) + "\n",
+        );
+        const { __resetEnvLoaderForTests, loadEnv } = await import(
+          "veryfront/utils/env-loader"
+        );
+        __resetEnvLoaderForTests();
+        await loadEnv({ cwd: projectDir });
+        setNonInteractive(true);
+
+        const { ensureAuthenticated } = await import("./login.ts");
+        const { resolveConfigWithAuth } = await import("../shared/config.ts");
+        const [credential, config] = await withMockFetch(
+          (_input, init) => {
+            const auth = String(new Headers(init?.headers).get("authorization") ?? "");
+            requestedAuth.push(auth);
+            if (auth !== "Bearer env-file-staging-token") {
+              return Promise.resolve(new Response(null, { status: 401 }));
+            }
+            return Promise.resolve(Response.json({ id: "env-user", email: "env@example.com" }));
+          },
+          async () =>
+            [
+              await ensureAuthenticated(stagingEnv, projectDir),
+              await resolveConfigWithAuth(projectDir, stagingEnv),
+            ] as const,
+        );
+
+        assertEquals(credential, { id: "env-user", email: "env@example.com" });
+        assertEquals(config.apiToken, "env-file-staging-token");
+        assertEquals(config.apiTokenSource, "env-file");
+        assertEquals(requestedAuth, ["Bearer env-file-staging-token"]);
+        assertEquals(await readToken(testEnv), "stored-prod-token");
+      } finally {
+        const { __resetEnvLoaderForTests } = await import("veryfront/utils/env-loader");
+        __resetEnvLoaderForTests();
+        if (originalToken) setEnv("VERYFRONT_API_TOKEN", originalToken);
+        else deleteEnv("VERYFRONT_API_TOKEN");
+        resetInteractiveMode();
+        await safeDeleteToken();
+        await remove(projectDir, { recursive: true });
       }
     });
 
