@@ -472,4 +472,38 @@ describe("tool/host-tools", () => {
 
     assertEquals(Object.keys(tools), ["search"]);
   });
+  it("forwards a trusted advertised schema getter and never reads an untrusted one", () => {
+    const advertised = { type: "object", properties: { load: { type: "object" } } } as const;
+    let trustedReads = 0;
+    const trusted = markTrustedHostToolProvenance(
+      {
+        description: "Trusted loader",
+        inputSchema: defineSchema((v) => v.object({ load: v.object({}) }))(),
+        get inputSchemaJson() {
+          trustedReads++;
+          return advertised;
+        },
+        execute: () => ({ ok: true }),
+      } as HostToolSet[string],
+    );
+    const untrusted = {
+      description: "Project tool",
+      inputSchema: defineSchema((v) => v.object({ query: v.string() }))(),
+      get inputSchemaJson(): JsonSchema {
+        throw new Error("Accessor must not run");
+      },
+      execute: () => ({ ok: true }),
+    } as HostToolSet[string];
+    const tools = createToolsFromHostDefinitions({ trusted, untrusted });
+    assertEquals(trustedReads, 0);
+    assertEquals(toolToProviderDefinition(tools.trusted!).parameters, advertised);
+    const afterFirst = trustedReads;
+    assertEquals(afterFirst > 0, true);
+    assertEquals(toolToProviderDefinition(tools.trusted!).parameters, advertised);
+    assertEquals(trustedReads > afterFirst, true);
+    assertEquals(
+      Object.keys(toolToProviderDefinition(tools.untrusted!).parameters.properties ?? {}),
+      ["query"],
+    );
+  });
 });

@@ -11,7 +11,10 @@ import type {
 } from "./types.ts";
 import { copyToolDiscoveryMetadata } from "./discovery-metadata.ts";
 import { getRemoteToolProvenance, markRemoteToolProvenance } from "./remote-tool-provenance.ts";
-import { inheritTrustedHostToolProvenance } from "./host-tool-provenance.ts";
+import {
+  hasTrustedHostToolProvenance,
+  inheritTrustedHostToolProvenance,
+} from "./host-tool-provenance.ts";
 import { defineOwnDataProperty } from "#veryfront/security/own-data-property.ts";
 import { inheritProviderObservedSkillBodies } from "./provider-observed-skill-bodies.ts";
 import { snapshotJsonSchemaObject } from "#veryfront/schemas/schema-input.ts";
@@ -20,6 +23,7 @@ const apply = Reflect.apply;
 const arrayIsArray = Array.isArray;
 const objectEntries = Object.entries;
 const objectCreate = Object.create;
+const objectDefineProperty = Object.defineProperty;
 const objectGetOwnPropertyDescriptors = Object.getOwnPropertyDescriptors;
 const objectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
 const objectGetPrototypeOf = Object.getPrototypeOf;
@@ -145,6 +149,35 @@ function snapshotHostToolDefinition(value: unknown): Record<string, unknown> | u
   return snapshot;
 }
 
+/**
+ * A trusted platform definition may advertise its provider schema through an own
+ * `inputSchemaJson` getter (load_skill does, and its read refreshes reference
+ * authorization). Data-only snapshots drop it, so return it for forwarding.
+ * Accessors on untrusted definitions are never read.
+ */
+function getTrustedAdvertisedSchemaGetter(value: unknown): (() => unknown) | undefined {
+  if (!hasTrustedHostToolProvenance(value)) return undefined;
+  const descriptor = objectGetOwnPropertyDescriptor(value as object, "inputSchemaJson");
+  if (descriptor === undefined || objectHasOwn(descriptor, "value")) return undefined;
+  return typeof descriptor.get === "function" ? descriptor.get : undefined;
+}
+
+function forwardAdvertisedInputSchema(
+  materializedTool: Tool,
+  originalDefinition: unknown,
+  getter: () => unknown,
+): void {
+  const fallback = materializedTool.inputSchemaJson;
+  const descriptor = objectCreate(null) as PropertyDescriptor;
+  descriptor.configurable = true;
+  descriptor.enumerable = true;
+  // Read through the original on every access so the getter's side effects
+  // still run, with the same bound `dynamicTool` applies to declared schemas.
+  descriptor.get = () =>
+    snapshotJsonSchemaObject(apply(getter, originalDefinition, []) as JsonSchema) ?? fallback;
+  apply(objectDefineProperty, Object, [materializedTool, "inputSchemaJson", descriptor]);
+}
+
 function normalizeExecutionContext(
   toolName: string,
   context: ToolExecutionContext | undefined,
@@ -258,6 +291,12 @@ export function createToolsFromHostDefinitions(
             normalizeExecutionContext(toolName, context, options),
           ]);
         };
+      }
+      const advertisedSchemaGetter = materializedTool && !definition.inputSchemaJson
+        ? getTrustedAdvertisedSchemaGetter(originalDefinition)
+        : undefined;
+      if (materializedTool && advertisedSchemaGetter) {
+        forwardAdvertisedInputSchema(materializedTool, originalDefinition, advertisedSchemaGetter);
       }
       if (materializedTool) {
         copyToolDiscoveryMetadata(definition, materializedTool);
