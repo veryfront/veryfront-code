@@ -160,7 +160,11 @@ import {
   createAgentServiceEvalAdapter,
 } from "#veryfront/eval/agent-service.ts";
 import { bindTrustedLocalEvalFetch } from "#veryfront/eval/agent-service/trusted-fetch.ts";
-import { type AgUiRuntimeRestrictions, createAgUiHandler } from "#veryfront/agent/ag-ui/handler.ts";
+import {
+  type AgUiRuntimeRestrictions,
+  createAgUiHandler,
+  hasAgUiRuntimeRestrictions,
+} from "#veryfront/agent/ag-ui/handler.ts";
 import { runWithEvalEnvironmentContext } from "#veryfront/agent/runtime/eval-environment-context-scope.ts";
 import { getAgUiRuntimeContextItemSchema } from "#veryfront/agent/runtime/ag-ui-contract.ts";
 import { hostedChatRuntimeOverridesSchema } from "#veryfront/agent/hosted/chat-request.ts";
@@ -5241,10 +5245,17 @@ function createEvalAdapterConfig(input: {
   const allowedTools = getOptionalStringArrayConfig(config, ["allowed_tools", "allowedTools"]);
   const maxSteps = getPositiveIntConfig(config, ["max_steps", "maxSteps"]);
   const hasMaxSteps = maxSteps != null;
-  const runtimeRestrictions = {
+  const configuredRestrictions: AgUiRuntimeRestrictions = {
     ...(allowedTools !== undefined ? { allowedTools } : {}),
     ...(hasMaxSteps ? { maxSteps } : {}),
   };
+  // Pass a ceiling only when the eval config sets one. An empty set would
+  // suppress the local fetch's fallback to the restrictions forwarded in the
+  // request body (for example an eval case's own allowedTools), so the source
+  // agent would run with its full tool set.
+  const runtimeRestrictions = hasAgUiRuntimeRestrictions(configuredRestrictions)
+    ? configuredRestrictions
+    : undefined;
   const localFetch = createLocalEvalAgentFetch({ endpoint, agentId, runtimeRestrictions });
 
   function resolveAdapterFetch() {

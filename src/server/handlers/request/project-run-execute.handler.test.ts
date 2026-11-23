@@ -7456,6 +7456,104 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     }
   });
 
+  it("restricts a local source agent run to an eval case's own allowed tools", async () => {
+    let sourceAgentStreamCalls = 0;
+    let observedToolNames: string[] | undefined;
+    const sourceAgent = createStreamingAgent("researcher", "Paris", undefined, () => {
+      sourceAgentStreamCalls += 1;
+    });
+    agentRegistry.register("researcher", {
+      ...sourceAgent,
+      config: {
+        ...sourceAgent.config,
+        tools: {
+          eval_case_lookup: tool({
+            id: "eval_case_lookup",
+            description: "Allowed by the eval case.",
+            inputSchema: defineSchema((v) => v.object({}))(),
+            execute: () => Promise.resolve("ok"),
+          }),
+          eval_case_delete: tool({
+            id: "eval_case_delete",
+            description: "Not allowed by the eval case.",
+            inputSchema: defineSchema((v) => v.object({}))(),
+            execute: () => Promise.resolve("ok"),
+          }),
+        },
+        resolveModelTransport: () =>
+          Promise.resolve({
+            model: createEvalTransportModel({
+              text: "Paris",
+              onCall: (options) => {
+                observedToolNames = (options.tools ?? [])
+                  .map((definition) => definition.name)
+                  .toSorted();
+              },
+            }),
+          }),
+      } as Agent["config"],
+    });
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      runTask: runTaskDefinition,
+      findEvalById: async (target) =>
+        target === "eval:deep-research"
+          ? {
+            id: "eval:deep-research",
+            name: "Deep research quality",
+            filePath: "evals/deep-research.eval.ts",
+            exportName: "default",
+            definition: evalAgent({
+              id: "eval:deep-research",
+              target: "agent:researcher",
+              dataset: datasets.inline([
+                {
+                  id: "q1",
+                  input: { prompt: "France capital?", allowedTools: ["eval_case_lookup"] },
+                  reference: "Paris",
+                },
+              ]),
+              metrics: [metrics.answer.contains({ text: "Paris" }).gate()],
+            }),
+          }
+          : null,
+      runEval: runEvalDefinition,
+      createEvalAgentAdapter: (config) =>
+        createAgentServiceEvalAdapter({ ...config, requestTimeoutMs: 250 }),
+    }));
+    // The eval config sets no allowlist and no step ceiling.
+    const body = {
+      runId: "run_eval_case_allowed_tools",
+      kind: "task",
+      target: "task:eval",
+      projectId: "proj-1",
+      runtimeAgUiEndpoint: "http://localhost:4311/api/ag-ui",
+      config: { eval_id: "eval:deep-research" },
+    };
+    const { request, publicKeyPem } = await signedRequest(
+      "/api/control-plane/runs/run_eval_case_allowed_tools/execute",
+      body,
+      { "x-token": "runtime-token" },
+      "http://localhost:4311",
+    );
+    try {
+      const result = await withEnvValue(
+        "PORT",
+        "4311",
+        () => handler.handle(request, createCtx(publicKeyPem)),
+      );
+
+      assertExists(result.response);
+      assertEquals(result.response.status, 200);
+      assertEquals((await result.response.json()).success, true);
+      // The case's forwarded allowlist is the ceiling: only its tool reaches
+      // the model, and the source agent's unrestricted stream never runs.
+      assertEquals(observedToolNames, ["eval_case_lookup"]);
+      assertEquals(sourceAgentStreamCalls, 0);
+    } finally {
+      agentRegistry.delete("researcher");
+    }
+  });
+
   for (
     const publicParentId of [
       "run_66666666-6666-4666-8666-666666666666",

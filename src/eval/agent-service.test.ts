@@ -231,6 +231,16 @@ describe("eval/agent-service", () => {
     });
   });
 
+  it("sends no runtime overrides when no tool allowlist or step ceiling is set", () => {
+    const body = buildAgentServiceEvalRequestBody({
+      exampleId: "smoke",
+      input: { prompt: "List files" },
+      agentId: "researcher",
+    });
+
+    assertEquals(body.forwardedProps, { veryfront: { agentId: "researcher" } });
+  });
+
   it("forwards an environment context without other forwarded props", () => {
     const body = buildAgentServiceEvalRequestBody({
       exampleId: "smoke",
