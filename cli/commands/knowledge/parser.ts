@@ -328,18 +328,22 @@ function headingContainerLine(
   indents: number[],
   insideBlock: boolean,
   paragraphOpen: boolean,
+  paragraphInDescendant: boolean,
 ): { line: string; startsItem: boolean; lazy: boolean; emptyItem: boolean } {
   const line = expandHeadingIndentation(raw);
   const indentation = /^ */.exec(line)?.[0].length ?? 0;
-  if (
-    indents.length && indentation < (indents.at(-1) ?? 0) &&
-    /^ {0,3}(?:[-+*]|\d{1,9}[.)])(?:[ \t]|$)/.test(
-      line.slice(Math.min(indents.at(-2) ?? 0, indentation)),
-    )
-  ) paragraphOpen = false;
-  const lazy = indentation < (indents.at(-1) ?? 0) && paragraphOpen && !insideBlock &&
-    hasHeadingContent(line, false) &&
-    !startsInterruptingBlock(line.slice(Math.min(indents.at(-2) ?? 0, indentation)));
+  // Only prefixes that actually matched may expose an interrupting block.
+  // Underindented text can remain lazy in the existing paragraph, but cannot
+  // consume a marker or mutate any of its unmatched list containers.
+  const matchedIndent = indents.findLast((indent) => indent <= indentation) ?? 0;
+  const unmatched = indentation < (indents.at(-1) ?? 0);
+  const remainder = line.slice(matchedIndent);
+  const siblingItem = (unmatched || paragraphInDescendant) &&
+    headingListMarker(remainder, false) !== null;
+  if (siblingItem) paragraphOpen = false;
+  const lazy = unmatched && paragraphOpen && !insideBlock && !siblingItem &&
+    hasHeadingContent(line, false) && !startsInterruptingBlock(remainder);
+  if (lazy) return { line: remainder, startsItem: false, lazy: true, emptyItem: false };
   if (hasHeadingContent(line, false) && !lazy) {
     while (indents.length && indentation < (indents.at(-1) ?? 0)) indents.pop();
   }
@@ -886,14 +890,15 @@ function sameHeadingOwner(a: MdxHeadingContainer[], b: MdxHeadingContainer[]): b
 }
 
 /** Consume each frame's prefix at its own level, never an aggregate indentation. */
-function readMdxOwnedLine(
+function readHeadingOwnedLine(
   source: string,
   owner: MdxHeadingContainer[],
+  mdx = true,
 ): string | undefined {
   let line = expandHeadingIndentation(source);
   for (const frame of owner) {
     if (frame.kind === "quote") {
-      const prefix = /^ *>[ \t]?/.exec(line);
+      const prefix = (mdx ? /^ *>[ \t]?/ : /^ {0,3}>[ \t]?/).exec(line);
       if (!prefix) return undefined;
       line = line.slice(prefix[0].length);
     } else {
@@ -937,7 +942,7 @@ function mdxHeadingRegion(
         exhausted = true;
         break;
       }
-      const next = readMdxOwnedLine(lines[index + content.length] ?? "", owner);
+      const next = readHeadingOwnedLine(lines[index + content.length] ?? "", owner);
       if (next === undefined) {
         exhausted = true;
         break;
@@ -1037,7 +1042,7 @@ function findFirstMdxH1(markdown: string): string | undefined {
     sourceOffset += source.length + 1;
     if (lineOffset < mdxThrough || index <= definitionThrough) continue;
     if (state.fence) {
-      const content = readMdxOwnedLine(source, state.fence.owner);
+      const content = readHeadingOwnedLine(source, state.fence.owner);
       if (content !== undefined) {
         state.containers = state.fence.owner;
         const closing = /^(`{3,}|~{3,})[ \t]*$/.exec(content.replace(/^[ \t]*/, ""))?.[1];
@@ -1155,23 +1160,51 @@ function findFirstMdxH1(markdown: string): string | undefined {
   return undefined;
 }
 
+/** Reference definitions contribute no text to a quoted Setext heading. */
+function hasQuotedSetextText(ownedLines: { text: string; lazy: boolean }[]): boolean {
+  const lines = ownedLines.map((line) => line.text);
+  let offset = 0;
+  while (offset < lines.length) {
+    // Fully matched lines have Markdown indentation semantics. Lazy lines keep
+    // their literal indentation, which cannot introduce another definition.
+    if (ownedLines[offset]?.lazy && /^[ \t]/.test(lines[offset] ?? "")) return true;
+    const count = headingDefinitionLines(
+      lines,
+      offset,
+      0,
+      lines[offset],
+      0,
+      offset > 0,
+      false,
+      undefined,
+      (index, line) => !ownedLines[index]?.lazy && interruptsDefinition(line, false),
+    );
+    if (!count) return true;
+    offset += count;
+  }
+  return false;
+}
+
 /** The first top-level H1 outside code, HTML blocks, and leading YAML frontmatter. */
 function findFirstH1(markdown: string, mdx = false): string | undefined {
   if (mdx) return findFirstMdxH1(markdown);
   let fence: string | undefined;
   let htmlEnd: RegExp | "blank" | undefined;
-  let blockQuoteDepth = 0;
-  let quotedListIndent = 0;
+  let quotedBlockOwner: MdxHeadingContainer[] | undefined;
   let blockIndent = 0;
   let paragraphOpen = false;
   let rootParagraph: string[] = [];
   let indentedCode = false;
   let emptyItem = false;
   let setextEligible = false;
-  let quoteParagraph = false;
-  let quoteParagraphDepth = 0;
+  let quoteContainers: { indents: number[]; emptyItem: boolean }[] = [];
+  let quoteRootIndents: number[] = [];
+  let quoteParagraph: {
+    owners: number[][];
+    lines: { text: string; lazy: boolean }[];
+  } | undefined;
   let definitionThrough = -1;
-  let referenceParagraph = false;
+  let referenceParagraph: { indents: number[] } | undefined;
   let mdxThrough = -1;
   let sourceOffset = 0;
   const indents: number[] = [];
@@ -1184,19 +1217,25 @@ function findFirstH1(markdown: string, mdx = false): string | undefined {
     const lineOffset = sourceOffset;
     sourceOffset += sourceLine.length + 1;
     const raw = expandHeadingIndentation(sourceLine);
-    if (!paragraphOpen) rootParagraph = [];
+    if (!paragraphOpen) {
+      rootParagraph = [];
+      quoteParagraph = undefined;
+    }
     if (mdx && lineOffset < mdxThrough) continue;
     if (!hasHeadingContent(raw, false) && emptyItem) {
       indents.pop();
       emptyItem = false;
     }
     if (lineIndex <= definitionThrough) continue;
-    if (!hasHeadingContent(raw, false)) quoteParagraph = false;
+    if (!hasHeadingContent(raw, false)) {
+      quoteParagraph = undefined;
+      quoteContainers = [];
+    }
     if (
       quoteParagraph && !/^ {0,3}>/.test(raw) &&
       (startsInterruptingBlock(raw) || /^ {0,3}(?:[-+*]|\d{1,9}[.)])(?:[ \t]|$)/.test(raw))
     ) {
-      quoteParagraph = false;
+      quoteParagraph = undefined;
       paragraphOpen = false;
     }
     let container = headingContainerLine(
@@ -1204,7 +1243,27 @@ function findFirstH1(markdown: string, mdx = false): string | undefined {
       indents,
       Boolean(fence || htmlEnd),
       paragraphOpen,
+      quoteParagraph !== undefined,
     );
+    // Container ownership expires before any leaf reader can return early,
+    // including reference definitions that contribute no paragraph text.
+    if (
+      container.startsItem || indents.length !== quoteRootIndents.length ||
+      indents.some((indent, index) => indent !== quoteRootIndents[index])
+    ) {
+      quoteContainers = [];
+      quoteParagraph = undefined;
+    }
+    if (!quoteParagraph && !/^ {0,3}>/.test(container.line)) quoteContainers = [];
+    const referenceIndents = referenceParagraph?.indents;
+    if (
+      referenceIndents &&
+      (container.startsItem || indents.length !== referenceIndents.length ||
+        indents.some((indent, index) => indent !== referenceIndents[index]))
+    ) {
+      referenceParagraph = undefined;
+      paragraphOpen = false;
+    }
     if (mdx && !fence && !htmlEnd) {
       const start = lineOffset + (sourceLine.match(/^[ \t]*/)?.[0].length ?? 0);
       const value = body.slice(start);
@@ -1221,8 +1280,7 @@ function findFirstH1(markdown: string, mdx = false): string | undefined {
         mdxThrough = region.end;
         if (region.kind === "flow") {
           paragraphOpen = false;
-          quoteParagraph = false;
-          quoteParagraphDepth = 0;
+          quoteParagraph = undefined;
         } else {
           const ending = body.indexOf("\n", region.end);
           mdxThrough = ending < 0 ? body.length : ending;
@@ -1230,7 +1288,7 @@ function findFirstH1(markdown: string, mdx = false): string | undefined {
           if (!paragraphOpen) rootParagraph = [];
           paragraphOpen = true;
           setextEligible = true;
-          referenceParagraph = false;
+          referenceParagraph = undefined;
           if (!quoteParagraph && !indents.length) rootParagraph.push(content);
           else rootParagraph = [];
         }
@@ -1243,25 +1301,21 @@ function findFirstH1(markdown: string, mdx = false): string | undefined {
       emptyItem = container.emptyItem;
     } else if (hasHeadingContent(raw, false)) emptyItem = false;
     let containerIndent = indents.at(-1) ?? 0;
-    let quotedLine = line;
-    let continuedQuoteDepth = 0;
-    while (continuedQuoteDepth < blockQuoteDepth && /^ {0,3}>/.test(quotedLine)) {
-      quotedLine = quotedLine.replace(/^ {0,3}>[ \t]?/, "");
-      continuedQuoteDepth += 1;
-    }
-    const quoteIndent = /^ */.exec(quotedLine)?.[0].length ?? 0;
-    const continuedQuote = blockQuoteDepth > 0 && continuedQuoteDepth === blockQuoteDepth &&
-      (!hasHeadingContent(quotedLine, false) || quoteIndent >= quotedListIndent);
-    if (continuedQuote) line = quotedLine.slice(Math.min(quoteIndent, quotedListIndent));
+    const quotedLine = quotedBlockOwner
+      ? readHeadingOwnedLine(raw, quotedBlockOwner, false)
+      : undefined;
+    const continuedQuote = quotedLine !== undefined;
+    if (continuedQuote) line = quotedLine;
     if (
       (htmlEnd || fence) && !continuedQuote &&
-      (blockQuoteDepth > 0 || hasHeadingContent(raw, false) && containerIndent < blockIndent)
+      (quotedBlockOwner !== undefined ||
+        hasHeadingContent(raw, false) && containerIndent < blockIndent)
     ) {
       htmlEnd = undefined;
       fence = undefined;
-      blockQuoteDepth = 0;
+      quotedBlockOwner = undefined;
       paragraphOpen = false;
-      container = headingContainerLine(raw, indents, false, false);
+      container = headingContainerLine(raw, indents, false, false, false);
       line = container.line;
       containerIndent = indents.at(-1) ?? 0;
       emptyItem = container.emptyItem;
@@ -1269,7 +1323,7 @@ function findFirstH1(markdown: string, mdx = false): string | undefined {
     if (htmlEnd) {
       if (htmlEnd === "blank" ? !hasHeadingContent(line, false) : htmlEnd.test(line)) {
         htmlEnd = undefined;
-        blockQuoteDepth = 0;
+        quotedBlockOwner = undefined;
         paragraphOpen = false;
       }
       continue;
@@ -1279,7 +1333,7 @@ function findFirstH1(markdown: string, mdx = false): string | undefined {
       const closing = /^ {0,3}(`{3,}|~{3,})[ \t]*$/.exec(line)?.[1];
       if (closing && closing[0] === fence[0] && closing.length >= fence.length) {
         fence = undefined;
-        blockQuoteDepth = 0;
+        quotedBlockOwner = undefined;
         paragraphOpen = false;
       }
       continue;
@@ -1291,73 +1345,132 @@ function findFirstH1(markdown: string, mdx = false): string | undefined {
         containerIndent,
         line,
         indents.at(-2) ?? 0,
-        referenceParagraph,
+        referenceParagraph !== undefined,
       );
       if (definitionLength) {
         definitionThrough = lineIndex + definitionLength - 1;
         // Definitions belong to their paragraph for interruption rules, but
         // contribute no visible text eligible for a Setext heading.
-        referenceParagraph = true;
+        referenceParagraph = { indents: [...indents] };
         paragraphOpen = true;
         setextEligible = false;
         continue;
       }
     }
-    referenceParagraph = false;
+    // A reference-only paragraph has no text for Setext conversion. Its
+    // underline remains text in that same owner instead of becoming a break.
+    const referenceUnderline = referenceParagraph !== undefined &&
+      /^ {0,3}(?:=+|-+)[ \t]*$/.test(line);
+    referenceParagraph = undefined;
     const quote = /^ {0,3}>[ \t]?(.*)$/.exec(line);
     if (quote) {
       rootParagraph = [];
-      let content = quote[1] ?? "";
-      let quoteDepth = 1;
-      while (/^ {0,3}>/.test(content)) {
-        content = content.replace(/^ {0,3}>[ \t]?/, "");
-        quoteDepth += 1;
+      // Lists survive their paragraphs, including blank lines, headings and code.
+      // Reuse the normal container reader at each explicitly matched quote depth.
+      if (
+        container.startsItem || indents.length !== quoteRootIndents.length ||
+        indents.some((indent, index) => indent !== quoteRootIndents[index])
+      ) {
+        quoteContainers = [];
+        quoteParagraph = undefined;
       }
-      const quoteLists: number[] = [];
-      let continuesParagraph: boolean = quoteParagraph && quoteDepth <= quoteParagraphDepth;
-      const quotedContainer = headingContainerLine(content, quoteLists, false, continuesParagraph);
-      content = quotedContainer.line;
-      let startsQuotedItem = quotedContainer.startsItem;
-      if (startsQuotedItem) continuesParagraph = false;
-      // Quotes and lists can alternate; laziness belongs to the innermost paragraph.
+      quoteRootIndents = [...indents];
+      let content = line;
+      let quoteDepth = 0;
+      let startsQuotedItem = false;
+      let lazyQuote = false;
+      let matchedAncestors = Boolean(quoteParagraph);
       while (/^ {0,3}>/.test(content)) {
         content = content.replace(/^ {0,3}>[ \t]?/, "");
+        const frame = quoteContainers[quoteDepth] ?? { indents: [], emptyItem: false };
+        const previousIndents = [...frame.indents];
+        if (!hasHeadingContent(content, false) && frame.emptyItem) {
+          frame.indents.pop();
+          frame.emptyItem = false;
+        }
+        const quoteLists = frame.indents;
+        const owner = quoteParagraph?.owners[quoteDepth];
+        const continues = matchedAncestors && Boolean(owner) && !startsQuotedItem;
+        const nestedContainer = headingContainerLine(
+          content,
+          quoteLists,
+          false,
+          continues,
+          quoteDepth + 1 < (quoteParagraph?.owners.length ?? 0),
+        );
+        if (nestedContainer.startsItem) frame.emptyItem = nestedContainer.emptyItem;
+        else if (hasHeadingContent(content, false)) frame.emptyItem = false;
+        quoteContainers[quoteDepth] = frame;
+        matchedAncestors &&= owner !== undefined && owner.length === quoteLists.length &&
+          owner.every((indent, index) => indent === quoteLists[index]);
         quoteDepth += 1;
-        continuesParagraph = quoteParagraph && quoteDepth <= quoteParagraphDepth &&
-          !startsQuotedItem;
-        const nestedContainer = headingContainerLine(content, [], false, continuesParagraph);
-        content = nestedContainer.line;
+        // Lazy content retains its physical indentation. Missing list prefixes
+        // cannot expose a new quote, fence, HTML block or thematic break.
+        content = nestedContainer.lazy ? content : nestedContainer.line;
+        lazyQuote ||= nestedContainer.lazy;
         startsQuotedItem ||= nestedContainer.startsItem;
-        if (startsQuotedItem) continuesParagraph = false;
+        if (
+          nestedContainer.startsItem || previousIndents.length !== quoteLists.length ||
+          previousIndents.some((indent, index) => indent !== quoteLists[index])
+        ) quoteContainers.length = quoteDepth;
+      }
+      const continuesParagraph = matchedAncestors && !startsQuotedItem &&
+        quoteDepth <= (quoteParagraph?.owners.length ?? 0);
+      if (!continuesParagraph) quoteContainers.length = quoteDepth;
+      const blockOwner: MdxHeadingContainer[] = [];
+      if (containerIndent) blockOwner.push({ kind: "list", indent: containerIndent, empty: false });
+      for (const frame of quoteContainers.slice(0, quoteDepth)) {
+        blockOwner.push({ kind: "quote" });
+        const indent = frame.indents.at(-1) ?? 0;
+        if (indent) blockOwner.push({ kind: "list", indent, empty: false });
       }
       const quoteFence = markdownFenceStart(content);
       const quoteHtml = mdx ? undefined : markdownHtmlBlockEnd(content, !continuesParagraph);
       if (quoteFence) {
         fence = quoteFence;
-        blockQuoteDepth = quoteDepth;
-        quotedListIndent = quoteLists.at(-1) ?? 0;
+        quotedBlockOwner = blockOwner;
+        blockIndent = containerIndent;
         paragraphOpen = false;
-        quoteParagraph = false;
+        quoteParagraph = undefined;
         continue;
       }
       if (quoteHtml) {
         if (quoteHtml === "blank" || !quoteHtml.test(content)) htmlEnd = quoteHtml;
-        blockQuoteDepth = htmlEnd ? quoteDepth : 0;
-        quotedListIndent = quoteLists.at(-1) ?? 0;
+        quotedBlockOwner = htmlEnd ? blockOwner : undefined;
+        blockIndent = containerIndent;
         paragraphOpen = false;
-        quoteParagraph = false;
+        quoteParagraph = undefined;
         continue;
       }
       indentedCode = false;
-      quoteParagraph = hasHeadingContent(content, false) &&
-        (mdx || continuesParagraph || !/^ {4}/.test(content)) && !startsInterruptingBlock(content);
-      quoteParagraphDepth = quoteParagraph
-        ? continuesParagraph ? Math.max(quoteParagraphDepth, quoteDepth) : quoteDepth
-        : 0;
-      paragraphOpen = quoteParagraph;
+      const previous = continuesParagraph ? quoteParagraph : undefined;
+      // Missing list indentation or unmatched quote descendants are lazy text,
+      // so an underline there cannot end a paragraph in another container.
+      const quotedUnderline = previous?.owners.length === quoteDepth && !lazyQuote &&
+        /^ {0,3}(?:=+|-+)[ \t]*$/.test(content);
+      const completesSetext = quotedUnderline && hasQuotedSetextText(previous.lines);
+      if (
+        !completesSetext && hasHeadingContent(content, false) &&
+        (mdx || continuesParagraph || !/^ {4}/.test(content)) &&
+        (quotedUnderline || !startsInterruptingBlock(content))
+      ) {
+        quoteParagraph = previous ?? {
+          owners: quoteContainers.slice(0, quoteDepth).map((frame) => [...frame.indents]),
+          lines: [],
+        };
+        quoteParagraph.lines.push({
+          text: content,
+          lazy: lazyQuote || quoteDepth < quoteParagraph.owners.length,
+        });
+      } else {
+        quoteParagraph = undefined;
+        quoteContainers.length = quoteDepth;
+      }
+      paragraphOpen = Boolean(quoteParagraph);
       setextEligible = false;
       continue;
     }
+    if (!quoteParagraph) quoteContainers = [];
     // A lazy line can retain an ancestor container, but missing indentation must not
     // be stripped as if that ancestor actually continued (notably nested list HTML).
     const blockEnd = mdx ? undefined : markdownHtmlBlockEnd(
@@ -1373,7 +1486,7 @@ function findFirstH1(markdown: string, mdx = false): string | undefined {
       blockIndent = quoteParagraph && markdownHtmlBlockEnd(line, false) === undefined
         ? containerIndent + 1
         : containerIndent;
-      quoteParagraph = false;
+      quoteParagraph = undefined;
       if (blockEnd === "blank" || !blockEnd.test(line)) htmlEnd = blockEnd;
       paragraphOpen = false;
       continue;
@@ -1382,7 +1495,7 @@ function findFirstH1(markdown: string, mdx = false): string | undefined {
     const opening = markdownFenceStart(fenceLine);
     if (!container.lazy && opening) {
       fence = opening;
-      quoteParagraph = false;
+      quoteParagraph = undefined;
       indentedCode = false;
       blockIndent = containerIndent;
       paragraphOpen = false;
@@ -1405,13 +1518,17 @@ function findFirstH1(markdown: string, mdx = false): string | undefined {
     paragraphOpen = !indentedCode && hasHeadingContent(line, false) &&
       !(paragraphOpen && setextEligible && !container.lazy && !quoteParagraph &&
         /^ {0,3}(?:=+|-+)[ \t]*$/.test(headingLine)) &&
-      !/^ {0,3}(?:#{1,6}(?:[ \t]|$)|(?:\*[ \t]*){3,}$|(?:-[ \t]*){3,}$|(?:_[ \t]*){3,}$)/.test(
-        paragraphLine,
-      );
+      (referenceUnderline ||
+        !/^ {0,3}(?:#{1,6}(?:[ \t]|$)|(?:\*[ \t]*){3,}$|(?:-[ \t]*){3,}$|(?:_[ \t]*){3,}$)/.test(
+          paragraphLine,
+        ));
     setextEligible = paragraphOpen && !/^ {0,3}>/.test(raw);
     if (paragraphOpen && !quoteParagraph && containerIndent === 0) {
       rootParagraph.push(paragraphLine.trim());
     } else rootParagraph = [];
+    if (paragraphOpen && quoteParagraph) {
+      quoteParagraph.lines.push({ text: paragraphLine, lazy: true });
+    }
   }
   return undefined;
 }
