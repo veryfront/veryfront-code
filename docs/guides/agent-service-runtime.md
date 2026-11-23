@@ -871,6 +871,17 @@ their existing handlers. Agent response bodies remain in the server shutdown
 drain until consumption or cancellation; the deployment still owns broker
 shutdown and settlement.
 
+Use `createCanonicalManagedBrokerService` when mounting canonical execution and
+its control handlers together. Its canonical `handle`, `cancel` and `resume`
+handlers share one bounded run owner. Construct the service once per deployment,
+not once per request. The preparation callback receives the owned signal and a
+host-only `waitForToolResult` callback; neither belongs in executor JSON. Service
+cleanup retires that exact owner, so a stale callback cannot attach to a resumed
+run. Stop confirmation is withheld until persistence and executor cleanup settle.
+The API's JSON `confirmStopped` flag and the legacy query flag use the same stop
+receipt contract. Call service `close` during process shutdown, and retain the
+allocator-pool shutdown and settlement described above.
+
 The option supplies routing, not deployment policy. Configure the canonical
 preparation handler, trusted immutable image selection, allocator, model and tool
 authority, cancellation/resume handlers and their lifecycle before enabling

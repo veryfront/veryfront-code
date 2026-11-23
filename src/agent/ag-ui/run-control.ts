@@ -1,6 +1,9 @@
+import { readRunStopConfirmation } from "../runtime/run-stop-request.ts";
+import { readBodyBytesWithLimit } from "#veryfront/security/input-validation/limits.ts";
 import { defineSchema, lazySchema } from "#veryfront/schemas/index.ts";
 import type { InferSchema } from "#veryfront/extensions/schema/index.ts";
 import {
+  AG_UI_MAX_REQUEST_BODY_BYTES,
   boundAgUiRequestBody,
   createAgUiBodyLimitErrorResponse,
   createAgUiSchemaValidationErrorResponse,
@@ -21,6 +24,11 @@ import {
   authorizeRunControl,
   type RunControlAuthorizer,
 } from "../runtime/run-control-authority.ts";
+
+// Optional stop receipts must preserve opaque-body cancellation compatibility.
+const decodeStopBody = TextDecoder.prototype.decode.bind(new TextDecoder());
+const requestBodyGet = Object.getOwnPropertyDescriptor(Request.prototype, "body")!.get!;
+const apply = Reflect.apply;
 
 const RESUME_PATH_REGEX = /^\/api\/runs\/([^/]+)\/resume$/;
 const CANCEL_PATH_REGEX = /^\/api\/runs\/([^/]+)$/;
@@ -209,6 +217,11 @@ export function createAgUiCancelHandler<T = unknown>(
       return Response.json({ errorCode: "FORBIDDEN" }, { status: 403 });
     }
 
+    const confirmStopped = new URL(request.url).searchParams.get("confirm_stopped") === "true" ||
+      (apply(requestBodyGet, request, []) !== null && readRunStopConfirmation(
+        decodeStopBody(await readBodyBytesWithLimit(request, AG_UI_MAX_REQUEST_BODY_BYTES)),
+      ));
+
     // A park stops the turn so a waiting run cannot finish, then resumes the same
     // run later. Remembering that cancellation outright would refuse the resume
     // start as a delayed start of a cancelled run, so a park cancellation only
@@ -226,7 +239,7 @@ export function createAgUiCancelHandler<T = unknown>(
         ? { onlyIfStartedBeforeEventId: parkedAfterEventId }
         : {}),
     });
-    if (!parkCancellation && new URL(request.url).searchParams.get("confirm_stopped") === "true") {
+    if (!parkCancellation && confirmStopped) {
       const stopped = options.hasSettledExecution?.(runId) === true;
       const owned = accepted || options.hasPendingExecution?.(runId) === true || stopped;
       if (owned) {
