@@ -9,11 +9,17 @@ import type { HostedExecutorAllocatorClient } from "#veryfront/agent/hosted/exec
 import {
   getHostedExecutorAllocationRequestSchema,
   getHostedExecutorBindingSchema,
+  type HostedExecutorOwner,
   parseHostedExecutorData,
 } from "#veryfront/agent/hosted/executor-session-schema.ts";
 
 const MAX_BYTES = 32 * 1024;
 const failure = () => new Error("Executor allocator request failed");
+
+/** Selects a configured project grant; the Pod-bound token remains the credential. */
+function projectSelector(owner: HostedExecutorOwner): string | undefined {
+  return owner.scopeKind === "project" ? owner.projectId : undefined;
+}
 
 function origin(value: string): URL {
   let url: URL;
@@ -78,6 +84,7 @@ export function createHostedExecutorAllocatorClient(options: {
     operation: string,
     bytes: Buffer,
     parentSignal: AbortSignal,
+    selector: string | undefined,
   ): Promise<unknown> => {
     const deadline = new AbortController();
     const signal = AbortSignal.any([parentSignal, deadline.signal]);
@@ -109,6 +116,7 @@ export function createHostedExecutorAllocatorClient(options: {
           ...(ca === undefined ? {} : { ca }),
           headers: {
             authorization: `Bearer ${token}`,
+            ...(selector === undefined ? {} : { "x-veryfront-executor-project": selector }),
             "content-type": "application/json",
             "content-length": bytes.byteLength,
             accept: "application/json",
@@ -187,40 +195,51 @@ export function createHostedExecutorAllocatorClient(options: {
       }
       const key = new Uint8Array(bootstrap.channelKey);
       try {
+        const snapshot = parseHostedExecutorData(
+          getHostedExecutorAllocationRequestSchema(),
+          request,
+        );
+        const selector = projectSelector(snapshot.owner);
         const body = payload({
-          request: parseHostedExecutorData(getHostedExecutorAllocationRequestSchema(), request),
+          request: snapshot,
           channelKey: Buffer.from(key.buffer, key.byteOffset, key.byteLength).toString("base64"),
         });
-        return call("allocate", body, signal);
+        return call("allocate", body, signal, selector);
       } finally {
         key.fill(0);
       }
     },
     observe(binding, signal) {
+      const snapshot = parseHostedExecutorData(getHostedExecutorBindingSchema(), binding);
       return call(
         "observe",
-        payload({ binding: parseHostedExecutorData(getHostedExecutorBindingSchema(), binding) }),
+        payload({ binding: snapshot }),
         signal,
+        projectSelector(snapshot.owner),
       );
     },
     renew(binding, signal) {
+      const snapshot = parseHostedExecutorData(getHostedExecutorBindingSchema(), binding);
       return call(
         "renew",
-        payload({ binding: parseHostedExecutorData(getHostedExecutorBindingSchema(), binding) }),
+        payload({ binding: snapshot }),
         signal,
+        projectSelector(snapshot.owner),
       );
     },
     release(binding, reason, signal) {
       if (reason !== "completed" && reason !== "canceled") {
         throw new TypeError("Invalid executor release reason");
       }
+      const snapshot = parseHostedExecutorData(getHostedExecutorBindingSchema(), binding);
       return call(
         "release",
         payload({
-          binding: parseHostedExecutorData(getHostedExecutorBindingSchema(), binding),
+          binding: snapshot,
           reason,
         }),
         signal,
+        projectSelector(snapshot.owner),
       );
     },
   };
