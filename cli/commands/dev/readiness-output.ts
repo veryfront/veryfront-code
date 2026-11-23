@@ -18,6 +18,8 @@ export function veryfrontServiceName(apiUrl: string): string {
 export function devReadinessLines(options: {
   appUrl: string;
   connection?: DevConnectionDisplay;
+  /** A linked project started local-only (`--no-sync`); it is still linked. */
+  localOnlyProject?: string;
 }): string[] {
   const lines = [`  ✓ App ready       ${options.appUrl}`];
   const connection = options.connection;
@@ -31,6 +33,11 @@ export function devReadinessLines(options: {
     );
     if (connection.signedIn) lines.push(`    Signed in       ${connection.signedIn}`);
     lines.push(`    Studio          ${connection.studioUrl}`);
+  } else if (options.localOnlyProject) {
+    lines.push(
+      "    Execution       This machine",
+      `    Veryfront       Linked to ${options.localOnlyProject}, source sync off. Restart without --no-sync and with VERYFRONT_DEV_NO_SYNC unset to connect.`,
+    );
   } else {
     lines.push(
       "    Execution       This machine",

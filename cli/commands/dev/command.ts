@@ -367,7 +367,7 @@ export function devCommand(options: DevOptions): Promise<DevCommandResult> {
       }
       let preflightIdentity: AuthIdentity | null = null;
       let runtimeAuth = await applyQualifiedRuntimeAuth(projectDir, linkedProjectSlug);
-      announceNoSync({ noSync, proxyMode: isProxyMode, linkedProjectSlug });
+      const localOnly = announceNoSync({ noSync, proxyMode: isProxyMode, linkedProjectSlug });
       const connectedTarget = await prepareConnectedDev(
         linkedProjectSlug,
         options.environment ?? "preview",
@@ -613,6 +613,7 @@ export function devCommand(options: DevOptions): Promise<DevCommandResult> {
               }?panels=runs`,
             }
             : undefined,
+          localOnlyProject: localOnly ? linkedProjectSlug : undefined,
         })
       ) console.log(line);
       if (isVerbose()) {
