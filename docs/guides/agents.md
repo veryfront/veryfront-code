@@ -420,6 +420,29 @@ export default agent({
 });
 ```
 
+### MCP servers on a private network
+
+Veryfront blocks requests to hosts that resolve to loopback or private
+addresses. An MCP server inside your cluster or VPN is refused before any
+request is sent, and the server log reports
+`Outbound network egress blocked for host: <hostname>`.
+
+To allow it, set `VERYFRONT_WORKER_ALLOWED_INTERNAL_HOSTS` in the environment
+of the process that runs Veryfront. The value is a comma-separated list of
+exact DNS hostnames:
+
+```bash
+export VERYFRONT_WORKER_ALLOWED_INTERNAL_HOSTS="mcp-gateway.tools.svc.cluster.local"
+```
+
+A listed hostname may resolve to a private address for every outbound request
+the host makes, on any port. Subdomains and parent domains are not covered, and
+IP addresses and `localhost` names are ignored. Only the runtime operator can
+set this policy. A project environment cannot grant itself access.
+
+`VERYFRONT_HOST_ALLOWED_INTERNAL_PROVIDER_ORIGINS` does not cover MCP servers.
+It applies only to [model and embedding providers](./providers.md#openai-compatible-services).
+
 ## Use skills
 
 Skills are reusable instruction packs discovered from your project's `skills/`

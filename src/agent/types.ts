@@ -392,6 +392,22 @@ export interface ModelStreamTimeouts {
 /** Public API contract for resolved model transport. */
 export interface ResolvedModelTransport {
   model?: ModelRuntime;
+  /**
+   * Provider credential for this call, used instead of the provider key from
+   * the environment. Supported for the built-in `openai`, `anthropic`,
+   * `google` and `mistral` providers; the base URL still comes from the
+   * environment. Cannot be combined with `model`. The credential is
+   * authoritative: an `authorization` or API-key header in `headers` does not
+   * replace it.
+   *
+   * Returning the property at all asks for the credential: an `undefined` or
+   * otherwise invalid value fails the call instead of falling back to the
+   * environment key. The call goes to the provider directly, even when the
+   * model would otherwise route through Veryfront Cloud. The hook is not
+   * called for a model that a private model resolver serves through Veryfront
+   * Cloud, so a credential has no effect there.
+   */
+  credential?: string;
   headers?: HeadersInit;
   providerOptions?: Record<string, unknown>;
   reasoning?: RuntimeReasoningOption;

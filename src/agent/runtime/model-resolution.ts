@@ -352,6 +352,36 @@ export function resolveRuntimeModel(model?: string): string {
   return `veryfront-cloud/${provider}/${modelId}`;
 }
 
+/** Whether the runtime, not the agent, picks the model: omitted or `auto`. */
+export function isImplicitAgentModel(model?: string): boolean {
+  return !model || normalizeAgentModelConfig(model) === AUTO_AGENT_MODEL;
+}
+
+/**
+ * The direct provider runtime model an explicit `provider/model` names,
+ * whatever keys the environment holds. A hook credential authenticates the
+ * provider itself, so it must not depend on the Veryfront Cloud rewrite that
+ * `resolveRuntimeModel` applies when the environment has no provider key.
+ *
+ * Returns `undefined` when the configured model names no direct provider: an
+ * omitted or `auto` model, a `veryfront-cloud/*` or `local/*` model, or a
+ * provider the application registered its own runtime for.
+ */
+export function resolveDirectProviderRuntimeModel(model?: string): string | undefined {
+  if (isImplicitAgentModel(model)) return undefined;
+  const configuredModel = resolveConfiguredAgentModel(model);
+  if (configuredModel.startsWith("veryfront-cloud/") || configuredModel.startsWith("local/")) {
+    return undefined;
+  }
+  const slashIndex = configuredModel.indexOf("/");
+  if (slashIndex === -1) return undefined;
+  const provider = configuredModel.slice(0, slashIndex);
+  const modelId = configuredModel.slice(slashIndex + 1);
+  if (!provider || !modelId) return undefined;
+  if (findApplicationRuntimeProvider(provider) !== undefined) return undefined;
+  return toDirectRuntimeModel(provider, modelId);
+}
+
 /**
  * Whether the runtime routes `model` through Veryfront Cloud in the current
  * context. A model it cannot resolve counts as hosted, so a capability cap

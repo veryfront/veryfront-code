@@ -6,12 +6,15 @@
 
 import { type AgentConfig, type RuntimeReasoningOption } from "../types.ts";
 import { type ModelRuntime, resolveModel } from "#veryfront/provider";
+import { resolveModelWithCredential } from "#veryfront/provider/model-registry.ts";
 import { createPrivateWeakStore } from "#veryfront/security/private-weak-store.ts";
 import { warmVeryfrontCloudCatalog } from "#veryfront/provider/veryfront-cloud/provider.ts";
 import { isVeryfrontCloudEnabled } from "#veryfront/platform/cloud/resolver.ts";
 import { resolveProviderOptionsWithDefaults } from "./default-provider-options.ts";
 import {
+  isImplicitAgentModel,
   resolveConfiguredAgentModel,
+  resolveDirectProviderRuntimeModel,
   resolveModelProviderOptionKey,
   resolveRuntimeModel,
   routesDirectWithoutCatalog,
@@ -25,6 +28,11 @@ import {
   VERYFRONT_CLOUD_MODEL_PREFIX,
 } from "#veryfront/provider/veryfront-cloud/model-catalog.ts";
 import { hasDisabledThinking } from "./model-capabilities.ts";
+import {
+  requestsCredential,
+  routeModelBeforeHook,
+  settleCredentialModel,
+} from "./model-transport-credential.ts";
 
 const IntrinsicReflectApply = Reflect.apply;
 const IntrinsicObjectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
@@ -277,20 +285,40 @@ export async function resolveAgentModelTransport(
   }
   const readCatalog = <T>(fn: () => T): T => privateCatalog ? privateCatalog.read(fn) : fn();
   const requestedModel = readCatalog(() => resolveConfiguredAgentModel(configuredModel));
-  const resolvedModelString = readCatalog(() => resolveRuntimeModel(configuredModel));
-  const usesVeryfrontCloud = startsWithCloudPrefix(resolvedModelString);
+  const directModel = (): string | undefined =>
+    readCatalog(() => resolveDirectProviderRuntimeModel(configuredModel));
+  const routed = routeModelBeforeHook({
+    route: () => readCatalog(() => resolveRuntimeModel(configuredModel)),
+    directModel,
+    hasHook: input.config.resolveModelTransport !== undefined,
+  });
+  const routedModelString = routed.modelString;
+  const usesVeryfrontCloud = startsWithCloudPrefix(routedModelString);
   const privatelyResolvedModel = input.resolveModelRuntime && usesVeryfrontCloud
-    ? input.resolveModelRuntime(resolvedModelString)
+    ? input.resolveModelRuntime(routedModelString)
     : undefined;
   const transport = privatelyResolvedModel
     ? undefined
     : await input.config.resolveModelTransport?.({
       agentId: input.agentId,
       requestedModel,
-      resolvedModel: resolvedModelString,
+      resolvedModel: routedModelString,
       context: input.context,
       mode: input.mode,
     });
+  // A hook credential replaces the environment key for this call only. It is
+  // consumed here and never copied onto the returned transport, so it cannot
+  // reach headers, traces or logs.
+  const resolvedModelString = settleCredentialModel({
+    agentId: input.agentId,
+    transport,
+    routed,
+    implicitModel: isImplicitAgentModel(input.config.model) ||
+      isImplicitAgentModel(configuredModel),
+    directModel,
+    agentDirectModel: () =>
+      readCatalog(() => resolveDirectProviderRuntimeModel(input.config.model)),
+  });
 
   const privateThinking = privatelyResolvedModel
     ? input.modelCallThinking ??
@@ -317,7 +345,9 @@ export async function resolveAgentModelTransport(
   }
   const providerOptions = resolveTransportProviderOptions();
   const languageModel = privatelyResolvedModel ?? transport?.model ??
-    resolveModel(resolvedModelString);
+    (requestsCredential(transport)
+      ? resolveModelWithCredential(resolvedModelString, transport.credential)
+      : resolveModel(resolvedModelString));
   // A Veryfront Cloud model settles its protocol and capabilities on its first
   // async step. Settle it here, before anything reads them: the provider option
   // key below and the runtime's tool-calling, structured-output and replay
