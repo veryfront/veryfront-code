@@ -226,7 +226,8 @@ const GUARDED_SURFACES: Record<
   },
   "src/server/runtime-handler/index.ts": {
     surface: "Root middleware and hosted ingress",
-    guards: 5,
+    // Includes the managed-agent ingress startup posture guard.
+    guards: 6,
   },
   "src/server/runtime-handler/project-middleware.ts": {
     surface: "Project middleware",
