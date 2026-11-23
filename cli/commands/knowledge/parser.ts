@@ -1042,6 +1042,46 @@ function mdxHeadingText(
   return { owner, kind: "text", lines };
 }
 
+/** GFM tables own ordinary rows, including text shaped like Setext underlines.
+ * Structural checks need physical source lines, before title whitespace normalization.
+ */
+function headingTableDelimiter(
+  { header, delimiter, mdx }: { header: string | undefined; delimiter: string; mdx: boolean },
+): boolean {
+  if (
+    header === undefined ||
+    !mdx && (/^ {4}/.test(expandHeadingIndentation(header)) || /^ {4}/.test(delimiter)) ||
+    /^ {0,3}-+[ \t]*$/.test(mdx ? delimiter.replace(/^[ \t]*/, "") : delimiter)
+  ) return false;
+  const trim = (text: string): string => text.replace(/^[ \t]+|[ \t]+$/g, "");
+  const cells = (line: string): string[] => {
+    const parts: string[] = [];
+    let cell = "";
+    let escaped = false;
+    let trailingSeparator = false;
+    for (const character of trim(line)) {
+      trailingSeparator = character === "|" && !escaped;
+      if (trailingSeparator) {
+        parts.push(trim(cell));
+        cell = "";
+      } else cell += character;
+      escaped = character === "\\" && !escaped;
+    }
+    parts.push(trim(cell));
+    if (trim(line).startsWith("|")) parts.shift();
+    if (trailingSeparator) parts.pop();
+    return parts;
+  };
+  const separators = cells(delimiter);
+  return (header.includes("|") || delimiter.includes("|")) && separators.length > 0 &&
+    separators.every((cell) => /^:?-+:?$/.test(cell)) && cells(header).length === separators.length;
+}
+
+function continuesHeadingTable(line: string, mdx: boolean): boolean {
+  return hasHeadingContent(line, mdx) && !startsInterruptingBlock(line, mdx) &&
+    !headingListMarker(line, mdx) && !(mdx && startsMdxHeadingFlow(line));
+}
+
 /** MDX's disabled indented-code rule needs explicit per-container ownership. */
 function findFirstMdxH1(markdown: string): string | undefined {
   const body = markdown.replaceAll("\0", "\ufffd").replace(
@@ -1053,10 +1093,15 @@ function findFirstMdxH1(markdown: string): string | undefined {
   let definitionThrough = -1;
   let mdxThrough = -1;
   let sourceOffset = 0;
+  let table = false;
   for (const [index, source] of lines.entries()) {
     const lineOffset = sourceOffset;
     sourceOffset += source.length + 1;
     if (lineOffset < mdxThrough || index <= definitionThrough) continue;
+    if (table) {
+      if (continuesHeadingTable(source, true)) continue;
+      table = false;
+    }
     if (state.fence) {
       const content = readHeadingOwnedLine(source, state.fence.owner);
       if (content !== undefined) {
@@ -1162,6 +1207,14 @@ function findFirstMdxH1(markdown: string): string | undefined {
       state.paragraph = undefined;
       continue;
     }
+    if (
+      previous?.kind === "text" && !parsed.owner.length && !parsed.lazy &&
+      headingTableDelimiter({ header: lines[index - 1], delimiter: line, mdx: true })
+    ) {
+      table = true;
+      state.paragraph = undefined;
+      continue;
+    }
     if (previous?.kind === "text" && !parsed.lazy && /^(?:=+|-+)[ \t]*$/.test(structural)) {
       if (!parsed.owner.length && structural.startsWith("=")) return previous.lines.join(" ");
       state.paragraph = undefined;
@@ -1211,6 +1264,7 @@ function findFirstH1(markdown: string, mdx = false): string | undefined {
   let paragraphOpen = false;
   let rootParagraph: string[] = [];
   let indentedCode = false;
+  let table = false;
   let emptyItem = false;
   let setextEligible = false;
   let quoteContainers: { indents: number[]; emptyItem: boolean }[] = [];
@@ -1229,6 +1283,10 @@ function findFirstH1(markdown: string, mdx = false): string | undefined {
   const lines = body.split("\n");
   for (const [lineIndex, sourceLine] of lines.entries()) {
     const raw = expandHeadingIndentation(sourceLine);
+    if (table) {
+      if (continuesHeadingTable(raw, false)) continue;
+      table = false;
+    }
     if (!paragraphOpen) {
       rootParagraph = [];
       quoteParagraph = undefined;
@@ -1253,9 +1311,14 @@ function findFirstH1(markdown: string, mdx = false): string | undefined {
       raw,
       indents,
       Boolean(fence || htmlEnd),
-      paragraphOpen,
+      // After indented code, noninitial ordered markers remain paragraph text.
+      // Empty and bullet items still start containers at this boundary.
+      paragraphOpen || indentedCode && /^ {0,3}(?!1[.)])\d{1,9}[.)][ \t]+\S/.test(raw),
       quoteParagraph !== undefined,
     );
+    // The code boundary applies only to this next nonblank block. Reset before
+    // leaf readers can consume definitions, quotes, or other blocks early.
+    if (hasHeadingContent(raw, false)) indentedCode = false;
     // Container ownership expires before any leaf reader can return early,
     // including reference definitions that contribute no paragraph text.
     if (
@@ -1508,6 +1571,14 @@ function findFirstH1(markdown: string, mdx = false): string | undefined {
       return /^#+[ \t]*$/.test(content) ? "" : content.replace(/[ \t]+#+[ \t]*$/, "").trim();
     }
     const paragraphLine = container.lazy ? raw : line;
+    if (
+      paragraphOpen && !container.lazy && containerIndent === 0 && !quoteParagraph &&
+      headingTableDelimiter({ header: lines[lineIndex - 1], delimiter: line, mdx: false })
+    ) {
+      table = true;
+      paragraphOpen = false;
+      continue;
+    }
     if (
       paragraphOpen && setextEligible && !container.lazy && containerIndent === 0 &&
       !quoteParagraph && rootParagraph.length && /^ {0,3}=+[ \t]*$/.test(headingLine)

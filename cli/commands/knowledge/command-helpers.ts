@@ -706,9 +706,12 @@ export async function claimGeneratedKnowledgePath(input: {
       );
     }
     const storedSource = metadata?.resource === undefined ? legacySource : metadata.resource;
+    // A relative legacy path has no recorded working directory. Matching its
+    // spelling cannot establish that the incoming file owns the remote document.
     const sameLocalPath = input.sourceKind === "local" && typeof storedSource === "string" &&
+      isAbsolute(storedSource) &&
       (normalize(storedSource) === normalize(input.resource) ||
-        (isAbsolute(storedSource) && input.customSource?.kind === "local" &&
+        (input.customSource?.kind === "local" &&
           normalize(storedSource) === resolve(input.customSource.localPath)));
     const legacyMatch = metadata?.resource === input.resource ||
       legacySource === input.legacySource;

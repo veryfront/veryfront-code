@@ -223,8 +223,8 @@ describe("isolated knowledge source origins", () => {
         const old = await runKnowledgeParser({
           filePath: source.localPath,
           outputDir: join(tempDir, "old"),
-          resource: sourcePath,
-          sourceReference: sourcePath,
+          resource: resolve(sourcePath),
+          sourceReference: resolve(sourcePath),
         });
         const content = await Deno.readTextFile(old.sandbox_output_path);
         assertEquals(
@@ -262,6 +262,58 @@ describe("isolated knowledge source origins", () => {
     } finally {
       Deno.chdir(cwd);
       await Deno.remove(tempDir, { recursive: true });
+    }
+  });
+
+  it("rejects relative legacy custom owners from another working directory", async () => {
+    const root = await Deno.realPath(await makeTempDir({ prefix: "knowledge-relative-owner-" }));
+    const cwd = Deno.cwd();
+    try {
+      for (const directory of ["original", "incoming"]) {
+        await Deno.mkdir(join(root, directory, "nested"), { recursive: true });
+        await Deno.writeTextFile(join(root, directory, "nested/guide.md"), `# ${directory} guide`);
+      }
+      for (const field of ["source", "resource"]) {
+        Deno.chdir(join(root, "original"));
+        const original =
+          `---\n${field}: "./nested/guide.md"\ngenerated: { by: "veryfront/0.1.0" }\n---\n# Original guide`;
+        const remotePath = "docs/imports/nested-guide.md";
+        const remote = new Map([[remotePath, {
+          content: original,
+          versionId: "original-version",
+        }]]);
+        const writes: unknown[] = [];
+        Deno.chdir(join(root, "incoming"));
+        const result = await ingestResolvedSources(
+          [createLocalSource("./nested/guide.md")],
+          createKnowledgeCommandArgs({ knowledgePath: "docs/imports" }),
+          {
+            client: createMockClient(),
+            projectSlug: "test",
+            outputDir: join(root, `fresh-${field}`),
+            runParser: runKnowledgeParser,
+            listRemoteKnowledgeSuffixPaths: async () => new Set(),
+            readRemoteKnowledgeFile: async (path) => remote.get(path),
+            uploadKnowledgeFile: async (path, file, _metadata, _kind, expected) => {
+              writes.push({ path, expected });
+              remote.set(path, { content: await Deno.readTextFile(file), versionId: "changed" });
+              return { path };
+            },
+          },
+        );
+        assertEquals(result.failed.length, 1, field);
+        const failure = result.failed[0];
+        assert(failure);
+        assertStringIncludes(failure.message, "source origin is ambiguous");
+        assertEquals(writes, [], field);
+        assertEquals([...remote], [[remotePath, {
+          content: original,
+          versionId: "original-version",
+        }]]);
+      }
+    } finally {
+      Deno.chdir(cwd);
+      await Deno.remove(root, { recursive: true });
     }
   });
 

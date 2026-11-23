@@ -9,7 +9,7 @@ import {
 } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { makeTempDir } from "#veryfront/testing/deno-compat.ts";
-import { basename, dirname, join, normalize, resolve } from "veryfront/platform/path";
+import { basename, dirname, isAbsolute, join, normalize, resolve } from "veryfront/platform/path";
 import { VeryfrontError } from "veryfront/errors";
 import { inspectOkfDocument } from "veryfront/knowledge";
 import { parseCliArgs } from "../../shared/args.ts";
@@ -1890,17 +1890,19 @@ describe("ingestResolvedSources", () => {
     const resource = "./uploads/guide.md";
     const path = "docs/imports/uploads-guide.md";
     const sourceKey = '["local","uploads/guide.md"]';
+    // Exact relative legacy matches fail closed. Other spellings are different
+    // owners and allocate a guarded sibling; only a typed key can prove a match.
     const cases = [
-      { metadata: { source: resource, generated }, expected: "matched" },
-      { metadata: { source: ".\\uploads\\guide.md", generated }, expected: "matched" },
-      { metadata: { resource, source: "guide.md", generated }, expected: "matched" },
-      { metadata: { resource: ".\\uploads\\guide.md", generated }, expected: "matched" },
-      { metadata: { resource: "uploads/guide.md", generated }, expected: "ambiguous" },
+      { metadata: { source: resource, generated }, expected: "ambiguous" },
+      { metadata: { source: ".\\uploads\\guide.md", generated }, expected: "different" },
+      { metadata: { resource, source: "guide.md", generated }, expected: "ambiguous" },
+      { metadata: { resource: ".\\uploads\\guide.md", generated }, expected: "different" },
+      { metadata: { resource: "uploads/guide.md", generated }, expected: "different" },
       {
         metadata: { resource: "uploads/guide.md", tags: ["md"], source_type: "md", generated },
-        expected: "ambiguous",
+        expected: "different",
       },
-      { metadata: { source: "uploads/guide.md", generated }, expected: "ambiguous" },
+      { metadata: { source: "uploads/guide.md", generated }, expected: "different" },
       {
         metadata: { resource: "different.md", source: resource, generated },
         expected: "different",
@@ -1967,8 +1969,8 @@ describe("ingestResolvedSources", () => {
           JSON.stringify(generated)
         }\n---\n`;
         const identity = buildKnowledgeIngestIdentity(createLocalSource(resource));
-        assertEquals(
-          await claimGeneratedKnowledgePath({
+        const claim = () =>
+          claimGeneratedKnowledgePath({
             remotePath: path,
             resource,
             legacySource: resource,
@@ -1978,10 +1980,16 @@ describe("ingestResolvedSources", () => {
             absenceConflicts: new Map(),
             readRemoteFile: async (candidate) =>
               candidate === path ? ({ content, versionId: "legacy-version" }) : undefined,
-          }),
-          { remotePath: path, expected: { versionId: "legacy-version" } },
-          `${field}: ${resource}`,
-        );
+          });
+        if (isAbsolute(resource)) {
+          assertEquals(
+            await claim(),
+            { remotePath: path, expected: { versionId: "legacy-version" } },
+            `${field}: ${resource}`,
+          );
+        } else {
+          await assertRejects(claim, Error, "source origin is ambiguous");
+        }
       }
     }
   });
@@ -6467,10 +6475,10 @@ describe("runKnowledgeParser", () => {
         ],
       },
       {
-        "name": "CommonMark ordered marker after indented code starts a list",
+        "name": "CommonMark ordered marker after indented code remains paragraph text",
         "body": "    example code\n2. Installation\n===\n\n# Real title",
-        "title": "Real title",
-        "slug": "real-title",
+        "title": "2. Installation",
+        "slug": "installation",
         "formats": [
           "md",
           "pdf",
@@ -6517,8 +6525,8 @@ describe("runKnowledgeParser", () => {
       {
         "name": "ordered paragraph after code 2.",
         "body": "    code\n2. Heading\n===\n\n# Real title",
-        "title": "Real title",
-        "slug": "real-title",
+        "title": "2. Heading",
+        "slug": "heading",
         "formats": [
           "md",
           "pdf",
@@ -6529,8 +6537,8 @@ describe("runKnowledgeParser", () => {
       {
         "name": "ordered paragraph after code 2. with blank",
         "body": "    code\n\n2. Heading\n===\n\n# Real title",
-        "title": "Real title",
-        "slug": "real-title",
+        "title": "2. Heading",
+        "slug": "heading",
         "formats": [
           "md",
           "pdf",
@@ -6541,8 +6549,8 @@ describe("runKnowledgeParser", () => {
       {
         "name": "ordered paragraph after code 2)",
         "body": "    code\n2) Heading\n===\n\n# Real title",
-        "title": "Real title",
-        "slug": "real-title",
+        "title": "2) Heading",
+        "slug": "heading",
         "formats": [
           "md",
           "pdf",
@@ -6553,8 +6561,8 @@ describe("runKnowledgeParser", () => {
       {
         "name": "ordered paragraph after code 2) with blank",
         "body": "    code\n\n2) Heading\n===\n\n# Real title",
-        "title": "Real title",
-        "slug": "real-title",
+        "title": "2) Heading",
+        "slug": "heading",
         "formats": [
           "md",
           "pdf",
@@ -6565,8 +6573,8 @@ describe("runKnowledgeParser", () => {
       {
         "name": "ordered paragraph after code 123.",
         "body": "    code\n123. Heading\n===\n\n# Real title",
-        "title": "Real title",
-        "slug": "real-title",
+        "title": "123. Heading",
+        "slug": "heading",
         "formats": [
           "md",
           "pdf",
@@ -6577,8 +6585,8 @@ describe("runKnowledgeParser", () => {
       {
         "name": "ordered paragraph after code 123. with blank",
         "body": "    code\n\n123. Heading\n===\n\n# Real title",
-        "title": "Real title",
-        "slug": "real-title",
+        "title": "123. Heading",
+        "slug": "heading",
         "formats": [
           "md",
           "pdf",
@@ -7487,7 +7495,7 @@ describe("runKnowledgeParser", () => {
         title: "Real title",
       },
       { content: '    code\n\t\n- -\n[ref]: /url "\n  # Real title', title: "Real title" },
-      { content: "    code\n2. item\n   # Nested title" },
+      { content: "    code\n2. item\n   # Nested title", title: "Nested title" },
       { content: "> ```\n> text\n<span>\n # Hidden" },
       { content: "> <div>\n\n  ```\n # Hidden" },
       {
@@ -7570,6 +7578,221 @@ describe("runKnowledgeParser", () => {
       { "body": "{\n  1\n} Intro\n===\n", "title": "{ 1 } Intro", "formats": ["mdx"] },
       { "body": "<Banner /> {1}\n===\n# Real title\n", "title": "Real title", "formats": ["mdx"] },
 
+      { "body": "Name | Value\n--- | ---\n===\n# Report\n", "title": "Report" },
+      { "body": "| Name | Value |\n| :--- | ---: |\n===\n# Report\n", "title": "Report" },
+      { "body": "Name \\| label | Value\n--- | ---\n===\n# Report\n", "title": "Report" },
+      { "body": "Name | Value\n--- | ---\n===\n\nActual title\n===\n", "title": "Actual title" },
+      { "body": "Name | Value\n---\n===\n# Report\n", "title": "Report" },
+      {
+        "body": "    code\n2. Report\n===\n",
+        "title": "2. Report",
+        "formats": ["md", "pdf", "html", "docx"],
+      },
+      {
+        "body": "    code\n\n2) Report\n===\n",
+        "title": "2) Report",
+        "formats": ["md", "pdf", "html", "docx"],
+      },
+      { "body": "Name | Value\n--- | ---\n---\n===\n# Report\n", "title": "Report" },
+      { "body": "Name | Value\n--- | ---\n2. Row\n===\n# Report\n", "title": "Report" },
+      {
+        "body": "Name | Value\n--- | invalid\n===\n# Report\n",
+        "title": "Name | Value --- | invalid",
+      },
+      {
+        "body": "Name | Value\n--- | --- | ---\n===\n# Report\n",
+        "title": "Name | Value --- | --- | ---",
+      },
+      { "body": "Name\n| --- |\n===\n# Report\n", "title": "Report" },
+      { "body": "Name | Value\n--- | ---\n```\n# Hidden\n```\n# Report\n", "title": "Report" },
+      { body: "| |\n| --- |\n===\n# Report\n", title: "Report" },
+      { "body": "| Column |\n---\nReport\n===\n\n# Fallback\n", "title": "Report" },
+      {
+        "body": "    code\n[ref]: /url\n\n2. item\n   # Nested\n\n# Report\n",
+        "title": "Report",
+        "formats": ["md", "pdf", "html", "docx"],
+      },
+      {
+        "body": "Name | Value\n---\u00a0| ---\n2. Row\n   # Report\n\n# Fallback\n",
+        "title": "Report",
+      },
+      {
+        "body": "Name | Value\n\u00a0--- | ---\n2. Row\n   # Report\n\n# Fallback\n",
+        "title": "Report",
+      },
+      {
+        "body": "Name | Value\n---\u2003| ---\n2. Row\n   # Report\n\n# Fallback\n",
+        "title": "Report",
+      },
+      {
+        "body": "Name | Value\n\u2003--- | ---\n2. Row\n   # Report\n\n# Fallback\n",
+        "title": "Report",
+      },
+      {
+        "body": "Name | Value\n---\u202f| ---\n2. Row\n   # Report\n\n# Fallback\n",
+        "title": "Report",
+      },
+      {
+        "body": "Name | Value\n\u202f--- | ---\n2. Row\n   # Report\n\n# Fallback\n",
+        "title": "Report",
+      },
+      {
+        "body": "    code\n> quoted\n\n2. item\n   # Nested\n\n# Report\n",
+        "title": "Report",
+        "formats": ["md", "pdf", "html", "docx"],
+      },
+      {
+        "body": "    code\n- list\n\n2. item\n   # Nested\n\n# Report\n",
+        "title": "Report",
+        "formats": ["md", "pdf", "html", "docx"],
+      },
+      {
+        "body": "    code\n<!-- comment -->\n\n2. item\n   # Nested\n\n# Report\n",
+        "title": "Report",
+        "formats": ["md", "pdf", "html", "docx"],
+      },
+      {
+        "body": "    code\n```\ncode\n```\n\n2. item\n   # Nested\n\n# Report\n",
+        "title": "Report",
+        "formats": ["md", "pdf", "html", "docx"],
+      },
+      {
+        "body": "  Name | Value\n--- | ---\n===\n# Fallback\n",
+        "title": "Fallback",
+        "formats": ["md", "pdf", "html", "docx"],
+      },
+      {
+        "body": "  Name | Value\n--- | ---\n===\n# Fallback\n",
+        "title": "Fallback",
+        "formats": ["mdx"],
+      },
+      {
+        "body": "   Name | Value\n--- | ---\n===\n# Fallback\n",
+        "title": "Fallback",
+        "formats": ["md", "pdf", "html", "docx"],
+      },
+      {
+        "body": "   Name | Value\n--- | ---\n===\n# Fallback\n",
+        "title": "Fallback",
+        "formats": ["mdx"],
+      },
+      {
+        "body": "    Name | Value\n--- | ---\n===\n# Fallback\n",
+        "title": "--- | ---",
+        "formats": ["md", "pdf", "html", "docx"],
+      },
+      {
+        "body": "    Name | Value\n--- | ---\n===\n# Fallback\n",
+        "title": "Fallback",
+        "formats": ["mdx"],
+      },
+      {
+        "body": "\tName | Value\n--- | ---\n===\n# Fallback\n",
+        "title": "--- | ---",
+        "formats": ["md", "pdf", "html", "docx"],
+      },
+      {
+        "body": "\tName | Value\n--- | ---\n===\n# Fallback\n",
+        "title": "Fallback",
+        "formats": ["mdx"],
+      },
+      {
+        "body": "Intro\n  Name | Value\n--- | ---\n===\n# Fallback\n",
+        "title": "Fallback",
+        "formats": ["md", "pdf", "html", "docx"],
+      },
+      {
+        "body": "Intro\n  Name | Value\n--- | ---\n===\n# Fallback\n",
+        "title": "Fallback",
+        "formats": ["mdx"],
+      },
+      {
+        "body": "Intro\n   Name | Value\n--- | ---\n===\n# Fallback\n",
+        "title": "Fallback",
+        "formats": ["md", "pdf", "html", "docx"],
+      },
+      {
+        "body": "Intro\n   Name | Value\n--- | ---\n===\n# Fallback\n",
+        "title": "Fallback",
+        "formats": ["mdx"],
+      },
+      {
+        "body": "Intro\n    Name | Value\n--- | ---\n===\n# Fallback\n",
+        "title": "Intro Name | Value --- | ---",
+        "formats": ["md", "pdf", "html", "docx"],
+      },
+      {
+        "body": "Intro\n    Name | Value\n--- | ---\n===\n# Fallback\n",
+        "title": "Fallback",
+        "formats": ["mdx"],
+      },
+      {
+        "body": "Intro\n\tName | Value\n--- | ---\n===\n# Fallback\n",
+        "title": "Intro Name | Value --- | ---",
+        "formats": ["md", "pdf", "html", "docx"],
+      },
+      {
+        "body": "Intro\n\tName | Value\n--- | ---\n===\n# Fallback\n",
+        "title": "Fallback",
+        "formats": ["mdx"],
+      },
+      {
+        "body": "Intro\n\u00a0| Name | Value |\n--- | ---\n===\n# Fallback\n",
+        "title": "Intro | Name | Value | --- | ---",
+      },
+      {
+        "body": "Intro\n\u2003| Name | Value |\n--- | ---\n===\n# Fallback\n",
+        "title": "Intro | Name | Value | --- | ---",
+      },
+      {
+        "body": "Intro\n\u202f| Name | Value |\n--- | ---\n===\n# Fallback\n",
+        "title": "Intro | Name | Value | --- | ---",
+      },
+      {
+        "body": "Name | Value\n  --- | ---\n===\n# Fallback\n",
+        "title": "Fallback",
+        "formats": ["md", "pdf", "html", "docx"],
+      },
+      {
+        "body": "Name | Value\n  --- | ---\n===\n# Fallback\n",
+        "title": "Fallback",
+        "formats": ["mdx"],
+      },
+      {
+        "body": "Name | Value\n   --- | ---\n===\n# Fallback\n",
+        "title": "Fallback",
+        "formats": ["md", "pdf", "html", "docx"],
+      },
+      {
+        "body": "Name | Value\n   --- | ---\n===\n# Fallback\n",
+        "title": "Fallback",
+        "formats": ["mdx"],
+      },
+      {
+        "body": "Name | Value\n    --- | ---\n===\n# Fallback\n",
+        "title": "Name | Value --- | ---",
+        "formats": ["md", "pdf", "html", "docx"],
+      },
+      {
+        "body": "Name | Value\n    --- | ---\n===\n# Fallback\n",
+        "title": "Fallback",
+        "formats": ["mdx"],
+      },
+      {
+        "body": "Name | Value\n\t--- | ---\n===\n# Fallback\n",
+        "title": "Name | Value --- | ---",
+        "formats": ["md", "pdf", "html", "docx"],
+      },
+      {
+        "body": "Name | Value\n\t--- | ---\n===\n# Fallback\n",
+        "title": "Fallback",
+        "formats": ["mdx"],
+      },
+      {
+        "body": "| Column |\n    ---\nReport\n===\n# Fallback\n",
+        "title": "Report",
+        "formats": ["mdx"],
+      },
       { body: "Foo\n-------------------------\n\nFoo\n=\n", title: "Foo" },
       { body: "   Foo\n---\n\n  Foo\n-----\n\n  Foo\n  ===\n", title: "Foo" },
       { body: "[foo]: /url\nbar\n===\n[foo]\n", title: "bar" },
