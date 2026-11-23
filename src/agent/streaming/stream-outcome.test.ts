@@ -5,6 +5,7 @@ import {
   getStreamErrorMessage,
   hasCompletedStepSignal,
   isLateProviderBodyReadError,
+  readStreamOutcomeFailureCause,
   resolveKnownProviderTerminalError,
   resolveStreamOutcome,
 } from "./stream-outcome.ts";
@@ -176,6 +177,62 @@ describe("resolveStreamOutcome", () => {
       assertEquals(outcome.error.phase, "awaiting_tool_input");
     }
     assertEquals(outcome.snapshot.phase, "failed");
+  });
+
+  it("keeps the thrown error of a failed attempt off the serializable outcome", () => {
+    const thrown = new RangeError("provider detail that must not be serialized");
+    const outcome = resolveStreamOutcome({
+      snapshot: snapshot("streaming", null, false),
+      elapsedMs: 5,
+      thrownError: thrown,
+    });
+    assertEquals(outcome.status, "failed");
+    assertEquals(readStreamOutcomeFailureCause(outcome), { found: true, cause: thrown });
+    assertEquals(JSON.stringify(outcome).includes("must not be serialized"), false);
+    assertEquals(
+      Object.getOwnPropertyNames(outcome).sort(),
+      ["elapsedMs", "error", "phase", "snapshot", "status", "usage"],
+    );
+    // A copy is a different outcome: the cause does not travel with the data.
+    assertEquals(readStreamOutcomeFailureCause({ ...outcome }), { found: false });
+  });
+
+  it("records no thrown error for outcomes that no thrown error decided", () => {
+    const completedDespiteLateError = resolveStreamOutcome({
+      snapshot: snapshot("completed", "stop", true),
+      elapsedMs: 10,
+      thrownError: new Error("Error reading a body from connection"),
+    });
+    assertEquals(completedDespiteLateError.status, "completed");
+    assertEquals(readStreamOutcomeFailureCause(completedDespiteLateError), { found: false });
+
+    const lifecycleFailure = resolveStreamOutcome({
+      snapshot: snapshot("streaming", null, false),
+      elapsedMs: 10,
+      thrownError: new Error("late provider failure"),
+      lifecycleError: {
+        code: "STREAM_ATTEMPT_TIMEOUT",
+        phase: "streaming",
+        source: "runtime",
+        retryable: true,
+        publicMessage: "Stream attempt exceeded its time limit",
+      },
+    });
+    assertEquals(lifecycleFailure.status, "failed");
+    assertEquals(readStreamOutcomeFailureCause(lifecycleFailure), { found: false });
+
+    const reportedProviderError = resolveStreamOutcome({
+      snapshot: snapshot("streaming", null, false),
+      elapsedMs: 10,
+      providerError: {
+        code: "PROVIDER_STREAM_ERROR",
+        publicMessage: "Provider stream failed",
+        retryable: true,
+        terminal: false,
+      },
+    });
+    assertEquals(reportedProviderError.status, "failed");
+    assertEquals(readStreamOutcomeFailureCause(reportedProviderError), { found: false });
   });
 
   it("maps known provider errors to terminal codes with sanitized messages", () => {

@@ -24,7 +24,10 @@ import {
   readNativeErrorNameWithoutHooks,
   readNativeErrorStackWithoutHooks,
 } from "#veryfront/platform/compat/error-introspection.ts";
-import { readRuntimeProviderStreamFailureCause } from "#veryfront/runtime/provider-stream-error-provenance.ts";
+import {
+  readRuntimeProviderStreamFailureCause,
+  readStreamFailureDiagnosticCause,
+} from "#veryfront/runtime/provider-stream-error-provenance.ts";
 import { readProviderErrorDiagnostic } from "#veryfront/provider/runtime-loader/provider-error-diagnostic.ts";
 import { readStreamProtocolClassification } from "#veryfront/provider/runtime-loader/stream-protocol-classification.ts";
 
@@ -617,12 +620,15 @@ const MAX_LOGGED_ERROR_CAUSES = 4;
 
 /**
  * The failure an error wraps: the private cause of a provider stream failure,
- * else a native error's own `cause` data property. Accessors are never run.
+ * else a recorded diagnostic cause, else a native error's own `cause` data
+ * property. Accessors are never run.
  */
 function readErrorCause(error: unknown): unknown {
   try {
     const providerFailure = readRuntimeProviderStreamFailureCause(error);
     if (providerFailure.found) return providerFailure.cause;
+    const diagnosticCause = readStreamFailureDiagnosticCause(error);
+    if (diagnosticCause.found) return diagnosticCause.cause;
     if (!isNativeErrorWithoutHooks(error)) return NO_CAUSE;
     const descriptor = getOwnPropertyDescriptor(error, "cause");
     if (!descriptor || !hasOwn(descriptor, "value")) return NO_CAUSE;

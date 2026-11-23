@@ -22,7 +22,12 @@ import {
   telemetryErrorCauseType,
   telemetryErrorType,
 } from "./telemetry-error.ts";
-import { createRuntimeProviderStreamFailure } from "#veryfront/runtime/provider-stream-error-provenance.ts";
+import {
+  createRuntimeProviderStreamFailure,
+  readRuntimeProviderStreamFailureCause,
+  readStreamFailureDiagnosticCause,
+  recordStreamFailureDiagnosticCause,
+} from "#veryfront/runtime/provider-stream-error-provenance.ts";
 import { createClassifiedProviderStreamProtocolError } from "#veryfront/provider/runtime-loader/stream-protocol-classification-factories.ts";
 import { isNativeErrorWithoutHooks } from "#veryfront/platform/compat/error-introspection.ts";
 import {
@@ -921,6 +926,26 @@ describe("observability/telemetry-error", () => {
       assertEquals(telemetryErrorCauseType(accessorBacked), undefined);
       assertEquals(summarizeErrorCausesForLog(accessorBacked), undefined);
       assertEquals(accessorCalls, 0);
+    });
+
+    it("reads a recorded diagnostic cause without changing the error's own classification", () => {
+      const failure = new Error("Provider stream failed");
+      recordStreamFailureDiagnosticCause(
+        failure,
+        new RangeError("Anthropic partial_json exceeded 4096 deltas"),
+      );
+
+      assertEquals(telemetryErrorCauseType(failure), "RangeError");
+      assertEquals(summarizeErrorCausesForLog(failure), [{
+        name: "RangeError",
+        message: "Anthropic partial_json exceeded 4096 deltas",
+      }]);
+      // Diagnostics only: the error is not marked provider-owned and exposes no cause.
+      assertEquals(telemetryErrorType(failure), "Error");
+      assertEquals(readRuntimeProviderStreamFailureCause(failure), { found: false });
+      assertEquals(Object.hasOwn(failure, "cause"), false);
+      assertEquals(readStreamFailureDiagnosticCause(new Error("unrecorded")), { found: false });
+      assertEquals(readStreamFailureDiagnosticCause("not an object"), { found: false });
     });
 
     it("summarizes a bounded, cycle-safe cause chain for logs", () => {

@@ -36,3 +36,33 @@ export function readRuntimeProviderStreamFailureCause(
     cause: reflectApply(weakMapGet, runtimeProviderStreamFailureCauses, [error]),
   };
 }
+
+const streamFailureDiagnosticCauses = new WeakMap<object, unknown>();
+
+/**
+ * Record what a stream failure wraps, for diagnostics only. Unlike
+ * {@link createRuntimeProviderStreamFailure}, this does not mark the error as
+ * provider-owned, so its classification and public message do not change.
+ */
+export function recordStreamFailureDiagnosticCause(error: Error, cause: unknown): void {
+  reflectApply(weakMapSet, streamFailureDiagnosticCauses, [error, cause]);
+}
+
+/** Read a diagnostic cause without exposing it on the public error object. */
+export function readStreamFailureDiagnosticCause(
+  error: unknown,
+): { found: false } | { found: true; cause: unknown } {
+  if (
+    (typeof error !== "object" || error === null) &&
+    typeof error !== "function"
+  ) {
+    return { found: false };
+  }
+  if (!reflectApply(weakMapHas, streamFailureDiagnosticCauses, [error])) {
+    return { found: false };
+  }
+  return {
+    found: true,
+    cause: reflectApply(weakMapGet, streamFailureDiagnosticCauses, [error]),
+  };
+}

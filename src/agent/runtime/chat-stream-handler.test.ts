@@ -46,6 +46,10 @@ import {
   ManualMonotonicClock,
   StreamLifecycleFailure,
 } from "#veryfront/agent/streaming/lifecycle/index.ts";
+import {
+  summarizeErrorCausesForLog,
+  telemetryErrorCauseType,
+} from "#veryfront/observability/telemetry-error.ts";
 import { shouldContinueAfterStreamStep } from "./tool-result-continuation.ts";
 import { createChatUiMessageStreamFromDataStream } from "#veryfront/agent/streaming/chat-ui-message-stream.ts";
 import { createConversationRunChunkMirror } from "#veryfront/agent/conversation/run-chunk-mirror.ts";
@@ -3311,6 +3315,78 @@ describe("processStream active mode", () => {
       TypeError,
       "Active stream lifecycle mode requires a RuntimeStreamSource",
     );
+  });
+
+  /** Run a provider stream whose first read rejects, and return what processStream throws. */
+  async function runFailingRead(mode: "legacy" | "active", thrown: unknown) {
+    const { controller, encoder } = createSSECollector();
+    const state = createStreamState();
+    const result = {
+      fullStream: {
+        [Symbol.asyncIterator]() {
+          return {
+            next: () => Promise.reject(thrown),
+            return: () =>
+              Promise.resolve({ done: true, value: undefined } as IteratorResult<unknown>),
+          };
+        },
+      } as AsyncIterable<unknown>,
+      textStream: (async function* (): AsyncGenerator<string> {})(),
+    };
+    const error = await processStream(
+      mode === "active" ? createRuntimeStreamSource(() => result) : result,
+      state,
+      controller,
+      encoder,
+      "text-1",
+      { streamLifecycleMode: mode },
+      undefined,
+    ).then(() => undefined, (caught: unknown) => caught);
+    return { error, state };
+  }
+
+  it("keeps the provider error as a diagnostic cause of a failed attempt", async () => {
+    const causeMessage = "Anthropic partial_json exceeded 4096 deltas";
+    const providerFailure = () => createRuntimeProviderStreamFailure(new RangeError(causeMessage));
+    const expectedCauses = [{ name: "RangeError", message: causeMessage }];
+
+    const legacy = await runFailingRead("legacy", providerFailure());
+    assertEquals(summarizeErrorCausesForLog(legacy.error), expectedCauses);
+    assertEquals(telemetryErrorCauseType(legacy.error), "RangeError");
+
+    const active = await runFailingRead("active", providerFailure());
+    assert(active.error instanceof StreamLifecycleFailure);
+    // The same diagnostics as legacy mode.
+    assertEquals(summarizeErrorCausesForLog(active.error), expectedCauses);
+    assertEquals(telemetryErrorCauseType(active.error), "RangeError");
+    // Nothing else about the failure changes.
+    assertEquals(active.error.message, "Provider stream failed");
+    assertEquals(Object.hasOwn(active.error, "cause"), false);
+    assertEquals(readRuntimeProviderStreamFailureCause(active.error), { found: false });
+    assertEquals(resolveRuntimeExecutionErrorEvent(active.error), {
+      type: "error",
+      error: "Provider stream failed",
+    });
+    assertEquals(active.state.streamOutcome?.status, "failed");
+    assertEquals(JSON.stringify(active.state.streamOutcome).includes(causeMessage), false);
+  });
+
+  it("records no diagnostic cause for a failure that no thrown error decided", async () => {
+    const { controller, encoder } = createSSECollector();
+    const error = await processStream(
+      // The provider stream ends without a finish part.
+      createRuntimeStreamSource(() => createMockResult([{ type: "text-delta", text: "partial" }])),
+      createStreamState(),
+      controller,
+      encoder,
+      "text-1",
+      { streamLifecycleMode: "active" },
+      undefined,
+    ).then(() => undefined, (caught: unknown) => caught);
+
+    assert(error instanceof StreamLifecycleFailure);
+    assertEquals(summarizeErrorCausesForLog(error), undefined);
+    assertEquals(telemetryErrorCauseType(error), undefined);
   });
 
   async function runMode(mode: "legacy" | "active", parts: Record<string, unknown>[]) {

@@ -31,6 +31,7 @@ import { forwardVeryfrontCloudModelFacts } from "#veryfront/provider/veryfront-c
 import {
   createRuntimeProviderStreamFailure,
   readRuntimeProviderStreamFailureCause,
+  recordStreamFailureDiagnosticCause,
 } from "#veryfront/runtime/provider-stream-error-provenance.ts";
 import { sendSSE } from "./sse-utils.ts";
 import {
@@ -49,6 +50,7 @@ import {
   getStreamErrorMessage,
   hasCompletedStepSignal,
   isLateProviderBodyReadError,
+  readStreamOutcomeFailureCause,
   resolveKnownProviderTerminalError,
 } from "../streaming/stream-outcome.ts";
 import { serverLogger } from "#veryfront/utils";
@@ -935,7 +937,18 @@ async function processActiveStream(
     }
   }
   if (streamOutcome.status === "failed") {
-    throw new StreamLifecycleFailure(streamOutcome.error);
+    const failure = new StreamLifecycleFailure(streamOutcome.error);
+    // Diagnostics name the same cause in every lifecycle mode. It stays off
+    // the error object, so the public message and classification are unchanged.
+    const thrown = readStreamOutcomeFailureCause(streamOutcome);
+    if (thrown.found) {
+      const providerFailure = readRuntimeProviderStreamFailureCause(thrown.cause);
+      recordStreamFailureDiagnosticCause(
+        failure,
+        providerFailure.found ? providerFailure.cause : thrown.cause,
+      );
+    }
+    throw failure;
   }
   if (streamOutcome.status === "cancelled" && abortSignal?.aborted) {
     throw abortSignal.reason;

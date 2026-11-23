@@ -144,10 +144,12 @@ export function resolveStreamOutcome(
       !isStreamTimeoutError(input.thrownError)
     )
   ) {
-    return failedClassifiedProviderOutcome(
+    const failed = failedClassifiedProviderOutcome(
       input,
       input.providerError ?? classifyThrownProviderError(input.thrownError),
     );
+    reflectApply(weakMapSet, streamOutcomeFailureCauses, [failed, input.thrownError]);
+    return failed;
   }
   if (input.thrownError === undefined && input.providerError) {
     return failedClassifiedProviderOutcome(input, input.providerError);
@@ -165,6 +167,26 @@ export function resolveStreamOutcome(
     "PROVIDER_STREAM_ERROR",
     "Provider stream ended before completion",
   );
+}
+
+// Captured at load, so a later change to the WeakMap prototype cannot
+// observe or drop a recorded error.
+const reflectApply = Reflect.apply;
+const weakMapGet = WeakMap.prototype.get;
+const weakMapHas = WeakMap.prototype.has;
+const weakMapSet = WeakMap.prototype.set;
+const streamOutcomeFailureCauses = new WeakMap<StreamOutcome, unknown>();
+
+/**
+ * The thrown error that decided a failed Stream Outcome, for diagnostics. It
+ * is held beside the outcome, not on it: the outcome stays a serializable
+ * record, and a copy of the outcome does not carry the error.
+ */
+export function readStreamOutcomeFailureCause(
+  outcome: StreamOutcome,
+): { found: false } | { found: true; cause: unknown } {
+  if (!reflectApply(weakMapHas, streamOutcomeFailureCauses, [outcome])) return { found: false };
+  return { found: true, cause: reflectApply(weakMapGet, streamOutcomeFailureCauses, [outcome]) };
 }
 
 /** Committed local tool calls projected from a terminal snapshot. */
