@@ -27,6 +27,66 @@ function createLargeSkillCatalog(count = 128) {
 }
 
 describe("managed broker project state", () => {
+  it("keeps instructions and skill reads on the captured release during preparation and refresh", async () => {
+    const calls: URL[] = [];
+    const options = {
+      apiUrl: "https://api.example.test",
+      authToken: "release-bound-token",
+      agentId: "coder",
+      projectId: "project-1",
+      releaseId: "release-1",
+      fetch: (value: string) => {
+        const url = new URL(value);
+        calls.push(url);
+        assertEquals(url.searchParams.get("ref"), "release:release-1");
+        if (decodeURIComponent(url.pathname).endsWith("/skills/check/SKILL.md")) {
+          return Promise.resolve(
+            Response.json({
+              path: "skills/check/SKILL.md",
+              content: "---\nname: check\ndescription: Check\n---\nCheck data.",
+            }),
+          );
+        }
+        return Promise.resolve(
+          url.pathname.endsWith("/AGENTS.md")
+            ? Response.json({ path: "AGENTS.md", content: "Captured release instructions" })
+            : Response.json({
+              data: url.searchParams.get("path") === "skills"
+                ? [{ path: "skills/check/SKILL.md" }]
+                : [],
+              page_info: { next: null },
+            }),
+        );
+      },
+    };
+    const state = createManagedBrokerProjectState(options);
+    options.releaseId = "release-2";
+    options.agentId = "different-agent";
+    const prepared = await state.prepareProjectSteering({
+      definition,
+      projectId: "project-1",
+      releaseId: "release-1",
+      signal: new AbortController().signal,
+    });
+    assertEquals(prepared.initialProjectInstructions, "Captured release instructions");
+    await state.refreshProjectSteering(new AbortController().signal);
+    assertEquals(calls.length > 2, true);
+    assertEquals(
+      calls.some((url) => decodeURIComponent(url.pathname).endsWith("/skills/check/SKILL.md")),
+      true,
+    );
+    const count = calls.length;
+    await assertRejects(() =>
+      state.prepareProjectSteering({
+        definition,
+        projectId: "project-1",
+        releaseId: "release-2",
+        signal: new AbortController().signal,
+      })
+    );
+    assertEquals(calls.length, count);
+  });
+
   for (
     const availableToolNames of [
       undefined,

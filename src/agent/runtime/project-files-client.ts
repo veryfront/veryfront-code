@@ -207,6 +207,8 @@ export type RuntimeProjectFilesApiOptions = {
   projectId: string;
   authToken: string;
   branchId?: string | null;
+  /** Immutable source release; mutually exclusive with branchId. */
+  releaseId?: string | null;
   /** Stop pagination before retaining more than this many entries. */
   maximumEntries?: number;
   /** Restrict the API listing to this bounded server-side path prefix. */
@@ -340,6 +342,7 @@ export function createRuntimeProjectFilesClient(
         projectId: input.projectId,
         authToken: input.authToken,
         branchId: input.branchId,
+        ...(input.releaseId !== undefined ? { releaseId: input.releaseId } : {}),
         maximumEntries: input.maximumEntries,
         pathPrefix: input.pathPrefix,
         listingBudget: input.listingBudget,
@@ -358,6 +361,7 @@ export function createRuntimeProjectFilesClient(
         projectId: input.projectId,
         authToken: input.authToken,
         branchId: input.branchId,
+        ...(input.releaseId !== undefined ? { releaseId: input.releaseId } : {}),
         maximumEntries: input.maximumEntries,
         pathPrefix: input.pathPrefix,
         listingBudget: input.listingBudget,
@@ -382,6 +386,7 @@ export function createStrictRuntimeProjectFilesClient(
         projectId: input.projectId,
         authToken: input.authToken,
         branchId: input.branchId,
+        ...(input.releaseId !== undefined ? { releaseId: input.releaseId } : {}),
         maximumEntries: input.maximumEntries,
         pathPrefix: input.pathPrefix,
         listingBudget: input.listingBudget,
@@ -397,6 +402,7 @@ export function createStrictRuntimeProjectFilesClient(
         projectId: input.projectId,
         authToken: input.authToken,
         branchId: input.branchId,
+        ...(input.releaseId !== undefined ? { releaseId: input.releaseId } : {}),
         maximumEntries: input.maximumEntries,
         pathPrefix: input.pathPrefix,
         listingBudget: input.listingBudget,
@@ -411,6 +417,7 @@ export function createStrictRuntimeProjectFilesClient(
 export async function getRuntimeProjectFile(
   options: RuntimeProjectFilesClientOptions & RuntimeGetProjectFileOptions,
 ): Promise<RuntimeProjectFile | null> {
+  const source = snapshotRuntimeProjectSource(options);
   if (
     options.maximumContentCharacters !== undefined &&
     (!Number.isSafeInteger(options.maximumContentCharacters) ||
@@ -429,6 +436,7 @@ export async function getRuntimeProjectFile(
       traceProjectFilesRequest(options, "runtimeProjectFiles.getProjectFile", async () => {
         const url = createRuntimeProjectFileUrl({
           ...options,
+          ...source,
           fields: "(path,content)",
         });
         const response = await fetchRuntimeProjectFilesRestResponse(url, options, signal);
@@ -594,6 +602,7 @@ export async function getStrictRuntimeProjectFile(
     & RuntimeGetProjectFileOptions
     & StrictRuntimeProjectFilesRequestContext,
 ): Promise<RuntimeProjectFile | null> {
+  const source = snapshotRuntimeProjectSource(options);
   validateRuntimeProjectFilesClientOptions(options, false);
   validateRuntimeProjectFilesApiOptions(options);
   validateProjectFileRequestPath(options.path);
@@ -606,6 +615,7 @@ export async function getStrictRuntimeProjectFile(
       traceStrictProjectFilesRequest(options, "runtimeProjectFiles.getProjectFile", async () => {
         const url = createStrictRuntimeProjectFileUrl({
           ...options,
+          ...source,
           fields: "(path,content)",
         });
         return await withStrictRuntimeProjectFilesRestResponse(
@@ -678,6 +688,7 @@ export function isRuntimeProjectFileContent(content: unknown): content is string
 export async function getRuntimeProjectFiles(
   options: RuntimeProjectFilesClientOptions & RuntimeProjectFilesApiOptions,
 ): Promise<RuntimeProjectFileListItem[]> {
+  const source = snapshotRuntimeProjectSource(options);
   if (
     options.maximumEntries !== undefined &&
     (!Number.isSafeInteger(options.maximumEntries) || options.maximumEntries <= 0)
@@ -715,6 +726,7 @@ export async function getRuntimeProjectFiles(
           listingBudget.consumePage();
           const url = createRuntimeProjectFileUrl({
             ...options,
+            ...source,
             fields: "(path)",
             cursor,
           });
@@ -789,6 +801,7 @@ export async function getStrictRuntimeProjectFiles(
     & RuntimeProjectFilesApiOptions
     & StrictRuntimeProjectFilesRequestContext,
 ): Promise<RuntimeProjectFileListItem[]> {
+  const source = snapshotRuntimeProjectSource(options);
   validateRuntimeProjectFilesClientOptions(options);
   validateRuntimeProjectFilesApiOptions(options);
   const callerScope = createStrictProjectFilesCallerSignalScope(options);
@@ -841,6 +854,7 @@ export async function getStrictRuntimeProjectFiles(
 
             const url = createStrictRuntimeProjectFileUrl({
               ...options,
+              ...source,
               fields: "(path)",
               cursor,
               pageLimit: requestPageLimit,
@@ -979,11 +993,25 @@ function createProjectFilesListLimitError(projectId: string, reason: string): Er
   });
 }
 
+type RuntimeProjectSource = Pick<RuntimeProjectFilesApiOptions, "branchId" | "releaseId">;
+
+function snapshotRuntimeProjectSource(input: RuntimeProjectSource): RuntimeProjectSource {
+  const branchId = input.branchId;
+  const releaseId = input.releaseId;
+  if (releaseId !== undefined && releaseId !== null) {
+    requireBoundedWireString(releaseId, "releaseId", MAX_PROJECT_FILES_IDENTIFIER_CHARACTERS);
+    if (branchId) throw new TypeError("Choose a source branch or release, not both");
+  }
+  return { branchId, releaseId };
+}
+
 function createRuntimeProjectFileUrl(input: {
   apiUrl: string | URL;
   projectId: string;
   path?: string;
   branchId?: string | null;
+  /** Immutable source release; mutually exclusive with branchId. */
+  releaseId?: string | null;
   fields: string;
   cursor?: string | null;
   pageLimit?: number;
@@ -997,7 +1025,9 @@ function createRuntimeProjectFileUrl(input: {
   const url = new URL(pathname, apiUrl.origin);
 
   url.searchParams.set("fields", input.fields);
-  if (input.branchId) {
+  if (input.releaseId !== undefined && input.releaseId !== null) {
+    url.searchParams.set("ref", `release:${input.releaseId}`);
+  } else if (input.branchId) {
     url.searchParams.set("ref", `branch:${input.branchId}`);
   }
   if (input.cursor) {
@@ -1019,6 +1049,8 @@ function createStrictRuntimeProjectFileUrl(input: {
   path?: string;
   pathPrefix?: string;
   branchId?: string | null;
+  /** Immutable source release; mutually exclusive with branchId. */
+  releaseId?: string | null;
   fields: string;
   cursor?: string | null;
   pageLimit?: number;
@@ -1031,7 +1063,9 @@ function createStrictRuntimeProjectFileUrl(input: {
   const url = new URL(pathname, apiUrl.origin);
 
   url.searchParams.set("fields", input.fields);
-  if (input.branchId) {
+  if (input.releaseId !== undefined && input.releaseId !== null) {
+    url.searchParams.set("ref", `release:${input.releaseId}`);
+  } else if (input.branchId) {
     url.searchParams.set("ref", `branch:${input.branchId}`);
   }
   if (input.cursor) {

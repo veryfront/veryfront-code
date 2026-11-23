@@ -143,6 +143,7 @@ export type RuntimeProjectSteeringLookup = {
   projectId: string;
   authToken: string;
   branchId?: string | null;
+  releaseId?: string | null;
 };
 
 /** Options accepted by runtime project skill catalog. */
@@ -503,6 +504,7 @@ async function fetchProjectSkillDocument(
       projectId: input.projectId,
       authToken: input.authToken,
       branchId: input.branchId,
+      ...(input.releaseId !== undefined ? { releaseId: input.releaseId } : {}),
       path: requestedPath,
       maximumContentCharacters: SKILL_DOCUMENT_MAX_CHARACTERS,
       abortSignal,
@@ -616,6 +618,7 @@ export async function getRuntimeProjectInstructions(
         projectId: input.projectId,
         authToken: input.authToken,
         branchId: input.branchId,
+        ...(input.releaseId !== undefined ? { releaseId: input.releaseId } : {}),
         path: filePath,
         maximumContentCharacters: SKILL_DOCUMENT_MAX_CHARACTERS,
         abortSignal,
@@ -659,6 +662,7 @@ export async function getRuntimeProjectSkillCatalog(
           projectId: input.projectId,
           authToken: input.authToken,
           branchId: input.branchId,
+          ...(input.releaseId !== undefined ? { releaseId: input.releaseId } : {}),
           pathPrefix: prefix,
           maximumEntries: SKILL_CATALOG_MAX_PATH_ENTRIES,
           listingBudget,
