@@ -37,6 +37,7 @@ import { privateJsonParse, privateJsonStringify } from "#veryfront/security/priv
 import type { RemoteToolSource, Tool, ToolDefinition, ToolExecutionContext } from "#veryfront/tool";
 import { executeTool, isToolVisibleTo, toolRegistry } from "#veryfront/tool";
 import { assertLocalToolId, toolToProviderDefinition } from "#veryfront/tool/registry.ts";
+import { refreshFrameworkSkillLoaderAuthority } from "#veryfront/skill/loader-provenance.ts";
 import { getRemoteToolProvenance } from "#veryfront/tool/remote-tool-provenance.ts";
 import { isSkillInfrastructureToolId } from "#veryfront/skill/types.ts";
 import { serverLogger } from "#veryfront/utils";
@@ -748,6 +749,9 @@ function addToolDefinition(
   // deno-lint-ignore no-explicit-any -- generic erasure: accepts Tool with any input/output types
   tool: Tool<any, any>,
 ): void {
+  // Each model step rebuilds the catalog here; refresh skill loader authority
+  // explicitly rather than relying on a schema getter surviving every wrapper.
+  refreshFrameworkSkillLoaderAuthority(tool);
   const def = toolToProviderDefinition({ ...tool, id: name });
   if (hasTrustedHostToolProvenance(tool)) {
     markTrustedPlatformPolicyToolDefinition(def);
@@ -920,6 +924,7 @@ export async function getAvailableTools(
       isToolVisibleTo(tool, { agentId: options?.callerAgentId })
     );
     const tools = visibleTools.map(([name, tool]) => {
+      refreshFrameworkSkillLoaderAuthority(tool);
       const def = toolToProviderDefinition(tool);
       if (hasTrustedHostToolProvenance(tool)) {
         markTrustedPlatformPolicyToolDefinition(def);

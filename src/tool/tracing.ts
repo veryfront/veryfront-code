@@ -1,9 +1,14 @@
 import type { HostToolSet } from "./host-tools.ts";
 import type { ToolExecutionContext } from "./types.ts";
 import { inheritFrameworkSkillLoader } from "#veryfront/skill/loader-provenance.ts";
-import { inheritTrustedHostToolProvenance } from "./host-tool-provenance.ts";
+import {
+  hasTrustedHostToolProvenance,
+  inheritTrustedHostToolProvenance,
+} from "./host-tool-provenance.ts";
+import { copyTrustedHostToolDefinition } from "./host-tool-definition-copy.ts";
 
 const apply = Reflect.apply;
+const objectDefineProperty = Object.defineProperty;
 
 /** Public API contract for host tool trace runner. */
 export type HostToolTraceRunner = <TResult>(
@@ -58,26 +63,38 @@ export function traceHostTools<
     }
 
     const originalExecute = definition.execute;
+    // A trusted definition keeps its getters live (load_skill's advertised schema
+    // refreshes authorization on each read); spreading would evaluate them once.
+    const wrapper: HostToolSet[string] = hasTrustedHostToolProvenance(definition)
+      ? copyTrustedHostToolDefinition({}, definition)
+      : { ...definition };
+    objectDefineProperty(wrapper, "execute", {
+      configurable: true,
+      enumerable: true,
+      writable: true,
+      // A method, so the receiver a host binds (a gated tool reads its exposed name from
+      // `this.id`) reaches the original execute.
+      value: function execute(
+        this: unknown,
+        input: unknown,
+        context: ToolExecutionContext | undefined,
+      ) {
+        return options.trace(getSpanName(toolName), () => {
+          const attributes = options.buildAttributes?.({
+            toolName,
+            toolCallId: getToolCallId(context),
+            context,
+          });
+          if (attributes) {
+            options.setAttributes?.(attributes);
+          }
+          return apply(originalExecute, this, [input, context]);
+        });
+      },
+    });
     traced[toolName] = inheritTrustedHostToolProvenance(
       definition,
-      inheritFrameworkSkillLoader(definition, {
-        ...definition,
-        // A method, so the receiver a host binds (a gated tool reads its exposed name from
-        // `this.id`) reaches the original execute.
-        execute(this: unknown, input: unknown, context: ToolExecutionContext | undefined) {
-          return options.trace(getSpanName(toolName), () => {
-            const attributes = options.buildAttributes?.({
-              toolName,
-              toolCallId: getToolCallId(context),
-              context,
-            });
-            if (attributes) {
-              options.setAttributes?.(attributes);
-            }
-            return apply(originalExecute, this, [input, context]);
-          });
-        },
-      }),
+      inheritFrameworkSkillLoader(definition, wrapper),
     );
   }
 
