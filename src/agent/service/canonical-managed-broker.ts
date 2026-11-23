@@ -58,8 +58,12 @@ export function createCanonicalManagedBrokerHandler<T>(
     onExecutionError: options.onExecutionError,
     async prepare({ ingress, signal }) {
       const run = ingress.executor.run;
-      const cursor = run.eventCursor;
       const authority = ingress.privateAuthority;
+      const negotiated = authority.projectEventPersistence;
+      const cursor = negotiated ?? run.eventCursor;
+      if (negotiated && options.responseMode !== "sse") {
+        throw new BrokerIngressError(503, "BROKER_UNAVAILABLE");
+      }
       const sourceProject = ingress.executor.sourceProject ?? run.project;
       const source = ingress.executor.agentSource;
       // Old admissions cannot supply guessed zero cursors or borrow a legacy projection.
@@ -134,6 +138,7 @@ export function createCanonicalManagedBrokerHandler<T>(
           runEventToken: authority.runEventToken,
           completionAuthToken: authority.apiAuthToken,
           terminalAuthToken: authority.terminalAuthToken,
+          terminalOwner: negotiated ? "api" : "runtime",
           run: snapshot,
           modelId: start.prepare.modelId ?? start.installation.grant.defaultModelId,
           resolveProvider,
@@ -183,6 +188,7 @@ export function createCanonicalManagedBrokerHandler<T>(
             tools: { ...start.tools, admitToolCall: persistence.admitToolCall },
           },
           output: persistence.output,
+          ...(negotiated ? { eventPersistence: negotiated.mode } : {}),
           cleanup,
         };
       } catch (error) {

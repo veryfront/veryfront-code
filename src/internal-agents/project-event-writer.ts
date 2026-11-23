@@ -24,7 +24,7 @@ import { createPrivateMap } from "#veryfront/security/private-map.ts";
 import { createPrivateWeakStore } from "#veryfront/security/private-weak-store.ts";
 import { chainPrivatePromise, createPrivateDeferred } from "#veryfront/security/private-promise.ts";
 import { createVeryfrontApiOriginBoundOutboundFetch } from "#veryfront/security/http/outbound-fetch.ts";
-import { defineSchema } from "#veryfront/schemas/index.ts";
+export { getProjectEventPersistenceSchema } from "#veryfront/agent/hosted/event-persistence-contract.ts";
 import type { RuntimeRunAgentInput } from "./schema.ts";
 
 const ObjectFreeze = Object.freeze;
@@ -35,15 +35,6 @@ const AbortReason = Object.getOwnPropertyDescriptor(AbortSignal.prototype, "reas
 const IsAborted = Object.getOwnPropertyDescriptor(AbortSignal.prototype, "aborted")!.get!;
 const AbortSignalTimeout = AbortSignal.timeout;
 const checkSignal = (signal: AbortSignal) => Apply(ThrowIfAborted, signal, []);
-
-export const getProjectEventPersistenceSchema = defineSchema((v) =>
-  v.object({
-    mode: v.literal("runtime-owned-v1"),
-    canonicalRunId: v.string().uuid(),
-    latestEventId: v.number().int().nonnegative(),
-    latestExternalEventSequence: v.number().int().nonnegative(),
-  }).strict()
-);
 
 /** Created only by authenticated ingress; the execution input carries no credential. */
 export function createProjectEventWriter(input: {

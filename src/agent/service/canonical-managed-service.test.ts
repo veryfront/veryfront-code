@@ -25,8 +25,8 @@ const sourceId = "00000000-0000-4000-8000-000000000099";
 async function fixture(
   mode: "cancel" | "resume" = "cancel",
   holdCleanup = false,
-  responseMode: "sse" | "detached" = "sse",
   prepareFailure?: { value: unknown },
+  negotiate = true,
 ) {
   const base = invocation();
   const body = invocation({
@@ -49,6 +49,17 @@ async function fixture(
     agentEntrypoint: { path: "agents/selected.ts" },
     credentials: { authToken: "api-auth-token", sourceAuthToken: "source-read-token" },
   });
+  if (negotiate) {
+    Object.assign(body, {
+      projectEventPersistence: {
+        mode: "runtime-owned-v1",
+        canonicalRunId: canonicalId,
+        latestEventId: 0,
+        latestExternalEventSequence: 0,
+      },
+      platformToolDependencies: [],
+    });
+  }
   const signed = await signedRequest(body, { projectId: sourceId, audience: "private-source" });
   const terminal = `header.${
     btoa(
@@ -70,7 +81,7 @@ async function fixture(
   let signal: AbortSignal | undefined;
   let wait: ((toolCallId: string) => Promise<AgUiResumeValue>) | undefined;
   const service = createCanonicalManagedBrokerService({
-    responseMode,
+    responseMode: "sse",
     apiUrl: "https://api.example.test",
     resolveProvider: () => "openai",
     auth: {
@@ -242,42 +253,50 @@ async function fixture(
 }
 
 describe("canonical managed service ownership", () => {
-  for (const responseMode of ["sse", "detached"] as const) {
-    it(`cancels the admitted ${responseMode} run and confirms stopped only after cleanup settles`, async () => {
-      const f = await fixture("cancel", true, responseMode);
-      let reading: Promise<string> | undefined;
-      try {
-        const response = await f.start();
-        assertEquals(response.status, responseMode === "sse" ? 200 : 202);
-        if (responseMode === "sse") reading = response.text();
-        else assertEquals(await response.json(), { accepted: true, duplicate: false });
-        await f.entered;
-        const foreign = await f.control("cancel", {}, "run_foreign");
-        assertEquals(foreign.status, 403);
-        assertEquals(f.signal?.aborted, false);
-        const cancel = await f.control("cancel", { confirmStopped: true });
-        assertEquals(cancel.status, 202);
-        assertEquals(await cancel.json(), { accepted: true, stopped: false });
-        assertEquals(f.signal?.aborted, true);
-        await f.cleanupEntered;
-        assertEquals(f.service.active, 1);
-        f.release();
-        await reading;
-        const stopped = await f.control("cancel", { confirmStopped: true });
-        assertEquals(stopped.status, 200);
-        assertEquals(await stopped.json(), { accepted: true, stopped: true });
-        assertEquals(f.finalizations, ["cancelled"]);
-        assertEquals(f.cleaned, 1);
-      } finally {
-        f.release();
-        await f.service.close();
-        await reading;
-      }
-    });
-  }
+  it("refuses an unnegotiated API invocation before policy preparation or allocation", async () => {
+    const f = await fixture("cancel", false, undefined, false);
+    try {
+      assertEquals((await f.start()).status, 503);
+      assertEquals(f.prepared, 0);
+      assertEquals(f.started, 0);
+    } finally {
+      await f.service.close();
+    }
+  });
+
+  it("cancels the admitted run and confirms stopped only after cleanup settles", async () => {
+    const f = await fixture("cancel", true);
+    let reading: Promise<string> | undefined;
+    try {
+      const response = await f.start();
+      assertEquals(response.status, 200);
+      reading = response.text();
+      await f.entered;
+      const foreign = await f.control("cancel", {}, "run_foreign");
+      assertEquals(foreign.status, 403);
+      assertEquals(f.signal?.aborted, false);
+      const cancel = await f.control("cancel", { confirmStopped: true });
+      assertEquals(cancel.status, 202);
+      assertEquals(await cancel.json(), { accepted: true, stopped: false });
+      assertEquals(f.signal?.aborted, true);
+      await f.cleanupEntered;
+      assertEquals(f.service.active, 1);
+      f.release();
+      await reading;
+      const stopped = await f.control("cancel", { confirmStopped: true });
+      assertEquals(stopped.status, 200);
+      assertEquals(await stopped.json(), { accepted: true, stopped: true });
+      assertEquals(f.finalizations, []);
+      assertEquals(f.cleaned, 1);
+    } finally {
+      f.release();
+      await f.service.close();
+      await reading;
+    }
+  });
   for (const value of [new Error("Synthetic policy failure"), undefined]) {
     it(`retires ownership after a preparation rejection (${value === undefined ? "undefined" : "error"})`, async () => {
-      const f = await fixture("cancel", false, "sse", { value });
+      const f = await fixture("cancel", false, { value });
       try {
         const response = await f.start();
         assertEquals(response.status, 500);
@@ -325,7 +344,7 @@ describe("canonical managed service ownership", () => {
       const wire = await reading;
       assert(wire.includes("event: RunFinished"));
       assertEquals(f.resumed, [{ result: { approved: true }, isError: false }]);
-      assertEquals(f.finalizations, ["completed"]);
+      assertEquals(f.finalizations, []);
       assertThrows(() => f.lateWait(), Error, "ownership has ended");
     } finally {
       f.release();

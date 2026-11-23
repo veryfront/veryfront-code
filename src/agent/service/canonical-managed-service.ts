@@ -15,7 +15,9 @@ type Prepare<T> = CanonicalOptions<T>["prepareExecutor"];
 
 /** One canonical handler and its authenticated cancel/resume effects share one bounded run owner. */
 export function createCanonicalManagedBrokerService<T>(
-  options: Omit<CanonicalOptions<T>, "prepareExecutor"> & {
+  options: Omit<CanonicalOptions<T>, "prepareExecutor" | "responseMode"> & {
+    /** The API consumes a negotiated SSE stream and owns lifecycle transitions. */
+    responseMode?: "sse";
     auth: Pick<
       HostedServiceAuth,
       "authenticateRequest" | "verifyRunCancellationToken" | "verifyRunResumeToken"
@@ -29,7 +31,9 @@ export function createCanonicalManagedBrokerService<T>(
     ): ReturnType<Prepare<T>>;
   },
 ) {
-  const { auth, maxActiveRuns = 16, prepareExecutor, ...canonicalOptions } = options;
+  const { auth, maxActiveRuns = 16, prepareExecutor, responseMode = "sse", ...canonicalOptions } =
+    options;
+  if (responseMode !== "sse") throw new TypeError("Canonical API service requires SSE");
   if (!Number.isSafeInteger(maxActiveRuns) || maxActiveRuns < 1 || maxActiveRuns > 1024) {
     throw new TypeError("Invalid canonical run ownership limit");
   }
@@ -46,10 +50,13 @@ export function createCanonicalManagedBrokerService<T>(
   let closing: Promise<void> | undefined;
   const handler = createCanonicalManagedBrokerHandler({
     ...canonicalOptions,
+    responseMode,
     async prepareExecutor(input) {
       if (closed) throw new BrokerIngressError(503, "BROKER_UNAVAILABLE");
+      const negotiated = input.ingress.privateAuthority.projectEventPersistence;
+      if (!negotiated) throw new BrokerIngressError(503, "BROKER_UNAVAILABLE");
       const run = input.ingress.executor.run;
-      const cursor = run.eventCursor;
+      const cursor = negotiated;
       if (!cursor) throw new BrokerIngressError(503, "BROKER_UNAVAILABLE");
       let ownedSignal: AbortSignal;
       try {

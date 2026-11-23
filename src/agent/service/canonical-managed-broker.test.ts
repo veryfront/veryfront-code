@@ -42,6 +42,7 @@ async function fixture(input: {
   resume?: boolean;
   probeAppend?: boolean;
   stream?: boolean;
+  projectWriter?: "valid" | "foreign" | "stale" | "unsafe";
 } = {}) {
   const base = invocation();
   const body = invocation({
@@ -72,6 +73,23 @@ async function fixture(input: {
       ...(input.sourceToken === false ? {} : { sourceAuthToken: "source-read-token" }),
     },
   });
+  if (input.projectWriter) {
+    Object.assign(body, {
+      projectEventPersistence: {
+        mode: "runtime-owned-v1",
+        canonicalRunId: input.projectWriter === "foreign"
+          ? "30000000-3000-4000-8000-300000000099"
+          : canonicalId,
+        latestEventId: input.projectWriter === "stale"
+          ? 41
+          : input.projectWriter === "unsafe"
+          ? Number.MAX_SAFE_INTEGER + 1
+          : 45,
+        latestExternalEventSequence: input.projectWriter === "stale" ? 16 : 19,
+      },
+      platformToolDependencies: [],
+    });
+  }
   const signed = await signedRequest(body, { projectId: sourceId, audience: "private-source" });
   if (input.terminal !== false) {
     signed.request.headers.set("x-veryfront-run-terminal-token", terminal);
@@ -81,8 +99,8 @@ async function fixture(input: {
   const appends: Array<
     { expected_previous_event_id?: number; expected_previous_external_event_sequence?: number }
   > = [];
-  let durableCursor = 42;
-  let externalCursor = 17;
+  let durableCursor = input.projectWriter ? 45 : 42;
+  let externalCursor = input.projectWriter ? 19 : 17;
   let prepared = 0;
   let cleaned = 0;
   let started: ManagedExecutorStartInput | undefined;
@@ -273,6 +291,46 @@ async function fixture(input: {
 }
 
 describe("canonical managed broker preparation", () => {
+  it("acknowledges the signed API writer snapshot and leaves terminal ownership with the API", async () => {
+    const result = await fixture({ stream: true, projectWriter: "valid" });
+    try {
+      assertEquals(result.response.status, 200);
+      const parsed = await parseAgUiSseResponse(result.response);
+      assertEquals(
+        result.response.headers.get("X-Veryfront-Run-Event-Persistence"),
+        "runtime-owned-v1",
+      );
+      assert(parsed.events.some((event) => event.type === agUiSseEventTypes.runFinished));
+      assertEquals(result.appends[0]?.expected_previous_external_event_sequence, 19);
+      assertEquals(result.finalizations, []);
+    } finally {
+      await result.close();
+    }
+  });
+  it("marks a signed resumed segment consistently with the API opening event", async () => {
+    const result = await fixture({ stream: true, projectWriter: "valid", resume: true });
+    try {
+      const parsed = await parseAgUiSseResponse(result.response);
+      const start = parsed.events.find((event) => event.type === agUiSseEventTypes.runStarted);
+      assertEquals((start as { metadata?: unknown })?.metadata, { resumed: true });
+      assertEquals(result.finalizations, []);
+    } finally {
+      await result.close();
+    }
+  });
+  for (const projectWriter of ["foreign", "stale", "unsafe"] as const) {
+    it(`refuses ${projectWriter} signed writer negotiation before preparation`, async () => {
+      const result = await fixture({ projectWriter });
+      try {
+        assertEquals(result.response.status, projectWriter === "unsafe" ? 400 : 403);
+        assertEquals(result.prepared, 0);
+        assertEquals(result.started, undefined);
+      } finally {
+        await result.close();
+      }
+    });
+  }
+
   it("persists and finalizes a signed canonical SSE turn with separate append and terminal authority", async () => {
     const result = await fixture({ stream: true });
     try {

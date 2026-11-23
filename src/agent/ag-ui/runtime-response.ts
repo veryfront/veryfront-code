@@ -18,6 +18,8 @@ export interface CreateAgUiRuntimeResponseInput<TChunk, TState> {
     runId?: string;
   };
   agentId: string;
+  /** Trusted resumed-segment marker. */
+  resumed?: boolean;
   execution: AgUiResponseExecution<TChunk>;
   encoder: AgUiResponseEncoder<TChunk>;
   initialState: TState;
@@ -32,6 +34,7 @@ export function createAgUiRuntimeResponse<TChunk, TState>(
   const stream = createAgUiResponseStream({
     agUiInput: normalizeAgUiRuntimeRequest(input.agUiInput, input.defaults),
     agentId: input.agentId,
+    ...(input.resumed ? { resumed: true } : {}),
     execution: input.execution,
     encoder: input.encoder,
     initialState: input.initialState,

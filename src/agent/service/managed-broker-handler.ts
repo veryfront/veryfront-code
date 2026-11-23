@@ -1,4 +1,8 @@
 import {
+  RUNTIME_EVENT_PERSISTENCE_HEADER,
+  RUNTIME_EVENT_PERSISTENCE_MODE,
+} from "../hosted/event-persistence-contract.ts";
+import {
   inheritIngressCredentials,
   readIngressCredential,
 } from "#veryfront/security/http/ingress-credentials.ts";
@@ -84,13 +88,7 @@ export function createManagedBrokerHandler<TAuthorization>(options: {
   prepare(input: {
     ingress: BrokerRuntimeAgentIngress<TAuthorization>;
     signal: AbortSignal;
-  }): Promise<{
-    start: ManagedExecutorStartInput;
-    messages: HostedChatRuntimeStreamInput["messages"];
-    executionSignal: AbortSignal;
-    output?: ManagedBrokerOutput;
-    cleanup?: () => Promise<void>;
-  }>;
+  }): Promise<ManagedBrokerPreparation>;
   onExecutionError?: (error: unknown, runId: string) => void;
 }) {
   return createManagedBrokerIngressHandler({
@@ -121,6 +119,7 @@ export function createManagedBrokerHandler<TAuthorization>(options: {
           threadId: ingress.executor.run.conversationId,
           agentId: ingress.executor.run.agentId,
           agUiInput: ingress.executor.input,
+          ...(ingress.executor.input.resumeToolCall ? { resumed: true as const } : {}),
         },
       };
     },
@@ -132,6 +131,7 @@ type ManagedBrokerPreparation = {
   messages: HostedChatRuntimeStreamInput["messages"];
   executionSignal: AbortSignal;
   output?: ManagedBrokerOutput;
+  eventPersistence?: typeof RUNTIME_EVENT_PERSISTENCE_MODE;
   cleanup?: () => Promise<void>;
 };
 
@@ -357,7 +357,7 @@ function createManagedBrokerIngressHandler<TIngress>(options: {
       ingress: TIngress;
       runId: string;
       runKey: string;
-      stream?: { threadId: string; agentId: string; agUiInput: AgUiRuntimeRequest };
+      stream?: { threadId: string; agentId: string; agUiInput: AgUiRuntimeRequest; resumed?: true };
     }
   >;
   prepare(input: { ingress: TIngress; signal: AbortSignal }): Promise<ManagedBrokerPreparation>;
@@ -412,6 +412,15 @@ function createManagedBrokerIngressHandler<TIngress>(options: {
       try {
         const prepared = await options.prepare({ ingress, signal });
         preparedCleanup = prepared.cleanup;
+        if (
+          prepared.eventPersistence !== undefined && (
+            prepared.eventPersistence !== RUNTIME_EVENT_PERSISTENCE_MODE ||
+            options.responseMode !== "sse" ||
+            typeof prepared.output?.write !== "function" ||
+            typeof prepared.output?.finish !== "function"
+          )
+        ) throw new TypeError("Invalid negotiated event writer");
+
         const inference = bindManagedBrokerInferenceAuthority({
           start: prepared.start,
           createResolver: () => options.createInferenceResolver(ingress),
@@ -488,7 +497,7 @@ function createManagedBrokerIngressHandler<TIngress>(options: {
         if (options.responseMode === "sse") {
           try {
             if (!parsed.stream) throw new TypeError("Managed broker stream context is required");
-            return await createSseResponse({
+            const response = await createSseResponse({
               runtime,
               messages: prepared.messages,
               requestSignal: AbortSignal.any([request.signal, prepared.executionSignal]),
@@ -511,6 +520,10 @@ function createManagedBrokerIngressHandler<TIngress>(options: {
                 void execution.finally(() => executions.delete(execution)).catch(() => {});
               },
             });
+            if (prepared.eventPersistence) {
+              response.headers.set(RUNTIME_EVENT_PERSISTENCE_HEADER, prepared.eventPersistence);
+            }
+            return response;
           } catch (error) {
             return await refuseRuntime(error);
           }
@@ -651,6 +664,7 @@ async function createSseResponse(input: {
   threadId: string;
   agentId: string;
   agUiInput: AgUiRuntimeRequest;
+  resumed?: true;
   onSettled(): Promise<void>;
   trackExecution(execution: Promise<void>): void;
 }): Promise<Response> {
@@ -804,11 +818,16 @@ async function createSseResponse(input: {
   })();
   const response = createAgUiChatUiTrackedResponse({
     agUiInput: input.agUiInput,
+    ...(input.resumed ? { resumed: true } : {}),
     defaults: { runId: input.runId, threadId: input.threadId },
     agentId: input.agentId,
     modelId: input.runtime.modelId,
     execution: {
       agentUIStream,
+      formatError(error) {
+        const failure = publicFailure(error);
+        return { code: failure.code, message: failure.message };
+      },
       async fail() {
         await finish("canceled");
       },

@@ -1063,6 +1063,7 @@ function runtimeFixture(
   terminalChunk?: "error" | "coded-error" | "empty-response-error" | "finish-error",
   finishWithUsage?: true,
   streamOpenFailure = false,
+  streamOpenQuota = false,
 ) {
   const release = Promise.withResolvers<void>();
   const settled = Promise.withResolvers<void>();
@@ -1089,6 +1090,7 @@ function runtimeFixture(
     agent: {
       async stream() {
         streamCalls++;
+        if (streamOpenQuota) throw new ExecutorAgentError("INSUFFICIENT_CREDITS");
         if (streamOpenFailure) throw new Error("synthetic stream setup failed");
         return {
           steps: Promise.resolve([]),
@@ -1170,9 +1172,11 @@ async function handler(
     throwingObserver?: boolean;
     streamFailure?: boolean;
     streamOpenFailure?: boolean;
+    streamOpenQuota?: boolean;
     terminalChunk?: "error" | "coded-error" | "empty-response-error" | "finish-error";
     finishWithUsage?: true;
     missingOutput?: boolean;
+    negotiatedWriter?: boolean;
     waitForOutput?: boolean;
     outputFailure?: boolean;
     writeFailure?: boolean;
@@ -1186,6 +1190,7 @@ async function handler(
     options.terminalChunk,
     options.finishWithUsage,
     options.streamOpenFailure,
+    options.streamOpenQuota,
   );
   let prepareCalls = 0;
   let brokerStarts = 0;
@@ -1246,6 +1251,7 @@ async function handler(
         start: managedStart({ agentId: "builder" }),
         messages: [],
         executionSignal: executionController.signal,
+        ...(options.negotiatedWriter ? { eventPersistence: "runtime-owned-v1" as const } : {}),
         output: options.missingOutput ? undefined : {
           async write(chunk: { type: string }) {
             outputChunks.push(chunk.type);
@@ -1308,6 +1314,29 @@ async function handler(
 }
 
 describe("managed broker handler", () => {
+  it("cleans prepared ownership when negotiated output is unavailable", async () => {
+    const f = await handler("sse", { missingOutput: true, negotiatedWriter: true });
+    try {
+      assertEquals((await f.managed.handle(f.first.request)).status, 500);
+      assertEquals(f.brokerStarts, 0);
+      assertEquals(f.cleanupCalls, 1);
+    } finally {
+      await f.managed.close();
+    }
+  });
+
+  it("preserves a safe execution error code for the API-owned terminal decision", async () => {
+    const f = await handler("sse", { streamOpenQuota: true });
+    try {
+      const parsed = await parseAgUiSseResponse(await f.managed.handle(f.first.request));
+      const error = parsed.events.find((event) => event.type === agUiSseEventTypes.runError);
+      assertEquals((error as { code?: string })?.code, "INSUFFICIENT_CREDITS");
+      assert(f.outputFinishErrors[0] instanceof ExecutorAgentError);
+    } finally {
+      await f.managed.close();
+    }
+  });
+
   for (
     const [option, diagnostic] of [
       ["writeFailure", "SSE output write failed"],

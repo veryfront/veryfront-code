@@ -87,6 +87,36 @@ describe("agent/ag-ui-response-stream", () => {
     );
   });
 
+  it("fails closed when the trusted error formatter throws", async () => {
+    const original = new Error("private execution detail");
+    let recorded: unknown;
+    const stream = createAgUiResponseStream({
+      agUiInput: { runId: "run-1", threadId: "thread-1", state: {}, messages: [] },
+      agentId: "assistant-1",
+      execution: {
+        agentUIStream: {
+          [Symbol.asyncIterator]() {
+            return { next: () => Promise.reject(original) };
+          },
+        },
+        fail: async (error) => {
+          recorded = error;
+        },
+        waitForFinish: async () => {},
+        formatError: () => {
+          throw new Error("private formatter detail");
+        },
+      },
+      encoder: { encode: () => [], finalize: () => [] },
+      initialState: {},
+    });
+    const frames = parseSseFrames(await collectStreamText(stream));
+    assertEquals(recorded, original);
+    const failure = frames.find((frame) => frame.event === "RunError")?.data;
+    assertEquals(failure?.code, "STREAM_ERROR");
+    assertEquals(failure?.message, "Stream failed");
+  });
+
   it("shares the chunk encoder timing anchor with bootstrap and final events", async () => {
     let now = 100;
     const chunkEncoder = createAgUiChunkEncoderBridge<{ messageId: string }>({
