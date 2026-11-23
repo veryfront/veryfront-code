@@ -1242,6 +1242,45 @@ describe("managed executor broker", () => {
     }
   });
 
+  for (const globalSource of [false, true]) {
+    it(`derives steering from trusted source ownership (global: ${globalSource})`, async () => {
+      const f = fixture({
+        owner: globalSource ? { scopeKind: "global", serviceName: "global-test-service" } : owner,
+      });
+      f.input.installation.grant.execution.projectId = "22222222-2222-4222-8222-222222222222";
+      f.input.installation.grant.execution.branchId = "execution-branch";
+      f.input.installation.capabilities.projectSteering = "steering";
+      const seen: unknown[] = [];
+      f.input.state.prepareProjectSteering = (input) => {
+        seen.push({
+          projectId: input.projectId,
+          branchId: input.branchId,
+          releaseId: input.releaseId,
+        });
+        return Promise.resolve({ agent: input.definition });
+      };
+      f.input.state.refreshProjectSteering = () => "Source instructions";
+      const broker = createManagedExecutorBroker({ maxActive: 1 });
+      const runtime = await broker.start(f.input);
+      try {
+        runtime.accept({ kind: "execution" });
+        await f.peer!.request(executorStateOperations.prepareProjectSteering, {
+          capabilityId: "steering",
+          definition: { id: "coder", name: "Coder", description: "Codes", instructions: "Work" },
+        });
+        assertEquals(seen, [{
+          projectId: globalSource ? "22222222-2222-4222-8222-222222222222" : owner.projectId,
+          branchId: globalSource ? "execution-branch" : undefined,
+          releaseId: globalSource ? undefined : source.releaseId,
+        }]);
+      } finally {
+        await runtime.close();
+        await broker.shutdown();
+        await broker.settled;
+      }
+    });
+  }
+
   for (const selectOtherModel of [false, true]) {
     it(`authorizes only the selected model's effective provider tools for steering (${selectOtherModel})`, async () => {
       const otherModelId = "veryfront-cloud/anthropic/synthetic";

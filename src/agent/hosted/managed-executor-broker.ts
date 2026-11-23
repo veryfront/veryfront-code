@@ -108,7 +108,13 @@ type PersistenceInput = Omit<
 >;
 type StateInput = Omit<
   Parameters<typeof createExecutorStateBroker>[0],
-  "expectedBinding" | "capabilityIds" | "agentId" | "projectId" | "branchId" | "allowedToolNames"
+  | "expectedBinding"
+  | "capabilityIds"
+  | "agentId"
+  | "projectId"
+  | "branchId"
+  | "projectSteeringSource"
+  | "allowedToolNames"
 >;
 
 /** Prepared executor handle with broker-owned execution and retirement. */
@@ -796,6 +802,12 @@ function buildBrokerOperations(
     projectId: execution.projectId,
     branchId: execution.branchId,
     ...input.state,
+    projectSteeringSource: installation.owner.scopeKind === "project"
+      ? { projectId: installation.owner.projectId, releaseId: installation.source.releaseId }
+      : {
+        projectId: execution.projectId,
+        ...(execution.branchId === undefined ? {} : { branchId: execution.branchId }),
+      },
     allowedToolNames: [
       ...installation.grant.allowedToolNames,
       ...(installation.grant.models.find((model) => model.id === selectedModelId)
