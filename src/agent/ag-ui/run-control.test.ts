@@ -763,6 +763,56 @@ describe("agent/ag-ui-run-control", () => {
       assertEquals((await fencedCancel(handler, query)).status, 204, "settled");
     });
 
+    it("does not attribute a receipt when the latest start's generation is no longer known", async () => {
+      const sessionManager = new RunResumeSessionManager<{ ok: boolean }>({
+        maxCancellationTombstones: 1,
+      });
+      const signal = sessionManager.startRun({
+        runId: "run_1",
+        threadId: crypto.randomUUID(),
+        startedFromEventId: 30,
+      });
+      sessionManager.completeRun("run_1", signal);
+      // Another run's start displaces the bounded record for run_1.
+      sessionManager.startRun({
+        runId: "run_2",
+        threadId: crypto.randomUUID(),
+        startedFromEventId: 5,
+      });
+      const handler = createAgUiCancelHandler({
+        sessionManager,
+        authorizeRunControl: allowRunControl,
+        hasPendingExecution: () => false,
+        hasSettledExecution: () => true,
+      });
+
+      const response = await fencedCancel(
+        handler,
+        "started_before_event_id=20&confirm_stopped=true",
+      );
+
+      assertEquals(response.status, 204);
+    });
+
+    it("leaves a session of unknown generation running", async () => {
+      const sessionManager = new RunResumeSessionManager<{ ok: boolean }>();
+      const signal = sessionManager.startRun({ runId: "run_1", threadId: crypto.randomUUID() });
+      const handler = createAgUiCancelHandler({
+        sessionManager,
+        authorizeRunControl: allowRunControl,
+        hasPendingExecution: () => true,
+        hasSettledExecution: () => false,
+      });
+
+      assertEquals((await fencedCancel(handler)).status, 204);
+      assertEquals(
+        (await fencedCancel(handler, "started_before_event_id=20&confirm_stopped=true")).status,
+        204,
+      );
+      assertEquals(signal.aborted, false);
+      assertEquals(sessionManager.getRunStatus("run_1"), "running");
+    });
+
     it("confirms the stop of the generation the fence addresses", async () => {
       const sessionManager = new RunResumeSessionManager<{ ok: boolean }>();
       sessionManager.startRun({

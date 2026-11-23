@@ -235,13 +235,17 @@ export function createAgUiCancelHandler<T = unknown>(
     const accepted = options.sessionManager.cancelRunWithAuthority(authority, {
       rememberCancellation: !parkCancellation,
       ...(fenceEventId !== undefined ? { onlyIfStartedBeforeEventId: fenceEventId } : {}),
+      // A park keeps stopping a session without generation metadata. An
+      // ordinary fenced cancel cannot tell such a session from a newer start.
+      ...(startedBeforeEventId !== undefined ? { cancelUnknownGeneration: false } : {}),
     });
     if (!parkCancellation && new URL(request.url).searchParams.get("confirm_stopped") === "true") {
-      // The execution lookups below are keyed by run id alone. When a newer
-      // start holds the run id, they describe that start, not the caller's.
+      // The execution lookups below are keyed by run id alone. Unless the
+      // latest start of the run id is known to predate the fence, they may
+      // describe a newer start, not the caller's.
       if (
         !accepted && startedBeforeEventId !== undefined &&
-        options.sessionManager.isRunStartedAtOrAfter(runId, startedBeforeEventId)
+        !options.sessionManager.wasLatestStartBefore(runId, startedBeforeEventId)
       ) {
         return new Response(null, { status: 204 });
       }

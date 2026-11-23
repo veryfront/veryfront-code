@@ -510,6 +510,12 @@ export class RunResumeSessionManager<T> {
        * refuse a newer start that reused the run id.
        */
       onlyIfStartedBeforeEventId?: number;
+      /**
+       * Whether a fenced cancel stops a session that carries no dispatch event
+       * id (default, as a park does). `false` leaves it running: its generation
+       * is unknown, so it may be a newer start the caller does not address.
+       */
+      cancelUnknownGeneration?: boolean;
     } = {},
   ): boolean {
     const runId = assertRunControlAuthority(authority, "cancel");
@@ -520,18 +526,21 @@ export class RunResumeSessionManager<T> {
         ? {}
         : undefined,
       onlyIfStartedBeforeEventId: options.onlyIfStartedBeforeEventId,
+      cancelUnknownGeneration: options.cancelUnknownGeneration !== false,
     });
   }
 
   /**
-   * Whether the latest start of this run id was dispatched from this durable
-   * event id or later, including a start whose session has already ended. A
-   * fenced cancel uses it to tell a newer start of the run, and the execution
-   * receipts that start left behind, apart from the generation it addressed.
+   * Whether the latest start of this run id is known to have been dispatched
+   * from before this durable event id, including a start whose session has
+   * already ended. A fenced cancel uses it to decide whether the execution
+   * receipts kept for the run id describe the generation it addressed. `false`
+   * when the latest start is newer, carried no event id, or is no longer
+   * remembered: the receipts then cannot be attributed to the caller.
    */
-  isRunStartedAtOrAfter(runId: string, eventId: number): boolean {
+  wasLatestStartBefore(runId: string, eventId: number): boolean {
     const startedFromEventId = this.latestStartEventIds.get(runId);
-    return startedFromEventId !== undefined && startedFromEventId >= eventId;
+    return startedFromEventId !== undefined && startedFromEventId < eventId;
   }
 
   /**
@@ -551,6 +560,7 @@ export class RunResumeSessionManager<T> {
     options: {
       remember?: { refusesStartsBeforeEventId?: number };
       onlyIfStartedBeforeEventId?: number;
+      cancelUnknownGeneration?: boolean;
     },
   ): boolean {
     // Remembered whether or not a session is found: the start this refuses may
@@ -564,6 +574,12 @@ export class RunResumeSessionManager<T> {
       session && options.onlyIfStartedBeforeEventId !== undefined &&
       session.startedFromEventId !== undefined &&
       session.startedFromEventId >= options.onlyIfStartedBeforeEventId
+    ) {
+      return false;
+    }
+    if (
+      session && options.onlyIfStartedBeforeEventId !== undefined &&
+      session.startedFromEventId === undefined && options.cancelUnknownGeneration === false
     ) {
       return false;
     }
