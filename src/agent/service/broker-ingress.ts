@@ -90,6 +90,8 @@ export interface BrokerRuntimeAgentExecutorInput {
   };
   readonly taskId?: string;
   readonly agentSource: RuntimeAgentRunInvocation["agentSource"];
+  readonly sourceProject?: Readonly<NonNullable<RuntimeAgentRunInvocation["sourceProject"]>>;
+  readonly agentEntrypoint?: RuntimeAgentRunInvocation["agentEntrypoint"];
   readonly agentConfig?: RuntimeAgentRunInvocation["agentConfig"];
   readonly input: RuntimeRunAgentInput;
 }
@@ -102,17 +104,21 @@ export interface BrokerRuntimeAgentPrivateAuthority<TAuthorization> {
   readonly apiAuthToken: string;
   readonly runEventToken: string;
   readonly inferenceAuthToken?: string;
+  readonly sourceAuthToken?: string;
   readonly authorization: TAuthorization;
   readonly rawBody: string;
 }
 
 /** Signed identity and credentials supplied to the trusted scope verifier. */
 export interface BrokerIngressScopeInput {
+  /** Source owner; consuming execution authority must also be checked against run.project. */
   readonly owner: HostedExecutorOwner;
   readonly claims: Readonly<ControlPlaneClaims>;
   readonly run: RuntimeAgentRunContext;
+  readonly sourceProject?: Readonly<NonNullable<RuntimeAgentRunInvocation["sourceProject"]>>;
   readonly authorization: string;
   readonly apiAuthToken: string;
+  readonly sourceAuthToken?: string;
   readonly runEventToken: string;
 }
 
@@ -120,6 +126,7 @@ export interface BrokerIngressScopeInput {
 export interface BrokerRuntimeAgentIngressOptions<TAuthorization> {
   publicKeyPem: string;
   audience: string;
+  /** Source runtime project verified by the signature, independent of a shared run's consuming project. */
   projectId: string;
   expectedRunId: string;
   expectedSurface: ControlPlaneSurface;
@@ -226,11 +233,12 @@ export async function parseBrokerRuntimeAgentIngress<TAuthorization>(
   if (invocation.run.runId !== expectedRunId) {
     throw new BrokerIngressError(400, "CONTROL_PLANE_RUN_ID_MISMATCH");
   }
+  const sourceProject = invocation.sourceProject ?? invocation.run.project;
   if (
-    invocation.run.project.projectId !== options.projectId ||
-    invocation.run.project.projectSlug !== options.audience ||
-    claims.project_id !== invocation.run.project.projectId ||
-    claims.aud !== invocation.run.project.projectSlug
+    sourceProject.projectId !== options.projectId ||
+    sourceProject.projectSlug !== options.audience ||
+    claims.project_id !== sourceProject.projectId ||
+    claims.aud !== sourceProject.projectSlug
   ) throw new BrokerIngressError(403, "BROKER_INGRESS_SCOPE_DENIED");
   const sourceError = verifyHostedRuntimeSourceBinding(options.boundSource, invocation.agentSource);
   if (sourceError) throw new BrokerIngressError(sourceError.status, sourceError.errorCode);
@@ -250,8 +258,14 @@ export async function parseBrokerRuntimeAgentIngress<TAuthorization>(
       owner,
       claims: Object.freeze({ ...claims }),
       run: invocation.run,
+      ...(invocation.sourceProject
+        ? { sourceProject: Object.freeze({ ...invocation.sourceProject }) }
+        : {}),
       authorization: inboundAuthorization,
       apiAuthToken,
+      ...(invocation.credentials?.sourceAuthToken
+        ? { sourceAuthToken: invocation.credentials.sourceAuthToken }
+        : {}),
       runEventToken,
     });
   } catch {
@@ -267,6 +281,8 @@ export async function parseBrokerRuntimeAgentIngress<TAuthorization>(
       run: invocation.run,
       ...(invocation.taskId ? { taskId: invocation.taskId } : {}),
       agentSource: invocation.agentSource,
+      ...(invocation.sourceProject ? { sourceProject: invocation.sourceProject } : {}),
+      ...(invocation.agentEntrypoint ? { agentEntrypoint: invocation.agentEntrypoint } : {}),
       ...(invocation.agentConfig ? { agentConfig: invocation.agentConfig } : {}),
       input: toRuntimeRunAgentInput(parsedInbound.data),
     } satisfies BrokerRuntimeAgentExecutorInput,
@@ -292,6 +308,9 @@ export async function parseBrokerRuntimeAgentIngress<TAuthorization>(
       runEventToken,
       ...(invocation.credentials?.inferenceAuthToken
         ? { inferenceAuthToken: invocation.credentials.inferenceAuthToken }
+        : {}),
+      ...(invocation.credentials?.sourceAuthToken
+        ? { sourceAuthToken: invocation.credentials.sourceAuthToken }
         : {}),
       authorization,
       rawBody,
