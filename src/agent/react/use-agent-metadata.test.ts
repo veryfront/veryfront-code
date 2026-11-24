@@ -1,7 +1,11 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { getAgentPromptSuggestions, normalizeAgentMetadataResponse } from "./use-agent-metadata.ts";
+import {
+  getAgentPromptSuggestionItems,
+  getAgentPromptSuggestions,
+  normalizeAgentMetadataResponse,
+} from "./use-agent-metadata.ts";
 
 describe("agent/react/use-agent-metadata", () => {
   it("normalizes browser-safe agent metadata", () => {
@@ -49,6 +53,46 @@ describe("agent/react/use-agent-metadata", () => {
       },
     });
     assertEquals(getAgentPromptSuggestions(agent), ["Triage a customer who cannot sign in."]);
+  });
+
+  it("renders a resolved prompt reference and skips a bare one", () => {
+    const agent = normalizeAgentMetadataResponse({
+      agent: {
+        id: "support-agent",
+        name: "Support Agent",
+        suggestions: {
+          suggestions: [
+            {
+              type: "prompt",
+              id: "triage-ticket",
+              title: "Triage a ticket",
+              prompt: "Triage the newest open ticket.",
+            },
+            { type: "prompt", id: "older-server-reference" },
+            { type: "prompt", title: "Plan work", prompt: "Plan the next sprint." },
+          ],
+        },
+      },
+    });
+
+    assertEquals(agent.suggestions?.suggestions, [
+      {
+        id: "triage-ticket",
+        type: "prompt",
+        title: "Triage a ticket",
+        prompt: "Triage the newest open ticket.",
+      },
+      { id: "older-server-reference", type: "prompt" },
+      { type: "prompt", title: "Plan work", prompt: "Plan the next sprint." },
+    ]);
+    assertEquals(getAgentPromptSuggestions(agent), [
+      "Triage the newest open ticket.",
+      "Plan the next sprint.",
+    ]);
+    assertEquals(getAgentPromptSuggestionItems(agent), [
+      { label: "Triage a ticket", prompt: "Triage the newest open ticket." },
+      { label: "Plan work", prompt: "Plan the next sprint." },
+    ]);
   });
 
   it("rejects malformed agent suggestions", () => {

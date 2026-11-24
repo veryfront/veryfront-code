@@ -6,6 +6,8 @@ import { PublicAgentsListHandler } from "./public-agents-list.handler.ts";
 import { ensureProjectDiscovery } from "./api/project-discovery.ts";
 import type { HandlerContext } from "../types.ts";
 import { createAgentWithConfig, createCtx } from "./internal-agent-run.test-helpers.ts";
+import { prompt } from "#veryfront/prompt/factory.ts";
+import { promptRegistry, promptRegistryInternal } from "#veryfront/prompt/registry.ts";
 
 /**
  * A shared multi-project runtime context without a host execution grant.
@@ -69,6 +71,60 @@ describe("server/handlers/request/public-agents-list.handler", () => {
         },
       ],
     });
+  });
+
+  it("serves a prompt-reference starter resolved against the discovered prompts", async () => {
+    promptRegistryInternal.clearAll();
+    try {
+      const handler = new PublicAgentsListHandler({
+        // Discovery registers the project's prompts before the agents are listed.
+        ensureProjectDiscovery: async () => {
+          promptRegistry.register(
+            "triage-ticket",
+            prompt({
+              id: "triage-ticket",
+              description: "Triage a support ticket",
+              content: "You triage tickets.",
+              suggestion: "Triage the newest open ticket.",
+              mcp: { title: "Triage a ticket" },
+            }),
+          );
+          return createEmptyDiscoveryResult();
+        },
+        getAgent: (id) =>
+          createAgentWithConfig(id, {
+            name: "Support Agent",
+            description: null,
+            suggestions: [{ type: "prompt", id: "triage-ticket" }],
+          }),
+        getAllAgentIds: () => ["support-agent"],
+      });
+
+      const result = await handler.handle(
+        new Request("https://example.com/api/agents", { method: "GET" }),
+        createCtx(),
+      );
+
+      assertExists(result.response);
+      assertEquals(result.response.status, 200);
+      assertEquals(await result.response.json(), {
+        agents: [{
+          id: "support-agent",
+          name: "Support Agent",
+          description: null,
+          suggestions: {
+            suggestions: [{
+              id: "triage-ticket",
+              type: "prompt",
+              title: "Triage a ticket",
+              prompt: "Triage the newest open ticket.",
+            }],
+          },
+        }],
+      });
+    } finally {
+      promptRegistryInternal.clearAll();
+    }
   });
 
   it("skips ids that no longer resolve to an agent", async () => {

@@ -50,7 +50,21 @@ export type ModelString = string;
 // Import for use in AgentConfig
 import type { EdgeConfig, MemoryConfig } from "./schemas/index.ts";
 
-/** Public API contract for suggestion. */
+/**
+ * One chat starter: inline text (`{ type: "prompt", title, prompt }`), a
+ * reference to a project prompt (`{ type: "prompt", id }`), or a task
+ * (`{ type: "task", id }`).
+ *
+ * A prompt reference names a prompt in `prompts/`. The starter label is the
+ * prompt's `mcp.title`, else its `description`, else the id. Selecting it sends
+ * the prompt's `suggestion`, else its rendered content. A missing prompt, or a
+ * prompt with a required argument, is left out and logged.
+ *
+ * @example
+ * ```ts
+ * suggestions: [{ type: "prompt", id: "triage-ticket" }]
+ * ```
+ */
 export type Suggestion =
   | {
     type: "prompt";
@@ -354,7 +368,17 @@ export interface AgentConfig<TOutput = any> {
    * Prompt starters shown on an empty chat.
    *
    * Use a flat array for source and Studio compatibility. The wrapped
-   * `{ welcomeMessage, suggestions }` form remains supported.
+   * `{ welcomeMessage, suggestions }` form remains supported. Each entry is
+   * inline text, `{ title, prompt }`, or a reference to a project prompt by id.
+   *
+   * @example
+   * ```ts
+   * suggestions: [
+   *   "Summarize this ticket",
+   *   { title: "Plan work", prompt: "Turn this idea into a concrete plan." },
+   *   { type: "prompt", id: "triage-ticket" },
+   * ]
+   * ```
    */
   suggestions?: SuggestionsConfig;
   /** Set to false to disable the default security middleware */

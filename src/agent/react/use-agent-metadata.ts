@@ -3,9 +3,20 @@ import { INPUT_VALIDATION_FAILED } from "#veryfront/errors/error-registry/genera
 import { NETWORK_ERROR } from "#veryfront/errors/error-registry/server.ts";
 import { ensureError } from "#veryfront/errors/veryfront-error.ts";
 
-/** Source-defined prompt suggestion shown by chat surfaces. */
+/**
+ * Source-defined prompt suggestion shown by chat surfaces. A prompt reference
+ * (`{ type: "prompt", id }`) arrives resolved with the prompt's `title` and
+ * `prompt` text; a bare reference from an older runtime carries neither and is
+ * not rendered.
+ */
 export type AgentMetadataPromptSuggestion =
   | {
+    type: "prompt";
+    title?: string;
+    prompt: string;
+  }
+  | {
+    id: string;
     type: "prompt";
     title?: string;
     prompt: string;
@@ -92,9 +103,17 @@ function normalizeSuggestion(value: unknown): AgentMetadataSuggestion {
   }
 
   if (typeof value.id === "string") {
+    const id = getRequiredString(value, "id");
+    // An older runtime serves the reference unresolved: keep it, without text.
+    if (typeof value.prompt !== "string" || value.prompt.trim().length === 0) {
+      return { id, type: "prompt" };
+    }
+    const title = value.title;
     return {
-      id: getRequiredString(value, "id"),
+      id,
       type: "prompt",
+      ...(typeof title === "string" && title.trim().length > 0 ? { title } : {}),
+      prompt: value.prompt,
     };
   }
 

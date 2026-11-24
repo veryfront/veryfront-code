@@ -72,7 +72,7 @@ export class PublicAgentMetadataHandler extends BaseHandler {
       }
 
       return this.respond(
-        builder.json({ agent: getRuntimeAgentPublicMetadata(agentId, agent) }, 200),
+        builder.json({ agent: await getRuntimeAgentPublicMetadata(agentId, agent) }, 200),
       );
     });
   }

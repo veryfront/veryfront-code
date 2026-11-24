@@ -6,6 +6,25 @@ versions are listed at
 
 ## Unreleased
 
+### Breaking: prompt-reference starters resolve to the prompt
+
+An agent starter that names a project prompt, `{ type: "prompt", id }`, now
+shows in `<Chat>` and `GET /api/agents`. The runtime serves it as
+`{ type: "prompt", id, title, prompt }`: `title` is the prompt's `mcp.title`,
+else its `description`, else the id, and `prompt` is the prompt's `suggestion`,
+else its rendered content. A reference to a missing prompt, or to a prompt with
+a required argument, is left out with a warning that names the agent and the
+prompt id. Before, the runtime served the bare reference and `<Chat>` did not
+show it.
+
+One malformed suggestion entry no longer drops every suggestion the agent has.
+The runtime leaves out only that entry.
+
+`getRuntimeAgentPublicMetadata` from `veryfront/channels/control-plane` now
+returns a `Promise`. Await it, and call it inside the request's project context
+after project discovery, so the reference resolves against that project's
+prompts.
+
 ### Added: attachment budgets with explicit omissions
 
 `planFileParts` from `veryfront/llm` applies per-file, total, and count byte

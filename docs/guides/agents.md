@@ -841,6 +841,53 @@ export default agent({
 });
 ```
 
+## Chat starters
+
+`suggestions` sets the prompt starters that `<Chat>` shows on an empty
+conversation. Each entry is inline text, a `{ title, prompt }` pair, or a
+reference to a project prompt by id:
+
+```ts
+// agents/support.ts
+import { agent } from "veryfront/agent";
+
+export default agent({
+  id: "support",
+  system: "You are a support assistant.",
+  suggestions: [
+    "Summarize this ticket",
+    { title: "Plan work", prompt: "Turn this idea into a concrete plan." },
+    { type: "prompt", id: "triage-ticket" },
+  ],
+});
+```
+
+The reference names a prompt in `prompts/`:
+
+```ts
+// prompts/triage-ticket.ts
+import { prompt } from "veryfront/prompt";
+
+export default prompt({
+  description: "Triage a support ticket",
+  mcp: { title: "Triage a ticket" },
+  suggestion: "Triage the newest open ticket.",
+  content: "Classify the ticket by severity and name the owning team.",
+});
+```
+
+The runtime resolves the reference when it serves the agent's metadata
+(`GET /api/agents`):
+
+| Starter field | Source, in order of precedence            |
+| ------------- | ----------------------------------------- |
+| Label         | `mcp.title`, `description`, the prompt id |
+| Sent text     | `suggestion`, the rendered prompt content |
+
+The runtime leaves out a reference when no prompt has that id, or when the
+prompt has a required argument. It logs a warning that names the agent and the
+prompt id. The agent's other starters still show.
+
 ## Agent configuration
 
 | Property                 | Type                                                                                                   | Description                                                                                                                                 |
@@ -867,6 +914,7 @@ export default agent({
 | `streaming`              | `boolean`                                                                                              | Enable streaming (default: `true`)                                                                                                          |
 | `middleware`             | `AgentMiddleware[]`                                                                                    | Execution middleware                                                                                                                        |
 | `allowedModels`          | `string[]`                                                                                             | Restrict runtime model overrides to these `provider/model` strings                                                                          |
+| `suggestions`            | `SuggestionsConfig`                                                                                    | Chat starters: inline text, `{ title, prompt }`, or `{ type: "prompt", id }` (see [Chat starters](#chat-starters))                          |
 
 Each agent middleware invocation receives a single-use `next()` continuation.
 Its lifecycle is:
