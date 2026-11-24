@@ -164,3 +164,29 @@ Deno.test("traceHostTools returns an empty toolset for empty input", () => {
   });
   assertEquals(traced, {});
 });
+
+Deno.test("traceHostTools keeps trusted getters live and spreads untrusted definitions", async () => {
+  let reads = 0;
+  const trusted = markTrustedHostToolProvenance({
+    description: "Trusted loader",
+    get inputSchemaJson() {
+      reads++;
+      return { type: "object" as const, properties: {} };
+    },
+    execute: () => ({ ok: true }),
+  });
+  const untrusted = { description: "Project tool", execute: () => ({ ok: true }) };
+  const traced = traceHostTools({ trusted, untrusted }, {
+    trace: (_spanName, operation) => operation(),
+  });
+  const wrapper = requireTool(traced, "trusted");
+  assertEquals(reads, 0);
+  assertEquals(typeof Object.getOwnPropertyDescriptor(wrapper, "inputSchemaJson")?.get, "function");
+  void wrapper.inputSchemaJson;
+  void wrapper.inputSchemaJson;
+  assertEquals(reads, 2);
+  assertEquals(hasTrustedHostToolProvenance(wrapper), true);
+  assertEquals(await wrapper.execute?.({}), { ok: true });
+  assertEquals(requireTool(traced, "untrusted").description, "Project tool");
+  assertEquals(hasTrustedHostToolProvenance(requireTool(traced, "untrusted")), false);
+});

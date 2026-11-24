@@ -137,6 +137,20 @@ function canonicalKnowledgeIndexResponse(
   return undefined;
 }
 
+/** Answers knowledge ingest's exact-path read of a target file: the published content, else 404. */
+function knowledgeTargetReadResponse(
+  url: string,
+  published: ReadonlyMap<string, string> = new Map(),
+): Response | undefined {
+  const parsed = new URL(url);
+  if (parsed.searchParams.get("exact_path") !== "true") return undefined;
+  const path = decodeURIComponent(parsed.pathname.split("/files/")[1] ?? "");
+  const content = published.get(path);
+  return content === undefined
+    ? Response.json({ error: "File not found" }, { status: 404 })
+    : Response.json({ path, content, version_id: canonicalKnowledgeFixtureReceipt.version_id });
+}
+
 async function canonicalKnowledgePublicationResponse(
   path: string,
   init: RequestInit | undefined,
@@ -3828,6 +3842,15 @@ describe("server/handlers/request/project-run-execute.handler", () => {
       const result = await withMockFetch(
         async (input, init) => {
           const url = input instanceof Request ? input.url : String(input);
+          if (new URL(url).pathname.endsWith("/knowledge/ingest-source")) {
+            return Response.json({
+              status: "matched",
+              path: "knowledge/topic.md",
+              version_id: canonicalKnowledgeFixtureReceipt.version_id,
+            });
+          }
+          const targetRead = knowledgeTargetReadResponse(url);
+          if (targetRead) return targetRead;
           if (new URL(url).pathname === `/runs/${body.canonicalRunId}/events`) {
             assertEquals(
               new Headers(observeFetchRequestInit(init).headers).get("authorization"),
@@ -3949,6 +3972,15 @@ describe("server/handlers/request/project-run-execute.handler", () => {
       });
       await withMockFetch(async (input, init) => {
         const url = input instanceof Request ? input.url : String(input);
+        if (new URL(url).pathname.endsWith("/knowledge/ingest-source")) {
+          return Response.json({
+            status: "matched",
+            path: "knowledge/topic.md",
+            version_id: canonicalKnowledgeFixtureReceipt.version_id,
+          });
+        }
+        const targetRead = knowledgeTargetReadResponse(url);
+        if (targetRead) return targetRead;
         const observation = respondObservation(url, init);
         if (observation) return observation;
         if (url.endsWith("/cancellation-ack")) {
@@ -4128,6 +4160,18 @@ describe("server/handlers/request/project-run-execute.handler", () => {
   for (const cancel of [false, true]) {
     it(`executes retained-source ingestion through publication and full retry (cancel: ${cancel})`, async () => {
       const sources = ["first", "second", "third"];
+      const paths = new Map(
+        await Promise.all(
+          sources.map(async (name) =>
+            [
+              name,
+              `knowledge/source-${await computeHash(
+                JSON.stringify(["upload", `uploads/${name}.md`]),
+              )}.md`,
+            ] as const
+          ),
+        ),
+      );
       const outputs = new Map<string, string>();
       const publishedChecksums = new Map<string, string>();
       const attempts: string[] = [];
@@ -4163,6 +4207,23 @@ describe("server/handlers/request/project-run-execute.handler", () => {
       };
       await withMockFetch(async (input, init) => {
         const url = input instanceof Request ? input.url : String(input);
+        if (new URL(url).pathname.endsWith("/knowledge/ingest-source")) {
+          assertEquals(new URL(url).searchParams.get("branch_id"), "branch-retained");
+          const request = requestJsonBody(init);
+          const resource = request?.resource;
+          const name = sources.find((source) => resource === `uploads/${source}.md`);
+          assertExists(name);
+          assertEquals(request?.source_key, JSON.stringify(["upload", `uploads/${name}.md`]));
+          const path = paths.get(name);
+          assertExists(path);
+          return Response.json(
+            outputs.has(path)
+              ? { status: "matched", path, version_id: canonicalKnowledgeFixtureReceipt.version_id }
+              : { status: "absent" },
+          );
+        }
+        const targetRead = knowledgeTargetReadResponse(url, outputs);
+        if (targetRead) return targetRead;
         const observation = respondObservation?.(url, init);
         if (observation) return observation;
         const indexed = canonicalKnowledgeIndexResponse(url, init, publishedChecksums);
@@ -4185,8 +4246,18 @@ describe("server/handlers/request/project-run-execute.handler", () => {
         assertEquals(destination.searchParams.get("branch_id"), "branch-retained", url);
         const path = decodeURIComponent(destination.pathname.split("/files/")[1] ?? "");
         assertStringIncludes(path, "knowledge/");
+        const publication = requestJsonBody(init);
+        if (outputs.has(path)) {
+          assertEquals(
+            publication?.required_version_id,
+            canonicalKnowledgeFixtureReceipt.version_id,
+          );
+          assertEquals(publication?.expected_version_id, undefined);
+        } else {
+          assertEquals(publication?.expected_absent, true);
+        }
         attempts.push(path);
-        if (firstAttempt && path.endsWith("second.md")) {
+        if (firstAttempt && path === paths.get("second")) {
           if (cancel) {
             const signal = observeFetchRequestInit(init).signal;
             assertExists(signal);
@@ -4215,7 +4286,11 @@ describe("server/handlers/request/project-run-execute.handler", () => {
         assertEquals(failed.success, false);
         if (cancel) {
           assertStringIncludes(failed.error, "Run cancelled");
-          assertEquals(attempts, ["knowledge/first.md", "knowledge/second.md"]);
+          const firstPath = paths.get("first");
+          const secondPath = paths.get("second");
+          assert(firstPath);
+          assert(secondPath);
+          assertEquals(attempts, [firstPath, secondPath]);
           assertEquals(outputs.size, 1);
           assertEquals(stoppedAcknowledgements, 1);
         } else {
@@ -4230,10 +4305,15 @@ describe("server/handlers/request/project-run-execute.handler", () => {
         assertEquals(retried.success, true, JSON.stringify(retried));
         assertEquals(retried.result.summary.ingested_count, 3);
         assertEquals(outputs.size, 3);
-        for (const [path, content] of previous) assertEquals(outputs.get(path), content);
+        // A retry rewrites the same document; only its ingest time moves.
+        const withoutIngestTime = (content?: string) =>
+          content?.replace(/^(timestamp|added): .*$/gm, "$1: <ingest time>");
+        for (const [path, content] of previous) {
+          assertEquals(withoutIngestTime(outputs.get(path)), withoutIngestTime(content));
+        }
         for (const name of sources) {
           assertStringIncludes(
-            outputs.get(`knowledge/${name}.md`) ?? "",
+            outputs.get(paths.get(name) ?? "") ?? "",
             `Retained source ${name}.`,
           );
         }
@@ -6674,6 +6754,67 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     assertEquals(executed, true);
   });
 
+  for (
+    const allowedToolsCase of [
+      { name: "omits the tool allowlist when the eval sets none", config: {}, expected: undefined },
+      {
+        name: "keeps an explicit empty tool allowlist",
+        config: { allowed_tools: [] },
+        expected: [],
+      },
+      {
+        name: "forwards a named tool allowlist",
+        config: { allowedTools: ["lookup"] },
+        expected: ["lookup"],
+      },
+    ]
+  ) {
+    it(`${allowedToolsCase.name} on an eval run`, async () => {
+      const definition = evalAgent({
+        id: "eval:deep-research",
+        target: "agent:researcher",
+        dataset: datasets.inline([{ id: "q1", input: "France capital?" }]),
+      });
+      let receivedConfig: { allowedTools?: string[] } | undefined;
+      const handler = new ProjectRunExecuteHandler(createDeps({
+        runTask: runTaskDefinition,
+        findEvalById: async () => ({
+          id: "eval:deep-research",
+          name: "Deep research quality",
+          filePath: "evals/deep-research.eval.ts",
+          exportName: "default",
+          definition,
+        }),
+        createEvalAgentAdapter: (config) => {
+          receivedConfig = config;
+          return async () => ({ text: "Paris" });
+        },
+      }));
+      const { request, publicKeyPem } = await signedRequest(
+        "/api/control-plane/runs/run_eval_allowed_tools/execute",
+        {
+          runId: "run_eval_allowed_tools",
+          kind: "task",
+          target: "task:eval",
+          projectId: "proj-1",
+          config: { eval_id: "eval:deep-research", ...allowedToolsCase.config },
+        },
+        { "x-token": "runtime-token" },
+      );
+
+      const result = await handler.handle(request, createCtx(publicKeyPem));
+
+      assertExists(result.response);
+      assertEquals((await result.response.json()).success, true);
+      assertExists(receivedConfig);
+      assertEquals(
+        Object.hasOwn(receivedConfig, "allowedTools"),
+        allowedToolsCase.expected !== undefined,
+      );
+      assertEquals(receivedConfig.allowedTools, allowedToolsCase.expected);
+    });
+  }
+
   it("parses the eval step ceiling with intrinsics captured before project discovery", async () => {
     const definition = evalAgent({
       id: "eval:deep-research",
@@ -6874,9 +7015,9 @@ describe("server/handlers/request/project-run-execute.handler", () => {
 
   it("runs local eval AG-UI requests through discovered source agents", async () => {
     let capturedContext: Record<string, unknown> | undefined;
-    // Control-plane eval runs carry a runtime ceiling, so the run streams
-    // through a framework-rebuilt restricted agent rather than through the
-    // source agent's own stream implementation.
+    // This eval sets an explicit empty tool allowlist, a runtime ceiling, so
+    // the run streams through a framework-rebuilt restricted agent rather than
+    // through the source agent's own stream implementation.
     const sourceAgent = createStreamingAgent("researcher", "Paris", {
       promptTokens: 12,
       completionTokens: 8,
@@ -6926,7 +7067,7 @@ describe("server/handlers/request/project-run-execute.handler", () => {
       target: "task:eval",
       projectId: "proj-1",
       runtimeAgUiEndpoint: "http://localhost:4311/api/ag-ui",
-      config: { eval_id: "eval:deep-research" },
+      config: { eval_id: "eval:deep-research", allowed_tools: [] },
     };
     const { request, publicKeyPem } = await signedRequest(
       "/api/control-plane/runs/run_eval_source_agent/execute",
@@ -7395,6 +7536,325 @@ describe("server/handlers/request/project-run-execute.handler", () => {
     }
   });
 
+  it("restricts a local source agent run to an eval case's own allowed tools", async () => {
+    let sourceAgentStreamCalls = 0;
+    let observedToolNames: string[] | undefined;
+    const sourceAgent = createStreamingAgent("researcher", "Paris", undefined, () => {
+      sourceAgentStreamCalls += 1;
+    });
+    agentRegistry.register("researcher", {
+      ...sourceAgent,
+      config: {
+        ...sourceAgent.config,
+        tools: {
+          eval_case_lookup: tool({
+            id: "eval_case_lookup",
+            description: "Allowed by the eval case.",
+            inputSchema: defineSchema((v) => v.object({}))(),
+            execute: () => Promise.resolve("ok"),
+          }),
+          eval_case_delete: tool({
+            id: "eval_case_delete",
+            description: "Not allowed by the eval case.",
+            inputSchema: defineSchema((v) => v.object({}))(),
+            execute: () => Promise.resolve("ok"),
+          }),
+        },
+        resolveModelTransport: () =>
+          Promise.resolve({
+            model: createEvalTransportModel({
+              text: "Paris",
+              onCall: (options) => {
+                observedToolNames = (options.tools ?? [])
+                  .map((definition) => definition.name)
+                  .toSorted();
+              },
+            }),
+          }),
+      } as Agent["config"],
+    });
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      runTask: runTaskDefinition,
+      findEvalById: async (target) =>
+        target === "eval:deep-research"
+          ? {
+            id: "eval:deep-research",
+            name: "Deep research quality",
+            filePath: "evals/deep-research.eval.ts",
+            exportName: "default",
+            definition: evalAgent({
+              id: "eval:deep-research",
+              target: "agent:researcher",
+              dataset: datasets.inline([
+                {
+                  id: "q1",
+                  input: { prompt: "France capital?", allowedTools: ["eval_case_lookup"] },
+                  reference: "Paris",
+                },
+              ]),
+              metrics: [metrics.answer.contains({ text: "Paris" }).gate()],
+            }),
+          }
+          : null,
+      runEval: runEvalDefinition,
+      createEvalAgentAdapter: (config) =>
+        createAgentServiceEvalAdapter({ ...config, requestTimeoutMs: 250 }),
+    }));
+    // The eval config sets no allowlist and no step ceiling.
+    const body = {
+      runId: "run_eval_case_allowed_tools",
+      kind: "task",
+      target: "task:eval",
+      projectId: "proj-1",
+      runtimeAgUiEndpoint: "http://localhost:4311/api/ag-ui",
+      config: { eval_id: "eval:deep-research" },
+    };
+    const { request, publicKeyPem } = await signedRequest(
+      "/api/control-plane/runs/run_eval_case_allowed_tools/execute",
+      body,
+      { "x-token": "runtime-token" },
+      "http://localhost:4311",
+    );
+    try {
+      const result = await withEnvValue(
+        "PORT",
+        "4311",
+        () => handler.handle(request, createCtx(publicKeyPem)),
+      );
+
+      assertExists(result.response);
+      assertEquals(result.response.status, 200);
+      assertEquals((await result.response.json()).success, true);
+      // The case's forwarded allowlist is the ceiling: only its tool reaches
+      // the model, and the source agent's unrestricted stream never runs.
+      assertEquals(observedToolNames, ["eval_case_lookup"]);
+      assertEquals(sourceAgentStreamCalls, 0);
+    } finally {
+      agentRegistry.delete("researcher");
+    }
+  });
+
+  /**
+   * Run a local eval against a source agent with three tools whose model calls
+   * the first offered tool on every step, so the run only stops at its step
+   * ceiling. Reports which tools the model was offered and how many steps ran.
+   */
+  async function runLocalEvalRestrictionCase(input: {
+    runId: string;
+    config: Record<string, unknown>;
+    caseInput: Record<string, unknown>;
+  }) {
+    let sourceAgentStreamCalls = 0;
+    let modelCalls = 0;
+    let firstCallToolNames: string[] | undefined;
+    const sourceAgent = createStreamingAgent("researcher", "Paris", undefined, () => {
+      sourceAgentStreamCalls += 1;
+    });
+    const evalTool = (id: string) =>
+      tool({
+        id,
+        description: `${id} for the eval restriction matrix.`,
+        inputSchema: defineSchema((v) => v.object({}))(),
+        execute: () => Promise.resolve("ok"),
+      });
+    agentRegistry.register("researcher", {
+      ...sourceAgent,
+      config: {
+        ...sourceAgent.config,
+        tools: {
+          config_tool: evalTool("config_tool"),
+          case_tool: evalTool("case_tool"),
+          other_tool: evalTool("other_tool"),
+        },
+        maxSteps: 5,
+        resolveModelTransport: () =>
+          Promise.resolve({
+            model: {
+              provider: "anthropic",
+              modelId: "claude-sonnet-4-6",
+              doGenerate: () => {
+                throw new Error("Expected the streaming path");
+              },
+              doStream: (options: ModelRuntimeCallOptions) => {
+                modelCalls += 1;
+                const toolNames = (options.tools ?? [])
+                  .map((definition) => definition.name)
+                  .toSorted();
+                firstCallToolNames ??= toolNames;
+                const toolName = toolNames[0];
+                return Promise.resolve({
+                  stream: new ReadableStream<RuntimeStreamPart>({
+                    start(controller) {
+                      if (toolName === undefined) {
+                        controller.enqueue({ type: "text-delta", text: "Paris" });
+                        controller.enqueue({
+                          type: "finish",
+                          finishReason: "stop",
+                          totalUsage: null,
+                        } as RuntimeStreamPart);
+                      } else {
+                        controller.enqueue({
+                          type: "tool-call",
+                          toolCallId: `call-${modelCalls}`,
+                          toolName,
+                          input: {},
+                        } as RuntimeStreamPart);
+                        controller.enqueue({
+                          type: "finish",
+                          finishReason: "tool-calls",
+                          totalUsage: null,
+                        } as RuntimeStreamPart);
+                      }
+                      controller.close();
+                    },
+                  }),
+                });
+              },
+            } as ModelRuntime<ModelRuntimeCallOptions>,
+          }),
+      } as Agent["config"],
+    });
+    const handler = new ProjectRunExecuteHandler(createDeps({
+      runTask: runTaskDefinition,
+      findEvalById: async (target) =>
+        target === "eval:deep-research"
+          ? {
+            id: "eval:deep-research",
+            name: "Deep research quality",
+            filePath: "evals/deep-research.eval.ts",
+            exportName: "default",
+            definition: evalAgent({
+              id: "eval:deep-research",
+              target: "agent:researcher",
+              dataset: datasets.inline([{ id: "q1", input: input.caseInput }]),
+            }),
+          }
+          : null,
+      runEval: runEvalDefinition,
+      createEvalAgentAdapter: (config) =>
+        createAgentServiceEvalAdapter({ ...config, requestTimeoutMs: 250 }),
+    }));
+    const { request, publicKeyPem } = await signedRequest(
+      `/api/control-plane/runs/${input.runId}/execute`,
+      {
+        runId: input.runId,
+        kind: "task",
+        target: "task:eval",
+        projectId: "proj-1",
+        runtimeAgUiEndpoint: "http://localhost:4311/api/ag-ui",
+        config: { eval_id: "eval:deep-research", ...input.config },
+      },
+      { "x-token": "runtime-token" },
+      "http://localhost:4311",
+    );
+    try {
+      const result = await withEnvValue(
+        "PORT",
+        "4311",
+        () => handler.handle(request, createCtx(publicKeyPem)),
+      );
+      assertExists(result.response);
+      return {
+        status: result.response.status,
+        body: await result.response.text(),
+        sourceAgentStreamCalls,
+        modelCalls,
+        firstCallToolNames,
+      };
+    } finally {
+      agentRegistry.delete("researcher");
+    }
+  }
+
+  // Every combination of an eval config allowlist (unset, named or explicitly
+  // empty), an eval config step ceiling and an eval case allowlist and step
+  // ceiling. Each field the config leaves unset falls back to the eval case's
+  // own value, the way the hosted path's forwarded runtime overrides resolve
+  // it, so the local run is never less restricted than the most specific
+  // restriction declared for that field. A config field always wins, so an
+  // explicit empty allowlist keeps zero tools even when the case names one.
+  for (const configAllowedTools of [undefined, ["config_tool"], []]) {
+    for (const configMaxSteps of [undefined, 2]) {
+      for (const caseRestricted of [false, true]) {
+        const label = [
+          configAllowedTools === undefined
+            ? "no config allowlist"
+            : configAllowedTools.length === 0
+            ? "empty config allowlist"
+            : "config allowlist",
+          configMaxSteps ? "config step ceiling" : "no config step ceiling",
+          caseRestricted ? "case allowlist and step ceiling" : "no case restrictions",
+        ].join(", ");
+        it(`applies the most specific local eval restriction per field (${label})`, async () => {
+          const run = await runLocalEvalRestrictionCase({
+            runId: "run_eval_restriction_matrix",
+            config: {
+              ...(configAllowedTools ? { allowed_tools: configAllowedTools } : {}),
+              ...(configMaxSteps ? { max_steps: configMaxSteps } : {}),
+            },
+            caseInput: caseRestricted
+              ? { prompt: "France capital?", allowedTools: ["case_tool"], maxSteps: 3 }
+              : { prompt: "France capital?" },
+          });
+          assertEquals(run.status, 200);
+
+          const restricted = configAllowedTools !== undefined || configMaxSteps !== undefined ||
+            caseRestricted;
+          if (!restricted) {
+            // Nothing restricts the run, so the source agent streams itself.
+            assertEquals(run.sourceAgentStreamCalls, 1);
+            assertEquals(run.modelCalls, 0);
+            return;
+          }
+          assertEquals(run.sourceAgentStreamCalls, 0);
+          const expectedAllowedTools = configAllowedTools ??
+            (caseRestricted ? ["case_tool"] : undefined);
+          assertExists(run.firstCallToolNames);
+          if (expectedAllowedTools) {
+            assertEquals(run.firstCallToolNames, expectedAllowedTools);
+          } else {
+            for (const name of ["case_tool", "config_tool", "other_tool"]) {
+              assertEquals(run.firstCallToolNames.includes(name), true);
+            }
+          }
+          // With no tools offered the model answers in one step.
+          const expectedSteps = expectedAllowedTools?.length === 0
+            ? 1
+            : configMaxSteps ?? (caseRestricted ? 3 : 5);
+          assertEquals(run.modelCalls, expectedSteps);
+        });
+      }
+    }
+  }
+
+  // A malformed allowlist in the eval config must never count as unset, which
+  // would hand the run the case allowlist or the agent's full tool set.
+  for (
+    const malformed of [
+      { name: "a string", value: "lookup" },
+      { name: "an object", value: {} },
+      { name: "null", value: null },
+      { name: "a non-string entry", value: [1] },
+      { name: "an empty-string entry", value: [""] },
+      { name: "a mixed entry list", value: ["config_tool", 1] },
+    ]
+  ) {
+    for (const key of ["allowed_tools", "allowedTools"]) {
+      it(`rejects ${malformed.name} as the eval ${key} config`, async () => {
+        const run = await runLocalEvalRestrictionCase({
+          runId: "run_eval_malformed_allowlist",
+          config: { [key]: malformed.value },
+          caseInput: { prompt: "France capital?" },
+        });
+
+        // The run never reaches the agent with any tool.
+        assertEquals(run.sourceAgentStreamCalls, 0);
+        assertEquals(run.modelCalls, 0);
+        assertStringIncludes(run.body, "allowed_tools");
+      });
+    }
+  }
+
   for (
     const publicParentId of [
       "run_66666666-6666-4666-8666-666666666666",
@@ -7538,17 +7998,12 @@ describe("server/handlers/request/project-run-execute.handler", () => {
       const agentInput = createRequest?.body?.config as Record<string, unknown>;
       // Without an eval environment context, no studio_context item is added.
       assertEquals(agentInput.context, []);
+      // The eval names no allowed tools, so the child run gets no allowlist.
       assertEquals(agentInput.forwarded_props, {
         prompt: "France capital?",
-        runtimeOverrides: {
-          allowedTools: [],
-        },
         veryfront: {
           agentId: "researcher",
           projectId: "55555555-5555-4555-8555-555555555555",
-          runtimeOverrides: {
-            allowedTools: [],
-          },
         },
       });
       assertEquals(requests[0]?.pathname, "/runs");
@@ -7732,7 +8187,6 @@ describe("server/handlers/request/project-run-execute.handler", () => {
       prompt: "France capital?",
       model: "model-override-1",
       runtimeOverrides: {
-        allowedTools: [],
         maxSteps: 3,
       },
       veryfront: {
@@ -7740,7 +8194,6 @@ describe("server/handlers/request/project-run-execute.handler", () => {
         projectId: "55555555-5555-4555-8555-555555555555",
         model: "model-override-1",
         runtimeOverrides: {
-          allowedTools: [],
           maxSteps: 3,
         },
       },

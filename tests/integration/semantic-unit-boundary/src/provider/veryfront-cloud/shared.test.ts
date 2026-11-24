@@ -2,9 +2,13 @@
 // fetch transport, so they belong in the semantic integration suite rather
 // than a hermetic unit module.
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { withEnv } from "#veryfront/testing";
+import {
+  clearEnvFileValueSource,
+  markEnvFileValue,
+} from "#veryfront/platform/compat/process/env.ts";
 import {
   __runWithOutboundFetchTransportForTests,
   HOST_ALLOWED_INTERNAL_PROVIDER_ORIGINS_ENV,
@@ -294,6 +298,33 @@ describe("provider/veryfront-cloud internal-provider-origin allowlist boundary",
             INTERNAL_API_BASE_URL,
           );
           assertEquals(bootstrap.apiBaseUrl, INTERNAL_API_BASE_URL);
+        },
+      );
+    },
+  );
+
+  it(
+    "ignores a host-wide egress override copied from a project .env file at the bootstrap-validation layer",
+    async () => {
+      // The outbound fetch layer ignores a .env-sourced override; bootstrap
+      // validation must read the same gate, or run-scoped inference credentials
+      // would be admitted for a plaintext internal origin.
+      await withEnv(
+        {
+          [HOST_ALLOWED_INTERNAL_PROVIDER_ORIGINS_ENV]: "",
+          [HOST_INTERNAL_EGRESS_OVERRIDE_ENV]: "true",
+        },
+        async () => {
+          markEnvFileValue(HOST_INTERNAL_EGRESS_OVERRIDE_ENV);
+          try {
+            assertThrows(
+              () => requireVeryfrontCloudBootstrap("vf_scoped_token", INTERNAL_API_BASE_URL),
+              Error,
+              "Run-scoped inference credentials require HTTPS",
+            );
+          } finally {
+            clearEnvFileValueSource(HOST_INTERNAL_EGRESS_OVERRIDE_ENV);
+          }
         },
       );
     },

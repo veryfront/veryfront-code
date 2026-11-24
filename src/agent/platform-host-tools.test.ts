@@ -1,5 +1,7 @@
 import { assertEquals } from "#veryfront/testing/assert.ts";
-import type { HostToolSet } from "#veryfront/tool";
+import type { HostToolSet, Tool } from "#veryfront/tool";
+import { toolToProviderDefinition } from "#veryfront/tool/registry.ts";
+import { getRuntimeLoadSkillToolInputSchema } from "./runtime/load-skill-tool.ts";
 import {
   hasTrustedHostToolProvenance,
   markTrustedHostToolProvenance,
@@ -115,4 +117,38 @@ Deno.test("published host tools have one canonical identity and preserve project
   );
   assertEquals(collision.load_skill, project);
   assertEquals(hasTrustedHostToolProvenance(collision.veryfront__load_skill), true);
+});
+
+Deno.test("canonical platform aliases keep an advertised input schema accessor", () => {
+  // The hosted load_skill tool validates with a union schema but advertises a
+  // static object schema through an `inputSchemaJson` getter. The alias must
+  // keep advertising the getter's schema; falling back to the union produces a
+  // root without `properties`, which OpenAI-compatible providers reject.
+  const advertised = {
+    type: "object",
+    properties: { inventory: { type: "object", properties: {} } },
+    additionalProperties: false,
+  } as const;
+  let reads = 0;
+  const loader = {
+    id: "load_skill",
+    description: "load_skill",
+    inputSchema: getRuntimeLoadSkillToolInputSchema(),
+    get inputSchemaJson() {
+      reads++;
+      return advertised;
+    },
+    execute: () => ({ ok: true }),
+  } as HostToolSet[string];
+  const tools = canonicalPlatformHostTools(
+    withPlatformHostToolAliases({ load_skill: markTrustedHostToolProvenance(loader) }),
+  );
+  const canonical = tools.veryfront__load_skill as Tool;
+  assertEquals(canonical.id, "veryfront__load_skill");
+  const before = reads;
+  assertEquals(canonical.inputSchemaJson, advertised);
+  assertEquals(reads, before + 1);
+  const provider = toolToProviderDefinition(canonical);
+  assertEquals(provider.name, "veryfront__load_skill");
+  assertEquals(provider.parameters, advertised);
 });

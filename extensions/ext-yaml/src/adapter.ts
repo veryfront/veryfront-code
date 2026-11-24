@@ -66,8 +66,8 @@ function withoutPollutedValuePrototype<T>(run: () => T): T {
  * Decode one YAML document with `@std/yaml`-compatible failure behaviour.
  *
  * `yaml` reports most problems on the returned document instead of throwing,
- * and raises `YAMLParseError` rather than `SyntaxError` when it does throw.
- * Both are normalised here so call sites keep the single `SyntaxError`
+ * and may also throw while converting aliases into JavaScript values.
+ * Parse and conversion failures are normalised so call sites keep the single `SyntaxError`
  * contract they were written against.
  */
 export function parseYamlSource(
@@ -121,7 +121,11 @@ function decodeDocument(source: string, options: YamlParseOptions): unknown {
 
   if (jsonSchema) assertJsonRepresentableTags(document);
 
-  return document.toJS();
+  try {
+    return document.toJS();
+  } catch (cause) {
+    throw new SyntaxError(cause instanceof Error ? cause.message : String(cause), { cause });
+  }
 }
 
 /** Create the official `yaml`-backed general YAML parser. */

@@ -95,6 +95,33 @@ function validateKnownOptions<T>(
   return { success: false, error };
 }
 
+/**
+ * A string option given with no value (`--project` at the end, or followed by
+ * another flag) reaches the command parser as boolean `true`. Coercing that
+ * would act on a resource named "true", so it is a usage error instead. With
+ * `allowBlank: false`, an empty or blank value is rejected the same way.
+ */
+function findValuelessStringOption<T>(
+  args: ParsedArgs,
+  argMap: ArgMap<T>,
+  { allowBlank }: { allowBlank: boolean },
+): SafeParseResult<undefined> {
+  for (const spec of Object.values(argMap) as (ArgSpec | undefined)[]) {
+    if (spec?.type !== "string") continue;
+    for (const key of spec.keys) {
+      const value = args[key];
+      if (value === undefined || typeof value === "number") continue;
+      if (typeof value === "string" && (allowBlank || value.trim() !== "")) continue;
+      const error = Object.assign(
+        new Error(`Option ${optionName(key)} requires a value.`),
+        { issues: [] },
+      );
+      return { success: false, error };
+    }
+  }
+  return { success: true, data: undefined };
+}
+
 function coerceValue(
   value: unknown,
   type: ArgSpec["type"],
@@ -188,8 +215,15 @@ export function createArgParser<T>(
       if (!knownOptions.success) return knownOptions;
     }
 
+    const valueless = findValuelessStringOption(args, argMap, { allowBlank: true });
+    if (!valueless.success) return valueless;
+
     const result = schema.safeParse(extractArgs(args, argMap));
     if (result.success) {
+      // A blank value the schema accepted still names nothing. Checked after
+      // the schema so a command's own rule for that option is reported first.
+      const blank = findValuelessStringOption(args, argMap, { allowBlank: false });
+      if (!blank.success) return blank;
       return { success: true, data: result.data };
     }
     const message = result.issues?.map((i) => i.message).join("; ") ?? "Validation failed";

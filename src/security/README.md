@@ -380,7 +380,9 @@ existing policies.
 `VERYFRONT_HOST_ALLOW_INTERNAL_EGRESS=1` is an operator-owned compatibility
 override. It disables the private-network destination check for these host
 fetches and must remain unset in a shared runtime. Project environment overlays
-cannot enable it. URL scheme, URL-credential, redirect, and caller allowlist
+cannot enable it, and a value copied from a project `.env` file is ignored; set
+it in the host process environment. Bootstrap validation of run-scoped
+inference base URLs reads the same gate. URL scheme, URL-credential, redirect, and caller allowlist
 checks remain active when the override is enabled.
 
 Cloud credentials are bound to their endpoint provenance: a request-scoped

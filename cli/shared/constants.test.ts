@@ -8,6 +8,7 @@ import {
   DEFAULT_CALLBACK_PORT,
   DEFAULT_LOGIN_TIMEOUT_MS,
   getApiUrl,
+  getCloudDomain,
   isSameApiEndpoint,
   MAX_PORT_ATTEMPTS,
   resolveCliApiUrlWithOrigin,
@@ -46,6 +47,38 @@ describe("cli/shared/constants", () => {
 
     it("should have TOKEN_FILE_NAME", () => {
       assertEquals(TOKEN_FILE_NAME, "token");
+    });
+  });
+
+  describe("getCloudDomain", () => {
+    it("maps every staging API host form to veryfront.org", () => {
+      for (
+        const apiUrl of [
+          "https://api.veryfront.org",
+          "https://api.veryfront.org/api",
+          "http://api.veryfront.org",
+          "https://API.Veryfront.org/graphql",
+          "https://api.veryfront.org.",
+          "https://api.staging.veryfront.org/api",
+          "https://api.veryfront.org:8443",
+        ]
+      ) {
+        assertEquals(getCloudDomain(apiUrl), "veryfront.org", apiUrl);
+      }
+    });
+
+    it("keeps production and unrelated hosts on veryfront.com", () => {
+      for (
+        const apiUrl of [
+          "https://api.veryfront.com",
+          "https://api.example.com",
+          "https://veryfront.org.evil.example",
+          "https://notveryfront.org",
+          "not a url",
+        ]
+      ) {
+        assertEquals(getCloudDomain(apiUrl), "veryfront.com", apiUrl);
+      }
     });
   });
 

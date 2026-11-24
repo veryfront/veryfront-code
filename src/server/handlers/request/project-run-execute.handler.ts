@@ -3999,6 +3999,36 @@ function withoutLocalEvalCredentials(init: RequestInit | undefined): RequestInit
   return local;
 }
 
+/**
+ * The restrictions a local eval run applies, resolved per field.
+ *
+ * A field the eval config sets wins: it comes from the control-plane request
+ * and project code cannot rewrite it on its way here. A field the config
+ * leaves unset falls back to the value the eval adapter forwarded in the
+ * request body (for example an eval case's own `allowedTools` or `maxSteps`),
+ * the same `config ?? case` resolution the hosted path's forwarded runtime
+ * overrides get. Taking the configured set whole would drop a forwarded field
+ * the config never set and run the source agent with its full tool set or
+ * step budget. The forwarded body only fills fields the config left open, so
+ * it can add a restriction but never loosen a configured one.
+ */
+async function resolveLocalEvalRuntimeRestrictions(
+  configured: AgUiRuntimeRestrictions | undefined,
+  request: Request,
+): Promise<AgUiRuntimeRestrictions | undefined> {
+  if (configured?.allowedTools !== undefined && configured.maxSteps !== undefined) {
+    return configured;
+  }
+  const forwarded = await readLocalEvalRuntimeRestrictions(request);
+  const allowedTools = configured?.allowedTools ?? forwarded?.allowedTools;
+  const maxSteps = configured?.maxSteps ?? forwarded?.maxSteps;
+  if (allowedTools === undefined && maxSteps === undefined) return undefined;
+  return {
+    ...(allowedTools === undefined ? {} : { allowedTools }),
+    ...(maxSteps === undefined ? {} : { maxSteps }),
+  };
+}
+
 function createLocalEvalAgentFetch(input: {
   endpoint: string;
   agentId?: string;
@@ -4017,8 +4047,10 @@ function createLocalEvalAgentFetch(input: {
     if (!isLocalAgUiEndpoint(request.url)) {
       return trustedHostFetch(requestInput, withoutLocalEvalCredentials(init));
     }
-    const runtimeRestrictions = input.runtimeRestrictions ??
-      await readLocalEvalRuntimeRestrictions(request);
+    const runtimeRestrictions = await resolveLocalEvalRuntimeRestrictions(
+      input.runtimeRestrictions,
+      request,
+    );
     const handler = createAgUiHandler({
       agent,
       context: { runIdBindsToolAuthorization: false },
@@ -4531,6 +4563,43 @@ function getStringArrayConfig(
   return [];
 }
 
+/**
+ * Read the eval tool allowlist from the run config, failing closed.
+ *
+ * Only an absent key (or one holding `undefined`, which JSON cannot carry)
+ * leaves the allowlist unset. Any other value must be an array of non-empty
+ * strings. A malformed value, including `null`, is rejected rather than read
+ * as unset: unset hands the run the eval case's allowlist or the agent's full
+ * tool set, so a typo such as `allowed_tools: "lookup"` would widen the run.
+ * Every present key is checked, so a valid alias cannot hide a malformed one.
+ */
+function getEvalAllowedToolsConfig(config: Record<string, unknown>): string[] | undefined {
+  const keys = ["allowed_tools", "allowedTools"] as const;
+  let allowedTools: string[] | undefined;
+  for (let keyIndex = 0; keyIndex < keys.length; keyIndex++) {
+    const key = keys[keyIndex]!;
+    const value = getOwnDataProperty(config, key);
+    if (value === undefined) continue;
+    if (!ArrayIsArray(value)) {
+      throw INVALID_ARGUMENT.create({
+        detail: "Eval allowed_tools must be an array of tool names",
+      });
+    }
+    const names: string[] = [];
+    for (let valueIndex = 0; valueIndex < value.length; valueIndex++) {
+      const item = value[valueIndex];
+      if (typeof item !== "string" || item.length === 0) {
+        throw INVALID_ARGUMENT.create({
+          detail: "Eval allowed_tools must contain only non-empty tool names",
+        });
+      }
+      names[names.length] = item;
+    }
+    allowedTools ??= names;
+  }
+  return allowedTools;
+}
+
 function getStringConfig(
   config: Record<string, unknown>,
   keys: readonly string[],
@@ -4913,9 +4982,14 @@ async function executeKnowledgeIngestRun(input: {
       runKnowledgeParser,
     } = await import("#cli/commands/knowledge/command");
     const { downloadUploadToFile } = await import("#cli/commands/uploads/command");
-    const { putRemoteFileFromLocal } = await import("#cli/commands/files/command");
+    const { putRemoteFileFromLocal, readRemoteFileIfExists } = await import(
+      "#cli/commands/files/command"
+    );
     const { putBinaryKnowledgeAsset } = await import(
       "../../../../cli/commands/knowledge/binary-assets.ts"
+    );
+    const { findRemoteKnowledgeIngestSource, listRemoteKnowledgeSuffixPaths } = await import(
+      "../../../../cli/commands/knowledge/command-helpers.ts"
     );
     const { indexKnowledgeDocument } = await import(
       "../../../../cli/commands/knowledge/indexing.ts"
@@ -5075,8 +5149,32 @@ async function executeKnowledgeIngestRun(input: {
             progressBridge,
           ),
           destinationBranch: outputDestination?.branchId ?? "main",
+          findRemoteKnowledgeSource: (source) =>
+            findRemoteKnowledgeIngestSource({
+              ...source,
+              client,
+              projectSlug: projectReference,
+              branchId: outputDestination?.branchId,
+              signal: input.signal,
+            }),
+          listRemoteKnowledgeSuffixPaths: (stem) =>
+            listRemoteKnowledgeSuffixPaths({
+              client,
+              projectSlug: projectReference,
+              branchId: outputDestination?.branchId,
+              stem,
+              signal: input.signal,
+            }),
+          readRemoteKnowledgeFile: (remotePath) =>
+            readRemoteFileIfExists(
+              client,
+              projectReference,
+              remotePath,
+              outputDestination,
+              input.signal,
+            ),
           indexKnowledgeDocument: indexCanonical,
-          uploadKnowledgeFile: (remotePath, localPath, metadata, storageKind) =>
+          uploadKnowledgeFile: (remotePath, localPath, metadata, storageKind, expected) =>
             storageKind === "binary"
               ? putBinaryKnowledgeAsset({
                 client,
@@ -5095,6 +5193,7 @@ async function executeKnowledgeIngestRun(input: {
                 input.signal,
                 outputDestination,
                 metadata,
+                expected,
               ),
           signal: input.signal,
         });
@@ -5225,14 +5324,24 @@ function createEvalAdapterConfig(input: {
     input.ctx.projectSlug,
   );
   const agentId = getEvalTargetAgentId(input.definition);
-  const allowedTools = getStringArrayConfig(config, ["allowed_tools", "allowedTools"]);
+  // An eval that names no allowed tools sends no allowlist, so its agent run
+  // keeps the tools a direct run gets. An explicit empty list still allows
+  // none, and a malformed one is rejected rather than read as unset.
+  const allowedTools = getEvalAllowedToolsConfig(config);
   const maxSteps = getPositiveIntConfig(config, ["max_steps", "maxSteps"]);
   const hasMaxSteps = maxSteps != null;
-  const runtimeRestrictions = {
-    allowedTools,
+  const configuredRestrictions: AgUiRuntimeRestrictions = {
+    ...(allowedTools !== undefined ? { allowedTools } : {}),
     ...(hasMaxSteps ? { maxSteps } : {}),
   };
-  const localFetch = createLocalEvalAgentFetch({ endpoint, agentId, runtimeRestrictions });
+  // The local fetch fills each field this leaves unset from the restrictions
+  // the adapter forwards (for example an eval case's own allowedTools), so a
+  // partial config never widens the run past the case's own ceiling.
+  const localFetch = createLocalEvalAgentFetch({
+    endpoint,
+    agentId,
+    runtimeRestrictions: configuredRestrictions,
+  });
 
   function resolveAdapterFetch() {
     if (managedEndpointContext && agentId) {
@@ -5276,7 +5385,7 @@ function createEvalAdapterConfig(input: {
       getHeaderFirstValue(input.req.headers.get("x-forwarded-proto")) ??
       getEndpointProtocol(input.request.runtimeAgUiEndpoint),
     model: getStringConfig(config, ["model"]),
-    allowedTools,
+    ...(allowedTools !== undefined ? { allowedTools } : {}),
     maxSteps,
     fetch: resolveAdapterFetch(),
   };

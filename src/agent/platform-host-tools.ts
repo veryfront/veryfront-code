@@ -3,6 +3,7 @@ import {
   hasTrustedHostToolProvenance,
   markTrustedHostToolProvenance,
 } from "#veryfront/tool/host-tool-provenance.ts";
+import { copyTrustedHostToolDefinition } from "#veryfront/tool/host-tool-definition-copy.ts";
 import {
   CANONICAL_FORM_INPUT_TOOL_ID,
   CANONICAL_LOAD_SKILL_TOOL_ID,
@@ -66,13 +67,11 @@ function cloneHostToolDefinitionWithId(
   definition: HostToolDefinition,
   id: string,
 ): HostToolDefinition {
-  const wrapper = objectCreate(null) as HostToolDefinition;
-  const keys = ownKeys(definition);
-  for (let index = 0; index < keys.length; index++) {
-    const key = keys[index]!;
-    const value = ownDataValue(definition, key);
-    if (value !== undefined) defineData(wrapper, key, value);
-  }
+  // Callers clone only trusted definitions; keep their getters live.
+  const wrapper = copyTrustedHostToolDefinition(
+    objectCreate(null) as HostToolDefinition,
+    definition,
+  );
   defineData(wrapper, "id", id);
   return wrapper;
 }

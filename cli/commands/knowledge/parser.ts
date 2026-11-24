@@ -1,4 +1,28 @@
-import { basename, dirname, extname, join } from "veryfront/platform/path";
+import { lstat as inspectLink } from "node:fs/promises";
+import {
+  isKnowledgeSourceOutputCandidate,
+  type SourceOutputHint,
+  type SourceOutputIndex,
+  withKnowledgeSourceClaim,
+} from "./source-output-index.ts";
+import {
+  acquireKnowledgeTargetOutputClaim,
+  knowledgeOutputClaimPath,
+  readKnowledgeClaimOwner,
+  readProvenKnowledgeOutputStage,
+  releaseKnowledgeTargetOutputClaim,
+} from "./output-claim.ts";
+import { isMissingKnowledgeOutput, publishKnowledgeOutput } from "./output-publication.ts";
+import {
+  basename,
+  dirname,
+  extname,
+  isAbsolute,
+  join,
+  normalize,
+  relative,
+  resolve,
+} from "veryfront/platform/path";
 import { importFirstPartyExtensionModule } from "veryfront/extensions/first-party-import";
 import type {
   DocumentExtractionOptions,
@@ -7,7 +31,15 @@ import type {
 } from "veryfront/extensions/compat";
 import { inspectOkfDocument, type OkfDocumentDiagnostic } from "veryfront/knowledge";
 import { VERSION } from "#cli/utils";
+import {
+  escapeReservedKnowledgeSlug,
+  type KnowledgeSource,
+  normalizeProvableLegacyLocalKnowledgePath,
+  readKnowledgeIngestSourceKey,
+  readProvableLegacyLocalKnowledgeSource,
+} from "./command-helpers.ts";
 import { isTextKnowledgeCompanionPath } from "./source-policy.ts";
+import { computeHash, computeHashBytes } from "veryfront/utils";
 
 export interface KnowledgeParserResult {
   success: true;
@@ -15,6 +47,8 @@ export interface KnowledgeParserResult {
   source_filename: string;
   source_type: string;
   slug: string;
+  /** Title-derived stem before local temporary file collisions. */
+  preferred_slug?: string;
   sandbox_output_path: string;
   suggested_project_path: string;
   description: string;
@@ -35,8 +69,15 @@ export interface KnowledgeParserResult {
 export interface KnowledgeParserInput {
   filePath: string;
   description?: string;
+  /** Exact output name; otherwise the name comes from the title. */
   slug?: string;
   sourceReference?: string;
+  /** The file name the user gave the source; defaults to the local file name. */
+  sourceName?: string;
+  /** The OKF `resource`: the path the user uploaded; defaults to `sourceReference`. */
+  resource?: string;
+  sourceKey?: string;
+  sourceKind?: KnowledgeSource["kind"];
   okfRelativePath?: string;
   okfRole?: "companion";
 }
@@ -61,6 +102,7 @@ type DocumentKreuzbergExtensionModule = {
 };
 
 export interface RunKnowledgeParsersDeps {
+  allocationSession?: KnowledgeAllocationSession;
   signal?: AbortSignal;
   extractDocumentText?: ExtractDocumentText;
   onProgress?: (event: DocumentExtractionProgressEvent) => void | Promise<void>;
@@ -172,43 +214,2217 @@ function titleizeFilename(path: string): string {
     .join(" ") || name;
 }
 
-function cleanText(value: string): string {
-  return value.replaceAll("\r\n", "\n").replaceAll("\r", "\n").replace(/\n{3,}/g, "\n\n").trim();
+function cleanText(value: string, preserveIndentation = false): string {
+  const normalized = value.replaceAll("\r\n", "\n").replaceAll("\r", "\n").replace(
+    /\n{3,}/g,
+    "\n\n",
+  );
+  return preserveIndentation
+    ? normalized.replace(/^\uFEFF/, "").replace(/^(?:[ \t]*\n)+/, "").trimEnd()
+    : normalized.trim();
 }
 
 function yamlQuote(value: unknown): string {
   return JSON.stringify(value == null ? "" : String(value));
 }
 
-function isAbsoluteProvenanceUrl(source: string): boolean {
-  try {
-    const url = new URL(source);
-    return url.protocol === "http:" || url.protocol === "https:";
-  } catch {
-    return false;
+/** The same OKF shape Studio's chat ingest asks for; `source`, `source_type`, `added` are extensions. */
+function buildFrontmatter(input: {
+  title: string;
+  description: string;
+  resource: string;
+  sourceKey?: string;
+  tags: string[];
+  source: string;
+  sourceType: string;
+}): string {
+  const now = new Date().toISOString();
+  return [
+    "---",
+    `type: ${yamlQuote("Document")}`,
+    `title: ${yamlQuote(input.title)}`,
+    `description: ${yamlQuote(input.description)}`,
+    `resource: ${yamlQuote(input.resource)}`,
+    `tags: ${JSON.stringify(input.tags)}`,
+    `timestamp: ${yamlQuote(now)}`,
+    `source: ${yamlQuote(input.source)}`,
+    `source_type: ${yamlQuote(input.sourceType)}`,
+    `added: ${yamlQuote(now)}`,
+    "generated:",
+    `  by: ${yamlQuote(`veryfront/${VERSION}`)}`,
+    ...(input.sourceKey === undefined ? [] : [`  source_key: ${yamlQuote(input.sourceKey)}`]),
+    "---",
+  ].join("\n");
+}
+
+/** CommonMark HTML blocks end at a marker or the next blank line. */
+function markdownHtmlBlockEnd(
+  line: string,
+  outsideParagraph: boolean,
+): RegExp | "blank" | undefined {
+  const rawTag = /^ {0,3}<(script|pre|style|textarea)(?:\s|>|$)/i.exec(line)?.[1];
+  if (rawTag) return /<\/(?:script|pre|style|textarea)>/i;
+  if (/^ {0,3}<!--/.test(line)) return /-->/;
+  if (/^ {0,3}<\?/.test(line)) return /\?>/;
+  if (/^ {0,3}<![A-Z]/.test(line)) return />/;
+  if (/^ {0,3}<!\[CDATA\[/.test(line)) return /\]\]>/;
+  if (
+    /^ {0,3}<\/?(?:address|article|aside|base|basefont|blockquote|body|caption|center|col|colgroup|dd|details|dialog|dir|div|dl|dt|fieldset|figcaption|figure|footer|form|frame|frameset|h[1-6]|head|header|hr|html|iframe|legend|li|link|main|menu|menuitem|nav|noframes|ol|optgroup|option|p|param|search|section|summary|table|tbody|td|tfoot|th|thead|title|tr|track|ul)(?:\s|\/?>|$)/i
+      .test(line)
+  ) return "blank";
+  if (
+    outsideParagraph &&
+    /^ {0,3}(?:<[A-Za-z][A-Za-z0-9-]*(?:\s+[A-Za-z_:][\w.:-]*(?:\s*=\s*(?:"[^"]*"|'[^']*'|[^\s"'=<>`]+))?)*\s*\/?>|<\/[A-Za-z][A-Za-z0-9-]*\s*>)\s*$/
+      .test(line)
+  ) return "blank";
+  return undefined;
+}
+
+function isThematicBreak(line: string, mdx = false): boolean {
+  if (mdx) line = line.replace(/^[ \t]*/, "");
+  return /^ {0,3}(?:(?:\*[ \t]*){3,}|(?:-[ \t]*){3,}|(?:_[ \t]*){3,})$/.test(line);
+}
+
+function markdownFenceStart(line: string): string | undefined {
+  const match = /^ {0,3}(`{3,}|~{3,})(.*)$/.exec(line);
+  if (!match || match[1]?.startsWith("`") && match[2]?.includes("`")) return undefined;
+  return match[1];
+}
+
+function startsInterruptingBlock(line: string, mdx = false, flow?: boolean): boolean {
+  if (mdx) line = line.replace(/^[ \t]*/, "");
+  return /^ {0,3}(?:#{1,6}(?:[ \t]|$)|>|[-+*][ \t]+\S|1[.)][ \t]+\S)/.test(line) ||
+    isThematicBreak(line) || markdownFenceStart(line) !== undefined ||
+    (mdx ? flow ?? startsMdxHeadingFlow(line) : markdownHtmlBlockEnd(line, false) !== undefined);
+}
+
+function expandHeadingIndentation(raw: string): string {
+  let end = 0;
+  for (;;) {
+    while (raw[end] === " " || raw[end] === "\t") end += 1;
+    if (raw[end] === ">") {
+      end += 1;
+      continue;
+    }
+    let markerEnd = end;
+    if (/[-+*]/.test(raw[markerEnd] ?? "")) markerEnd += 1;
+    else {
+      while (/\d/.test(raw[markerEnd] ?? "") && markerEnd - end < 10) markerEnd += 1;
+      if (markerEnd === end || markerEnd - end > 9 || !/[.)]/.test(raw[markerEnd] ?? "")) {
+        break;
+      }
+      markerEnd += 1;
+    }
+    if (markerEnd < raw.length && raw[markerEnd] !== " " && raw[markerEnd] !== "\t") break;
+    end = markerEnd;
+  }
+  let width = 0;
+  let expanded = "";
+  for (const character of raw.slice(0, end)) {
+    const count = character === "\t" ? 4 - width % 4 : 1;
+    expanded += character === "\t" ? " ".repeat(count) : character;
+    width += count;
+  }
+  return expanded + raw.slice(end);
+}
+
+/** Markdown blank lines contain only ASCII spaces and tabs. */
+function hasHeadingContent(line: string, _mdx: boolean): boolean {
+  return /[^ \t]/.test(line);
+}
+
+function headingListMarker(line: string, mdx: boolean): RegExpExecArray | null {
+  return (mdx ? /^ *(?:[-+*]|\d{1,9}[.)])([ \t]+|$)/ : /^ {0,3}(?:[-+*]|\d{1,9}[.)])([ \t]+|$)/)
+    .exec(line);
+}
+
+/** Track only positively identified list containers; ordinary indentation is not a container. */
+/** Count a reference-definition block, including a continued destination and optional title. */
+function interruptsDefinition(line: string, mdx: boolean, flow?: boolean): boolean {
+  if (mdx) line = line.replace(/^[ \t]*/, "");
+  return startsInterruptingBlock(line, mdx, flow) || /^ {0,3}(?:=+|-+)[ \t]*$/.test(line);
+}
+
+function headingDefinitionLines(
+  lines: string[],
+  start: number,
+  containerIndent = 0,
+  firstLine?: string,
+  parentIndent = 0,
+  continuedParagraph = false,
+  mdx = false,
+  readContent?: (index: number) => string | undefined,
+  readInterrupt?: (index: number, line: string) => boolean,
+): number {
+  const interrupts = (index: number, line: string): boolean =>
+    readInterrupt ? readInterrupt(index, line) : interruptsDefinition(line, mdx);
+  const readLine = (index: number): string => {
+    if (readContent) return readContent(index) ?? "";
+    const line = expandHeadingIndentation(lines[index] ?? "");
+    const indentation = /^ */.exec(line)?.[0].length ?? 0;
+    return line.slice(Math.min(indentation, containerIndent));
+  };
+  // An outdented sibling starts in the last matched container, not in the
+  // unmatched item's paragraph. Do not consume its marker as a destination.
+  const leavesContainer = (index: number): boolean => {
+    if (readContent) return readContent(index) === undefined;
+    const line = expandHeadingIndentation(lines[index] ?? "");
+    const indentation = /^ */.exec(line)?.[0].length ?? 0;
+    return indentation < containerIndent &&
+      headingListMarker(line.slice(Math.min(parentIndent, indentation)), mdx) !== null;
+  };
+  let offset = start;
+  let first = firstLine ?? readLine(offset);
+  if (!mdx && !continuedParagraph && /^ {4}/.test(first)) return 0;
+  let label = /^[ \t]*\[(?:\\.|[^\[\]\\]){1,999}\]:[ \t]*/.exec(first);
+  while (!label && /^[ \t]*\[/.test(first) && !first.includes("]") && first.length <= 1002) {
+    offset += 1;
+    const next = readLine(offset);
+    if (
+      leavesContainer(offset) || !hasHeadingContent(next, mdx) ||
+      interrupts(offset, next)
+    ) return 0;
+    first += "\n" + next;
+    label = /^[ \t]*\[(?:\\.|[^\[\]\\]){1,999}\]:[ \t]*/.exec(first);
+  }
+  if (!label || !/\S/.test(label[0].slice(label[0].indexOf("[") + 1, label[0].lastIndexOf("]")))) {
+    return 0;
+  }
+  let rest = first.slice(label[0].length);
+  if (!rest) {
+    offset += 1;
+    const continuation = readLine(offset);
+    if (
+      leavesContainer(offset) ||
+      interrupts(offset, continuation)
+    ) return 0;
+    rest = continuation.replace(/^[ \t]*/, "");
+  }
+  let cursor = 0;
+  if (rest.startsWith("<")) {
+    cursor = 1;
+    while (cursor < rest.length && rest[cursor] !== ">") {
+      if (rest[cursor] === "<") return 0;
+      if (rest[cursor] === "\\") cursor += 1;
+      cursor += 1;
+    }
+    if (rest[cursor] !== ">") return 0;
+    cursor += 1;
+  } else {
+    let depth = 0;
+    while (cursor < rest.length && !/[ \t\n]/.test(rest[cursor] ?? "")) {
+      const character = rest[cursor];
+      // Bare destinations exclude ASCII controls, including escaped controls.
+      // Unicode whitespace remains content rather than Markdown indentation.
+      const characterCode = rest.charCodeAt(cursor);
+      if (characterCode < 0x20 || characterCode === 0x7f) return 0;
+      if (character === "\\" && /[!-/:-@[-`{-~]/.test(rest[cursor + 1] ?? "")) {
+        cursor += 1;
+      } else if (character === "(") depth += 1;
+      else if (character === ")" && --depth < 0) return 0;
+      cursor += 1;
+    }
+    if (!cursor || depth !== 0) return 0;
+  }
+  const destinationEnd = offset;
+  const remainder = rest.slice(cursor);
+  if (remainder && !/^[ \t]/.test(remainder)) return 0;
+  rest = remainder.replace(/^[ \t]*/, "");
+  if (!rest) {
+    const next = readLine(offset + 1);
+    if (leavesContainer(offset + 1) || !/^[ \t]*["'(]/.test(next)) {
+      return destinationEnd - start + 1;
+    }
+    offset += 1;
+    rest = next.replace(/^[ \t]*/, "");
+  }
+  const opening = rest[0];
+  const closing = opening === "(" ? ")" : opening;
+  if (opening !== '"' && opening !== "'" && opening !== "(") {
+    return offset === destinationEnd ? 0 : destinationEnd - start + 1;
+  }
+  const titleFallback = offset === destinationEnd ? 0 : destinationEnd - start + 1;
+  cursor = 1;
+  for (;;) {
+    while (cursor < rest.length) {
+      const character = rest[cursor];
+      if (character === "\\") cursor += 1;
+      else if (character === closing) {
+        return hasHeadingContent(rest.slice(cursor + 1), mdx) ? titleFallback : offset - start + 1;
+      } else if (opening === "(" && character === "(") return 0;
+      cursor += 1;
+    }
+    offset += 1;
+    rest = readLine(offset);
+    if (
+      leavesContainer(offset) || !hasHeadingContent(rest, mdx) ||
+      interrupts(offset, rest)
+    ) {
+      return titleFallback;
+    }
+    cursor = 0;
   }
 }
 
-function buildFrontmatter(source: string, sourceType: string, description: string): string {
-  const generatedBy = `veryfront/${VERSION}`;
-  const lines = [
-    "---",
-    `type: ${yamlQuote("Generated Document")}`,
-    `source: ${yamlQuote(source)}`,
-    `source_type: ${yamlQuote(sourceType)}`,
-    `description: ${yamlQuote(description)}`,
-    "generated:",
-    `  by: ${yamlQuote(generatedBy)}`,
-  ];
-  if (isAbsoluteProvenanceUrl(source)) {
-    lines.push(
-      "sources:",
-      "  - id: source",
-      `    resource: ${yamlQuote(source)}`,
-    );
+/** Skip one JS literal/comment, keeping nested template expressions in the same region. */
+function mdxLiteralEnd(source: string, start: number): number | undefined {
+  const quote = source[start];
+  if (source.startsWith("//", start)) {
+    const end = source.indexOf("\n", start + 2);
+    return end < 0 ? source.length : end;
   }
-  lines.push("---");
-  return lines.join("\n");
+  if (source.startsWith("/*", start)) {
+    const end = source.indexOf("*/", start + 2);
+    return end < 0 ? source.length : end + 2;
+  }
+  if (quote !== '"' && quote !== "'" && quote !== "`") return undefined;
+  let cursor = start + 1;
+  while (cursor < source.length) {
+    if (source[cursor] === "\\") cursor += 2;
+    else if (source[cursor] === quote) return cursor + 1;
+    else if (quote === "`" && source.startsWith("${", cursor)) {
+      cursor = mdxExpressionEnd(source, cursor + 1);
+    } else cursor += 1;
+  }
+  return source.length;
+}
+
+/** Reuse literal/comment ownership when inspecting a token after JavaScript trivia. */
+function mdxAfterTrivia(source: string, start: number): number {
+  let cursor = start;
+  for (;;) {
+    while (cursor < source.length && /\s/.test(source[cursor] ?? "")) cursor += 1;
+    if (!source.startsWith("//", cursor) && !source.startsWith("/*", cursor)) return cursor;
+    cursor = mdxLiteralEnd(source, cursor) ?? source.length;
+  }
+}
+
+/** These lexical contexts still require an operand before an ESM block can end. */
+function mdxNeedsOperand(previous: string): boolean {
+  return !previous || /^[([{=,:!?&|+*\/%~^<>-]$/.test(previous) ||
+    /^(?:return|throw|case|yield|await|void|typeof|delete|in|instanceof|new|extends|default|for-of|spread|prefix-update|function-declaration|function-expression|=>)$/
+      .test(previous);
+}
+
+/** JSX values and regex literals additionally start at statement boundaries. */
+function mdxCanStartExpression(previous: string): boolean {
+  return mdxNeedsOperand(previous) || previous === ";" ||
+    /^(?:else|do|control-end|statement-end|label-colon|case-colon)$/.test(previous);
+}
+
+/** Expressions own their strings, comments, regex literals and nested delimiters. */
+function mdxExpressionEnd(source: string, start: number, esm = false): number {
+  const closers: string[] = [];
+  const controlParens = new Set<number>();
+  const forParens = new Set<number>();
+  const statementBlocks = new Set<number>();
+  const statementScopes = new Set<number>();
+  const classScopes = new Set<number>();
+  const moduleClauses = new Set<number>();
+  const caseClauses = new Set<number>();
+  const ternaries = new Map<number, number>();
+  const functionParens = new Map<number, boolean>();
+  const pendingDeclarations: { kind: "function" | "class"; depth: number; statement: boolean }[] =
+    [];
+  let cursor = start;
+  let previous = "";
+  let previousEnd = start;
+  let labelDepth: number | undefined;
+  let asyncStatement = false;
+  let forAwait = false;
+  let jumpDepth: number | undefined;
+  while (cursor < source.length) {
+    const character = source[cursor] ?? "";
+    if (jumpDepth === closers.length && /[\r\n]/.test(source.slice(previousEnd, cursor))) {
+      previous = "statement-end";
+      jumpDepth = undefined;
+    }
+    if (
+      /^<\/?(?:[\p{ID_Start}_$][\p{ID_Continue}$.:_-]*|>)/u.test(source.slice(cursor)) &&
+      mdxCanStartExpression(previous)
+    ) {
+      cursor = mdxElementEnd(source, cursor);
+      previous = "value";
+      previousEnd = cursor;
+      labelDepth = undefined;
+      continue;
+    }
+    const literalEnd = mdxLiteralEnd(source, cursor);
+    if (literalEnd !== undefined) {
+      const comment = source.startsWith("//", cursor) || source.startsWith("/*", cursor);
+      cursor = literalEnd;
+      if (!comment) {
+        previous = "value";
+        previousEnd = cursor;
+        labelDepth = undefined;
+      }
+      continue;
+    }
+    if (source.startsWith("++", cursor) || source.startsWith("--", cursor)) {
+      previous = mdxCanStartExpression(previous) || /[\r\n]/.test(source.slice(previousEnd, cursor))
+        ? "prefix-update"
+        : "postfix-update";
+      cursor += 2;
+      previousEnd = cursor;
+      labelDepth = undefined;
+      continue;
+    }
+    if (source.startsWith("...", cursor)) {
+      previous = "spread";
+      cursor += 3;
+      previousEnd = cursor;
+      labelDepth = undefined;
+      continue;
+    }
+    if (source.startsWith("?.", cursor) || source.startsWith("??", cursor)) {
+      previous = source[cursor + 1] === "." ? "." : "?";
+      cursor += 2;
+      previousEnd = cursor;
+      labelDepth = undefined;
+      continue;
+    }
+    if (source.startsWith("=>", cursor)) {
+      previous = "=>";
+      cursor += 2;
+      previousEnd = cursor;
+      labelDepth = undefined;
+      continue;
+    }
+    if (character === "/" && mdxCanStartExpression(previous)) {
+      // A regex cannot contain an unescaped line ending; braces inside it are data.
+      let end = cursor + 1;
+      let characterClass = false;
+      for (; end < source.length && source[end] !== "\n"; end += 1) {
+        if (source[end] === "\\") end += 1;
+        else if (source[end] === "[") characterClass = true;
+        else if (source[end] === "]") characterClass = false;
+        else if (source[end] === "/" && !characterClass) break;
+      }
+      if (source[end] === "/") {
+        cursor = end + 1;
+        previous = "value";
+        previousEnd = cursor;
+        labelDepth = undefined;
+        continue;
+      }
+    }
+    const number =
+      /^(?:0[xX][\da-fA-F_]+n?|0[bB][01_]+n?|0[oO][0-7_]+n?|(?:\d[\d_]*(?:\.[\d_]*)?|\.\d[\d_]*)(?:[eE][+-]?[\d_]+)?n?)/
+        .exec(source.slice(cursor))?.[0];
+    if (number) {
+      cursor += number.length;
+      previous = "value";
+      previousEnd = cursor;
+      labelDepth = undefined;
+      continue;
+    }
+    const identifier = /^[\p{ID_Start}_$][\p{ID_Continue}$]*/u.exec(source.slice(cursor))?.[0];
+    const afterAsi = (identifier !== undefined || character === "{") &&
+      statementScopes.has(closers.length) &&
+      /[\r\n]/.test(source.slice(previousEnd, cursor)) &&
+      (!mdxCanStartExpression(previous) || previous === "return" || previous === "yield");
+    if (identifier) {
+      const statementStart = afterAsi || !previous || previous === ";" ||
+        previous === "{" && statementScopes.has(closers.length) ||
+        /^(?:statement-end|control-end|label-colon|case-colon|else|do|export|default)$/.test(
+          previous,
+        );
+      if (
+        /^(?:break|continue|debugger)$/.test(identifier) && statementStart &&
+        statementScopes.has(closers.length)
+      ) jumpDepth = closers.length;
+      labelDepth = statementStart && statementScopes.has(closers.length)
+        ? closers.length
+        : undefined;
+      if (
+        (identifier === "case" || identifier === "default") && statementScopes.has(closers.length)
+      ) {
+        caseClauses.add(closers.length);
+        labelDepth = undefined;
+      }
+      if (identifier === "async") asyncStatement = statementStart;
+      if (identifier === "await") forAwait = previous === "for";
+      const following = source[mdxAfterTrivia(source, cursor + identifier.length)];
+      const keywordPosition = statementStart || mdxCanStartExpression(previous) ||
+        identifier === "function" && previous === "async";
+      if (
+        (identifier === "function" || identifier === "class") && keywordPosition &&
+        following !== ":" && !(identifier === "class" && following === "(") &&
+        !moduleClauses.has(closers.length)
+      ) {
+        pendingDeclarations.push({
+          kind: identifier,
+          depth: closers.length,
+          statement: statementStart || previous === "async" && asyncStatement,
+        });
+      }
+      // `of` is an expression separator only in the owning for header, after
+      // its left binding. Ordinary identifiers and member names keep value context.
+      const forOf = identifier === "of" && forParens.has(closers.length) &&
+        previous !== "." && !mdxCanStartExpression(previous) &&
+        !/^(?:const|let|var)$/.test(previous);
+      if (forOf) forParens.delete(closers.length);
+      previous = forOf ? "for-of" : previous === "." ? "value" : identifier;
+      cursor += identifier.length;
+      previousEnd = cursor;
+      continue;
+    }
+    const opening = "([{".indexOf(character);
+    let closedContext: string | undefined;
+    if (character === ";") {
+      forParens.delete(closers.length);
+      jumpDepth = undefined;
+    }
+    if (character === "?") ternaries.set(closers.length, (ternaries.get(closers.length) ?? 0) + 1);
+    if (character === ":") {
+      const conditional = ternaries.get(closers.length) ?? 0;
+      if (conditional) ternaries.set(closers.length, conditional - 1);
+      else if (caseClauses.delete(closers.length)) closedContext = "case-colon";
+      else if (labelDepth === closers.length) closedContext = "label-colon";
+    }
+    if (!/\s/.test(character)) labelDepth = undefined;
+    if (opening >= 0 && opening < 3) {
+      const declaration = pendingDeclarations.at(-1);
+      if (
+        declaration?.depth === closers.length &&
+        (character === "(" && declaration.kind === "function" ||
+          character === "{" && declaration.kind === "class")
+      ) {
+        pendingDeclarations.pop();
+        if (character === "(") functionParens.set(closers.length + 1, declaration.statement);
+        else {
+          classScopes.add(closers.length + 1);
+          if (declaration.statement) statementBlocks.add(closers.length + 1);
+        }
+      }
+      if (esm && character === "{" && /^(?:import|export)$/.test(previous)) {
+        moduleClauses.add(closers.length + 1);
+      }
+      closers.push(")]}"[opening] ?? "");
+      if (
+        character === "(" && (/^(?:if|while|for|with|switch|catch)$/.test(previous) ||
+          previous === "await" && forAwait)
+      ) {
+        controlParens.add(closers.length);
+        if (previous === "for" || previous === "await" && forAwait) {
+          forParens.add(closers.length);
+        }
+      }
+      if (character === "{") {
+        const statementBlock = afterAsi && !classScopes.has(closers.length) ||
+          /^(?:control-end|statement-end|function-declaration|label-colon|case-colon|else|try|catch|finally|do)$/
+            .test(previous) ||
+          /^[{;]$/.test(previous) && statementScopes.has(closers.length - 1);
+        if (statementBlock) statementBlocks.add(closers.length);
+        if (
+          statementBlock || /^(?:function-expression|=>|\))$/.test(previous) ||
+          previous === "static" && classScopes.has(closers.length - 1)
+        ) {
+          statementScopes.add(closers.length);
+        }
+      }
+    } else if (character === closers.at(-1)) {
+      const functionDeclaration = functionParens.get(closers.length);
+      if (functionDeclaration !== undefined) {
+        closedContext = functionDeclaration ? "function-declaration" : "function-expression";
+        functionParens.delete(closers.length);
+      }
+      if (controlParens.delete(closers.length)) closedContext = "control-end";
+      forParens.delete(closers.length);
+      if (statementBlocks.delete(closers.length)) closedContext = "statement-end";
+      while ((pendingDeclarations.at(-1)?.depth ?? -1) >= closers.length) {
+        pendingDeclarations.pop();
+      }
+      if (jumpDepth !== undefined && jumpDepth >= closers.length) jumpDepth = undefined;
+      statementScopes.delete(closers.length);
+      classScopes.delete(closers.length);
+      moduleClauses.delete(closers.length);
+      caseClauses.delete(closers.length);
+      ternaries.delete(closers.length);
+      closers.pop();
+      if (!esm && !closers.length) return cursor + 1;
+    }
+    // MDX ESM blocks use a blank-line boundary, not JavaScript semicolons or ASI.
+    if (
+      esm && !closers.length && character === "\n" && /^\s*\n/.test(source.slice(cursor + 1)) &&
+      !mdxNeedsOperand(previous) && previous !== "." &&
+      !/^(?:export|import|const|let|var|extends)$/.test(previous) && !pendingDeclarations.length
+    ) {
+      return cursor + 1;
+    }
+    if (!/\s/.test(character)) {
+      previous = closedContext ?? character;
+      previousEnd = cursor + 1;
+    }
+    cursor += 1;
+  }
+  return source.length;
+}
+
+/** A JSX tag ends only outside attribute strings and JavaScript expressions. */
+function mdxTagEnd(source: string, start: number): number {
+  let cursor = start + 1;
+  while (cursor < source.length) {
+    const quote = source[cursor];
+    if (quote === '"' || quote === "'") {
+      // JSX quoted attributes are raw text: backslashes do not escape the quote.
+      const end = source.indexOf(quote, cursor + 1);
+      cursor = end < 0 ? source.length : end + 1;
+    } else if (source[cursor] === "{") cursor = mdxExpressionEnd(source, cursor);
+    else if (source[cursor] === ">") return cursor + 1;
+    else cursor += 1;
+  }
+  return source.length;
+}
+
+/** A JSX element owns its child text, tags and embedded JavaScript expressions. */
+function mdxElementEnd(source: string, start: number): number {
+  let cursor = mdxTagEnd(source, start);
+  const first = source.slice(start, cursor);
+  if (first.startsWith("</") || first.endsWith("/>")) return cursor;
+  let depth = 1;
+  while (cursor < source.length) {
+    if (source[cursor] === "{") cursor = mdxExpressionEnd(source, cursor);
+    else if (/^<\/?(?:[\p{ID_Start}_$][\p{ID_Continue}$.:_-]*|>)/u.test(source.slice(cursor))) {
+      const end = mdxTagEnd(source, cursor);
+      const tag = source.slice(cursor, end);
+      if (tag.startsWith("</")) depth -= 1;
+      else if (!tag.endsWith("/>")) depth += 1;
+      cursor = end;
+      if (!depth) return cursor;
+    } else cursor += 1;
+  }
+  return cursor;
+}
+
+/** Flow MDX permits only tags/expressions and whitespace through the line ending. */
+function mdxLineRegion(source: string, start: number): { kind: "flow" | "inline"; end: number } {
+  let cursor = start;
+  const openTags: number[] = [];
+  for (;;) {
+    if (source[cursor] === "{") cursor = mdxExpressionEnd(source, cursor);
+    else if (/^<\/?(?:[\p{ID_Start}_$][\p{ID_Continue}$.:_-]*|>)/u.test(source.slice(cursor))) {
+      const end = mdxTagEnd(source, cursor);
+      const tag = source.slice(cursor, end);
+      if (tag.startsWith("</")) openTags.pop();
+      else if (!tag.endsWith("/>")) openTags.push(cursor);
+      cursor = end;
+    } else {
+      const opening = openTags[0];
+      return {
+        kind: "inline",
+        end: opening === undefined ? cursor : mdxElementEnd(source, opening),
+      };
+    }
+    while (source[cursor] === " " || source[cursor] === "\t") cursor += 1;
+    if (cursor >= source.length || source[cursor] === "\n") return { kind: "flow", end: cursor };
+  }
+}
+
+function startsMdxHeadingRegion(line: string): boolean {
+  return line.startsWith("{") ||
+    /^<\/?(?:[\p{ID_Start}_$][\p{ID_Continue}$.:_-]*|>)/u.test(line);
+}
+
+function startsMdxHeadingFlow(line: string): boolean {
+  return startsMdxHeadingRegion(line) && mdxLineRegion(line + "\n", 0).kind === "flow";
+}
+
+type MdxHeadingContainer =
+  | { kind: "quote" }
+  | { kind: "footnote"; indent: 4 }
+  | { kind: "list"; indent: number; empty: boolean };
+
+type MdxHeadingParagraph = {
+  owner: MdxHeadingContainer[];
+  kind: "definition" | "text";
+  lines: string[];
+};
+
+type MdxHeadingState = {
+  containers: MdxHeadingContainer[];
+  paragraph?: MdxHeadingParagraph;
+  fence?: { owner: MdxHeadingContainer[]; marker: string };
+};
+
+function sameHeadingOwner(a: MdxHeadingContainer[], b: MdxHeadingContainer[]): boolean {
+  return a.length === b.length && a.every((frame, index) => frame === b[index]);
+}
+
+/** Consume each frame's prefix at its own level, never an aggregate indentation. */
+function readHeadingOwnedLine(
+  source: string,
+  owner: MdxHeadingContainer[],
+  mdx = true,
+): string | undefined {
+  let line = expandHeadingIndentation(source);
+  for (const frame of owner) {
+    if (frame.kind === "quote") {
+      const prefix = (mdx ? /^ *>[ \t]?/ : /^ {0,3}>[ \t]?/).exec(line);
+      if (!prefix) return undefined;
+      line = line.slice(prefix[0].length);
+    } else {
+      if ((/^ */.exec(line)?.[0].length ?? 0) < frame.indent) {
+        if (hasHeadingContent(line, true)) return undefined;
+        line = "";
+        continue;
+      }
+      line = line.slice(frame.indent);
+    }
+  }
+  return line;
+}
+
+/** Read only the owned lines needed to classify an expression or JSX region. */
+function mdxHeadingRegion(
+  lines: string[],
+  index: number,
+  first: string,
+  owner: MdxHeadingContainer[],
+): { kind: "flow" | "inline"; through: number; text: string } {
+  const content = [first];
+  let exhausted = false;
+  for (;;) {
+    const source = content.join("\n") + "\n";
+    const region = mdxLineRegion(source, 0);
+    if (region.end < source.length || exhausted || index + content.length >= lines.length) {
+      const consumed = source.slice(0, region.end).split("\n").length;
+      const count = Math.min(consumed, content.length);
+      return {
+        kind: region.kind,
+        through: index + count - 1,
+        text: content.slice(0, count).join("\n").replace(/\s*\n\s*/g, " ").trim(),
+      };
+    }
+    // Geometric lookahead avoids rescanning every growing one-line prefix
+    // when a multiline region is incomplete.
+    const batch = content.length;
+    for (let step = 0; step < batch; step += 1) {
+      if (index + content.length >= lines.length) {
+        exhausted = true;
+        break;
+      }
+      const next = readHeadingOwnedLine(lines[index + content.length] ?? "", owner);
+      if (next === undefined) {
+        exhausted = true;
+        break;
+      }
+      content.push(next);
+    }
+  }
+}
+
+type HeadingInterruption = {
+  kind: "paragraph" | "indented-code";
+  owner: MdxHeadingContainer[];
+};
+
+/** Footnote labels use GFM's single-line, non-whitespace identifier grammar. */
+function headingFootnotePrefix(line: string, mdx: boolean): number {
+  const start = (mdx ? /^ *\[\^/ : /^ {0,3}\[\^/).exec(line);
+  if (!start) return 0;
+  let size = 0;
+  for (let index = start[0].length; index < line.length; index += 1) {
+    const character = line[index];
+    if (character === "]") {
+      if (!size || size > 999 || line[index + 1] !== ":") return 0;
+      const whitespace = /^[ \t]*/.exec(line.slice(index + 2))?.[0].length ?? 0;
+      return index + 2 + whitespace;
+    }
+    if (character === "[" || /[ \t\r\n]/.test(character ?? "")) return 0;
+    size += 1;
+    if (character === "\\" && /[\[\]\\]/.test(line[index + 1] ?? "")) {
+      index += 1;
+      size += 1;
+    }
+  }
+  return 0;
+}
+
+/** Match old ownership before opening prefixes with inherited interruption rules. */
+function headingOwnerLine(
+  source: string,
+  containers: MdxHeadingContainer[],
+  context: HeadingInterruption | undefined,
+  mdx: boolean,
+  flow?: (line: string, owner: MdxHeadingContainer[]) => boolean,
+): {
+  line: string;
+  owner: MdxHeadingContainer[];
+  matchedOwner: MdxHeadingContainer[];
+  lazy: boolean;
+  sameParagraph: boolean;
+} {
+  let line = expandHeadingIndentation(source);
+  const owner: MdxHeadingContainer[] = [];
+  for (const frame of containers) {
+    if (frame.kind === "quote") {
+      const prefix = (mdx ? /^ *>[ \t]?/ : /^ {0,3}>[ \t]?/).exec(line);
+      if (!prefix) break;
+      line = line.slice(prefix[0].length);
+    } else {
+      if (frame.kind === "list" && frame.empty && !hasHeadingContent(line, mdx)) break;
+      if ((/^ */.exec(line)?.[0].length ?? 0) < frame.indent) {
+        if (hasHeadingContent(line, mdx) || frame.kind === "list" && frame.empty) break;
+        line = "";
+      } else line = line.slice(frame.indent);
+    }
+    owner.push(frame);
+  }
+  const matchedOwner = [...owner];
+  // A continued outer footnote keeps nested footnote paragraph ownership,
+  // even when the physical line omits the nested four-column prefix.
+  if (
+    context?.kind === "paragraph" && owner.at(-1)?.kind === "footnote" &&
+    owner.length < context.owner.length &&
+    owner.every((frame, index) => frame === context.owner[index]) &&
+    context.owner.slice(owner.length).every((frame) => frame.kind === "footnote")
+  ) owner.push(...context.owner.slice(owner.length));
+  const sameContext = context !== undefined && sameHeadingOwner(owner, context.owner);
+  const lazy = Boolean(
+    context?.kind === "paragraph" && !sameContext &&
+      owner.every((frame, index) => frame === context.owner[index]) &&
+      hasHeadingContent(line, mdx) && !headingFootnotePrefix(line, mdx) &&
+      !startsInterruptingBlock(line, mdx, flow?.(line, owner)) &&
+      headingListMarker(line, mdx) === null,
+  );
+  if (lazy && context) {
+    return { line, owner: context.owner, matchedOwner, lazy: true, sameParagraph: true };
+  }
+  for (;;) {
+    const footnote = headingFootnotePrefix(line, mdx);
+    if (footnote) {
+      owner.push({ kind: "footnote", indent: 4 });
+      line = line.slice(footnote);
+      continue;
+    }
+    const quote = (mdx ? /^ *>[ \t]?/ : /^ {0,3}>[ \t]?/).exec(line);
+    if (quote) {
+      owner.push({ kind: "quote" });
+      line = line.slice(quote[0].length);
+      continue;
+    }
+    const marker = headingListMarker(line, mdx);
+    if (!marker || isThematicBreak(line, mdx)) break;
+    const remaining = line.slice(marker[0].length);
+    const empty = !hasHeadingContent(remaining, mdx);
+    const markerText = line.replace(/^[ \t]*/, "");
+    if (
+      sameContext &&
+      (empty || /^\d/.test(markerText) && !/^1[.)]/.test(markerText))
+    ) break;
+    const spacing = marker[1] ?? "";
+    const indent = marker[0].length - spacing.length +
+      (empty || !mdx && spacing.length > 4 ? 1 : Math.max(1, spacing.length));
+    owner.push({ kind: "list", indent, empty });
+    line = line.slice(indent);
+  }
+  return {
+    line,
+    owner,
+    matchedOwner,
+    lazy: false,
+    sameParagraph: context?.kind === "paragraph" && sameHeadingOwner(owner, context.owner),
+  };
+}
+
+/** Concrete leaves continue at the physical footnote prefix that opened them. */
+function headingLeafOwner(parsed: ReturnType<typeof headingOwnerLine>): MdxHeadingContainer[] {
+  const missing = parsed.owner.slice(parsed.matchedOwner.length);
+  if (!missing.length || !missing.every((frame) => frame.kind === "footnote")) return parsed.owner;
+  if (parsed.lazy) return parsed.owner.slice(0, parsed.matchedOwner.length + 1);
+  return parsed.sameParagraph && parsed.matchedOwner.at(-1)?.kind === "footnote"
+    ? parsed.matchedOwner
+    : parsed.owner;
+}
+
+function mdxHeadingLine(
+  source: string,
+  state: MdxHeadingState,
+  flow?: (line: string, owner: MdxHeadingContainer[]) => boolean,
+): ReturnType<typeof headingOwnerLine> {
+  return headingOwnerLine(
+    source,
+    state.containers,
+    state.paragraph ? { kind: "paragraph", owner: state.paragraph.owner } : undefined,
+    true,
+    flow,
+  );
+}
+
+function mdxHeadingText(
+  owner: MdxHeadingContainer[],
+  previous: MdxHeadingParagraph | undefined,
+  content: string,
+): MdxHeadingParagraph {
+  const lines = previous?.kind === "text" ? previous.lines : [];
+  lines.push(content);
+  return { owner, kind: "text", lines };
+}
+
+/** GFM tables own ordinary rows, including text shaped like Setext underlines.
+ * Structural checks need physical source lines, before title whitespace normalization.
+ */
+function headingTableDelimiter(
+  { header, delimiter, mdx }: { header: string | undefined; delimiter: string; mdx: boolean },
+): boolean {
+  if (
+    header === undefined ||
+    !mdx && (/^ {4}/.test(expandHeadingIndentation(header)) || /^ {4}/.test(delimiter)) ||
+    /^ {0,3}-+[ \t]*$/.test(mdx ? delimiter.replace(/^[ \t]*/, "") : delimiter)
+  ) return false;
+  const trim = (text: string): string => text.replace(/^[ \t]+|[ \t]+$/g, "");
+  const cells = (line: string): string[] => {
+    const parts: string[] = [];
+    let cell = "";
+    let escaped = false;
+    let trailingSeparator = false;
+    for (const character of trim(line)) {
+      trailingSeparator = character === "|" && !escaped;
+      if (trailingSeparator) {
+        parts.push(trim(cell));
+        cell = "";
+      } else cell += character;
+      escaped = character === "\\" && !escaped;
+    }
+    parts.push(trim(cell));
+    if (trim(line).startsWith("|")) parts.shift();
+    if (trailingSeparator) parts.pop();
+    return parts;
+  };
+  const separators = cells(delimiter);
+  return (header.includes("|") || delimiter.includes("|")) && separators.length > 0 &&
+    separators.every((cell) => /^:?-+:?$/.test(cell)) && cells(header).length === separators.length;
+}
+
+function continuesHeadingTable(line: string, mdx: boolean): boolean {
+  return hasHeadingContent(line, mdx) &&
+    !headingFootnotePrefix(expandHeadingIndentation(line), mdx) &&
+    !startsInterruptingBlock(line, mdx) &&
+    !headingListMarker(line, mdx) && !(mdx && startsMdxHeadingFlow(line)) &&
+    (mdx || !/^ {4}/.test(line) && markdownHtmlBlockEnd(line, true) === undefined);
+}
+
+/** MDX's disabled indented-code rule needs explicit per-container ownership. */
+function findFirstMdxH1(markdown: string): string | undefined {
+  const body = markdown.replaceAll("\0", "\ufffd").replace(
+    /^---\n(?:---|[\s\S]*?\n---)(?:\n|$)/,
+    "",
+  );
+  const lines = body.split("\n");
+  const state: MdxHeadingState = { containers: [] };
+  let definitionThrough = -1;
+  let mdxThrough = -1;
+  let sourceOffset = 0;
+  let table = false;
+  for (const [index, source] of lines.entries()) {
+    const lineOffset = sourceOffset;
+    sourceOffset += source.length + 1;
+    if (lineOffset < mdxThrough || index <= definitionThrough) continue;
+    if (table) {
+      if (continuesHeadingTable(source, true)) continue;
+      table = false;
+    }
+    if (state.fence) {
+      const content = readHeadingOwnedLine(source, state.fence.owner);
+      if (content !== undefined) {
+        state.containers = state.fence.owner;
+        const closing = /^(`{3,}|~{3,})[ \t]*$/.exec(content.replace(/^[ \t]*/, ""))?.[1];
+        if (
+          closing && closing[0] === state.fence.marker[0] &&
+          closing.length >= state.fence.marker.length
+        ) state.fence = undefined;
+        continue;
+      }
+      state.fence = undefined;
+      state.paragraph = undefined;
+    }
+    if (!hasHeadingContent(source, true)) {
+      state.paragraph = undefined;
+      // Blank lines may omit list indentation, but cannot omit a quote prefix.
+      // Keep only list ancestors before the first unmatched quote.
+      const quote = state.containers.findIndex((frame) => frame.kind === "quote");
+      if (quote >= 0) state.containers = state.containers.slice(0, quote);
+      const lastContainer = state.containers.at(-1);
+      if (lastContainer?.kind === "list" && lastContainer.empty) {
+        state.containers = state.containers.slice(0, -1);
+      }
+      continue;
+    }
+    const flowAt = (cursor: number, line: string, owner: MdxHeadingContainer[]): boolean => {
+      const content = line.replace(/^[ \t]*/, "");
+      return startsMdxHeadingRegion(content) &&
+        mdxHeadingRegion(lines, cursor, content, owner).kind === "flow";
+    };
+    const parsed = mdxHeadingLine(source, state, (line, owner) => flowAt(index, line, owner));
+    state.containers = parsed.owner;
+    const line = parsed.line;
+    for (const [depth, frame] of parsed.owner.entries()) {
+      if (
+        frame.kind === "list" &&
+        (hasHeadingContent(line, true) || depth < parsed.owner.length - 1)
+      ) frame.empty = false;
+    }
+    const structural = line.replace(/^[ \t]*/, "");
+    const start = lineOffset + (source.match(/^[ \t]*/)?.[0].length ?? 0);
+    if (!state.paragraph && /^(?:export|import) /.test(source)) {
+      mdxThrough = mdxExpressionEnd(body, start, true);
+      continue;
+    }
+    if (startsMdxHeadingRegion(structural)) {
+      const region = mdxHeadingRegion(lines, index, structural, parsed.owner);
+      definitionThrough = region.through;
+      if (region.kind === "flow") state.paragraph = undefined;
+      else {
+        const previous = parsed.sameParagraph ? state.paragraph : undefined;
+        state.paragraph = mdxHeadingText(parsed.owner, previous, region.text);
+      }
+      continue;
+    }
+    const fence = !parsed.lazy && markdownFenceStart(structural);
+    if (fence) {
+      state.fence = { owner: headingLeafOwner(parsed), marker: fence };
+      state.paragraph = undefined;
+      continue;
+    }
+    const previous = parsed.sameParagraph ? state.paragraph : undefined;
+    if (!previous || previous.kind === "definition") {
+      const continuations = new Map<number, ReturnType<typeof mdxHeadingLine>>();
+      const readContinuation = (cursor: number): ReturnType<typeof mdxHeadingLine> | undefined => {
+        if (cursor >= lines.length) return undefined;
+        let next = continuations.get(cursor);
+        if (!next) {
+          next = mdxHeadingLine(lines[cursor] ?? "", {
+            containers: parsed.owner,
+            paragraph: { owner: parsed.owner, kind: "definition", lines: [] },
+          }, (line, owner) => flowAt(cursor, line, owner));
+          continuations.set(cursor, next);
+        }
+        return sameHeadingOwner(next.owner, parsed.owner) ? next : undefined;
+      };
+      const length = headingDefinitionLines(
+        lines,
+        index,
+        0,
+        line,
+        0,
+        previous?.kind === "definition",
+        true,
+        (cursor) => readContinuation(cursor)?.line,
+        (cursor, line) =>
+          !readContinuation(cursor)?.lazy &&
+          interruptsDefinition(line, true, flowAt(cursor, line, parsed.owner)),
+      );
+      if (length) {
+        definitionThrough = index + length - 1;
+        state.paragraph = { owner: parsed.owner, kind: "definition", lines: [] };
+        continue;
+      }
+    }
+    const atx = /^#{1,6}(?:[ \t]+(.*))?$/.exec(structural);
+    if (atx) {
+      if (!parsed.owner.length && /^#(?:[ \t]|$)/.test(structural)) {
+        const content = atx[1] ?? "";
+        return /^#+[ \t]*$/.test(content) ? "" : content.replace(/[ \t]+#+[ \t]*$/, "").trim();
+      }
+      state.paragraph = undefined;
+      continue;
+    }
+    if (
+      previous?.kind === "text" && !parsed.owner.length && !parsed.lazy &&
+      headingTableDelimiter({ header: lines[index - 1], delimiter: line, mdx: true })
+    ) {
+      table = true;
+      state.paragraph = undefined;
+      continue;
+    }
+    if (previous?.kind === "text" && !parsed.lazy && /^(?:=+|-+)[ \t]*$/.test(structural)) {
+      if (!parsed.owner.length && structural.startsWith("=")) return previous.lines.join(" ");
+      state.paragraph = undefined;
+      continue;
+    }
+    if (isThematicBreak(line, true) || !hasHeadingContent(line, true)) {
+      state.paragraph = undefined;
+      continue;
+    }
+    state.paragraph = mdxHeadingText(parsed.owner, previous, line.trim());
+  }
+  return undefined;
+}
+
+type MarkdownHeadingLeaf =
+  | {
+    kind: "text" | "definition";
+    owner: MdxHeadingContainer[];
+    lines: string[];
+    header: string;
+    tableBlocked: boolean;
+  }
+  | { kind: "indented-code"; owner: MdxHeadingContainer[]; interruption: boolean }
+  | { kind: "fence"; owner: MdxHeadingContainer[]; marker: string }
+  | { kind: "html"; owner: MdxHeadingContainer[]; end: RegExp | "blank" }
+  | { kind: "table"; owner: MdxHeadingContainer[] };
+
+/** The first root H1, with leaf and container ownership kept in the same stack. */
+function findFirstH1(markdown: string, mdx = false): string | undefined {
+  if (mdx) return findFirstMdxH1(markdown);
+  const body = markdown.replaceAll("\0", "\ufffd").replace(
+    /^---\n(?:---|[\s\S]*?\n---)(?:\n|$)/,
+    "",
+  );
+  const lines = body.split("\n");
+  let containers: MdxHeadingContainer[] = [];
+  let leaf: MarkdownHeadingLeaf | undefined;
+  let definitionThrough = -1;
+  let inactiveCodeOwner: MdxHeadingContainer[] | undefined;
+  for (const [index, source] of lines.entries()) {
+    if (index <= definitionThrough) continue;
+    const raw = expandHeadingIndentation(source);
+    let tableExited = false;
+    if (leaf?.kind === "fence" || leaf?.kind === "html" || leaf?.kind === "table") {
+      const content = readHeadingOwnedLine(raw, leaf.owner, false);
+      if (content !== undefined) {
+        if (leaf.kind === "fence") {
+          const closing = /^ {0,3}(`{3,}|~{3,})[ \t]*$/.exec(content)?.[1];
+          if (closing && closing[0] === leaf.marker[0] && closing.length >= leaf.marker.length) {
+            leaf = undefined;
+          }
+          continue;
+        }
+        if (leaf.kind === "html") {
+          if (leaf.end === "blank" ? !hasHeadingContent(content, false) : leaf.end.test(content)) {
+            leaf = undefined;
+          }
+          continue;
+        }
+        if (continuesHeadingTable(content, false)) continue;
+      }
+      tableExited = leaf.kind === "table" && content === undefined;
+      leaf = undefined;
+    }
+    if (leaf?.kind === "indented-code") {
+      const content = readHeadingOwnedLine(raw, leaf.owner, false);
+      if (content !== undefined && (!hasHeadingContent(content, false) || /^ {4}/.test(content))) {
+        if (hasHeadingContent(content, false)) leaf.interruption = true;
+        continue;
+      }
+    }
+    if (!hasHeadingContent(raw, false)) {
+      leaf = undefined;
+      const quote = containers.findIndex((frame) => frame.kind === "quote");
+      if (quote >= 0) containers = containers.slice(0, quote);
+      if (inactiveCodeOwner && !sameHeadingOwner(inactiveCodeOwner, containers)) {
+        inactiveCodeOwner = undefined;
+      }
+      const lastContainer = containers.at(-1);
+      if (lastContainer?.kind === "list" && lastContainer.empty) {
+        containers.pop();
+        inactiveCodeOwner = [...containers];
+      }
+      continue;
+    }
+    const context: HeadingInterruption | undefined =
+      leaf?.kind === "text" || leaf?.kind === "definition"
+        ? { kind: "paragraph", owner: leaf.owner }
+        : leaf?.kind === "indented-code" && leaf.interruption
+        ? { kind: "indented-code", owner: leaf.owner }
+        : undefined;
+    const oldContainers = containers;
+    const parsed = headingOwnerLine(raw, containers, context, false);
+    containers = parsed.owner;
+    const line = parsed.line;
+    const closedEmptyItem = oldContainers.findIndex((frame) =>
+      frame.kind === "list" && frame.empty && !containers.includes(frame)
+    );
+    if (closedEmptyItem >= 0) inactiveCodeOwner = oldContainers.slice(0, closedEmptyItem);
+    const codeStartInactive = inactiveCodeOwner !== undefined &&
+      sameHeadingOwner(inactiveCodeOwner, parsed.matchedOwner);
+    if (hasHeadingContent(line, false) || containers.length > parsed.matchedOwner.length) {
+      inactiveCodeOwner = undefined;
+    }
+    for (const [depth, frame] of containers.entries()) {
+      if (
+        frame.kind === "list" && (hasHeadingContent(line, false) || depth < containers.length - 1)
+      ) {
+        frame.empty = false;
+      }
+    }
+    const previous = parsed.sameParagraph && (leaf?.kind === "text" || leaf?.kind === "definition")
+      ? leaf
+      : undefined;
+    const html = markdownHtmlBlockEnd(line, !previous || parsed.lazy);
+    if (html) {
+      leaf = html === "blank" || !html.test(line)
+        ? {
+          kind: "html",
+          owner: headingLeafOwner(parsed),
+          end: html,
+        }
+        : undefined;
+      continue;
+    }
+    const fence = !parsed.lazy && markdownFenceStart(line);
+    if (fence) {
+      leaf = { kind: "fence", owner: headingLeafOwner(parsed), marker: fence };
+      continue;
+    }
+    if (!previous && !parsed.lazy && hasHeadingContent(line, false) && /^ {4}/.test(line)) {
+      leaf = {
+        kind: "indented-code",
+        owner: containers,
+        interruption: containers.length > parsed.matchedOwner.length ||
+          !codeStartInactive && sameHeadingOwner(parsed.matchedOwner, oldContainers),
+      };
+      continue;
+    }
+    if (!previous || previous.kind === "definition") {
+      const continuations = new Map<number, ReturnType<typeof headingOwnerLine>>();
+      const readContinuation = (
+        cursor: number,
+      ): ReturnType<typeof headingOwnerLine> | undefined => {
+        if (cursor >= lines.length) return undefined;
+        let next = continuations.get(cursor);
+        if (!next) {
+          next = headingOwnerLine(
+            lines[cursor] ?? "",
+            containers,
+            { kind: "paragraph", owner: containers },
+            false,
+          );
+          continuations.set(cursor, next);
+        }
+        return sameHeadingOwner(next.owner, containers) ? next : undefined;
+      };
+      const tableHeader = (cursor: number, header: string): boolean => {
+        const delimiter = readContinuation(cursor + 1);
+        return delimiter !== undefined && !delimiter.lazy &&
+          headingTableDelimiter({ header, delimiter: delimiter.line, mdx: false });
+      };
+      const length = tableHeader(index, line) ? 0 : headingDefinitionLines(
+        lines,
+        index,
+        0,
+        line,
+        0,
+        previous?.kind === "definition",
+        false,
+        (cursor) => readContinuation(cursor)?.line,
+        (cursor, content) => {
+          const next = readContinuation(cursor);
+          return tableHeader(cursor, content) ||
+            (next?.lazy
+              ? markdownHtmlBlockEnd(content, true) !== undefined
+              : interruptsDefinition(content, false));
+        },
+      );
+      if (length) {
+        definitionThrough = index + length - 1;
+        leaf = {
+          kind: "definition",
+          owner: containers,
+          lines: [],
+          header: length === 1 ? line : readContinuation(index + length - 1)?.line ?? line,
+          tableBlocked: false,
+        };
+        continue;
+      }
+    }
+    const atx = /^ {0,3}#{1,6}(?:[ \t]+(.*))?$/.exec(line);
+    if (atx && !parsed.lazy) {
+      if (!containers.length && /^ {0,3}#(?:[ \t]|$)/.test(line)) {
+        const content = atx[1] ?? "";
+        return /^#+[ \t]*$/.test(content) ? "" : content.replace(/[ \t]+#+[ \t]*$/, "").trim();
+      }
+      leaf = undefined;
+      continue;
+    }
+    if (
+      previous && !parsed.lazy &&
+      headingTableDelimiter({ header: previous.header, delimiter: line, mdx: false })
+    ) {
+      const headerHtml = markdownHtmlBlockEnd(previous.header, true);
+      if (headerHtml) {
+        leaf = { kind: "html", owner: containers, end: headerHtml };
+        continue;
+      }
+      leaf = previous.tableBlocked
+        ? {
+          ...previous,
+          lines: [...previous.lines, line.trim()],
+          header: line,
+          tableBlocked: false,
+        }
+        : { kind: "table", owner: containers };
+      continue;
+    }
+    if (
+      previous?.kind === "text" && !parsed.lazy &&
+      /^ {0,3}(?:=+|-+)[ \t]*$/.test(line)
+    ) {
+      if (!containers.length && /^ {0,3}=/.test(line)) return previous.lines.join(" ");
+      leaf = undefined;
+      continue;
+    }
+    if (isThematicBreak(line) || !hasHeadingContent(line, false)) {
+      leaf = undefined;
+      continue;
+    }
+    const text = previous?.kind === "text" ? previous.lines : [];
+    text.push(line.trim());
+    leaf = {
+      kind: "text",
+      owner: containers,
+      lines: text,
+      header: line,
+      tableBlocked: tableExited && containers.length === parsed.matchedOwner.length,
+    };
+  }
+  return undefined;
+}
+
+const MAX_TITLE_SLUG_LENGTH = 80;
+
+/** A short slug from a title, without a leading list number such as "20. ". */
+function slugifyTitle(title: string): string {
+  const slug = slugifyKnowledgeValue(title.replace(/^\d+[.)]\s+/, ""))
+    .slice(0, MAX_TITLE_SLUG_LENGTH).replace(/-+$/, "") || "document";
+  const portable = /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])$/i.test(slug)
+    ? `${slug}-document`
+    : slug;
+  return escapeReservedKnowledgeSlug(portable);
+}
+
+interface KnowledgeTitleAllocation {
+  observed: Map<number, string | undefined>;
+  sources: Map<string, number>;
+  candidates: Map<string, Set<number>>;
+  next: number;
+  owners: Map<number, string | undefined>;
+  discoveryComplete: boolean;
+}
+
+function observeKnowledgeCandidate(
+  state: KnowledgeTitleAllocation,
+  attempt: number,
+  owner: string | undefined,
+  occupied = true,
+) {
+  const prior = state.owners.get(attempt);
+  if (prior !== undefined && prior !== owner) {
+    const candidates = state.candidates.get(prior);
+    candidates?.delete(attempt);
+    if (state.sources.get(prior) === attempt) {
+      state.sources.delete(prior);
+      if (candidates?.size) {
+        let earliest = Infinity;
+        for (const candidate of candidates) earliest = Math.min(earliest, candidate);
+        state.sources.set(prior, earliest);
+      }
+    }
+    if (!candidates?.size) state.candidates.delete(prior);
+  }
+  if (owner !== undefined) {
+    const candidates = state.candidates.get(owner) ?? new Set<number>();
+    candidates.add(attempt);
+    state.candidates.set(owner, candidates);
+  }
+  state.owners.set(attempt, owner);
+  if (occupied) state.observed.set(attempt, owner);
+  if (owner !== undefined && attempt < (state.sources.get(owner) ?? Infinity)) {
+    state.sources.set(owner, attempt);
+  }
+  while (state.observed.has(state.next)) state.next += 1;
+}
+
+/** Nonstandard extension spellings retain a separate internal identity, never a path. */
+function knowledgeCandidateKey(fileName: string): string {
+  return fileName.endsWith(".md") ? fileName.slice(0, -3) : `\0${fileName}`;
+}
+
+function knowledgeCandidateFileName(candidate: string): string {
+  return candidate.startsWith("\0") ? candidate.slice(1) : `${candidate}.md`;
+}
+
+// Bound process-local publication observations without retaining allocation sessions.
+const knowledgePublicationVersions = new Map<string, symbol>();
+
+function knowledgePublicationVersion(outputDir: string, changed = false): symbol {
+  const key = resolve(outputDir);
+  const version = (!changed && knowledgePublicationVersions.get(key)) || Symbol();
+  knowledgePublicationVersions.delete(key);
+  knowledgePublicationVersions.set(key, version);
+  if (knowledgePublicationVersions.size > 1024) {
+    const oldest = knowledgePublicationVersions.keys().next().value;
+    if (oldest !== undefined) knowledgePublicationVersions.delete(oldest);
+  }
+  return version;
+}
+
+interface KnowledgeDirectoryAllocation {
+  publicationVersion?: symbol;
+  invalidated?: boolean;
+  titles: Map<string, KnowledgeTitleAllocation>;
+  tail: Promise<void>;
+  listing?: Map<string, Map<string, Deno.DirEntry>>;
+  sourceOwners?: Map<string, string | undefined>;
+  sourceCandidates?: Map<string, Set<string>>;
+  relativeLegacyNames?: Set<string>;
+  ambiguousResourceNames?: Set<string>;
+}
+
+function invalidateKnowledgeDirectory(directory: KnowledgeDirectoryAllocation): void {
+  directory.titles.clear();
+  directory.listing = undefined;
+  directory.sourceOwners = undefined;
+  directory.sourceCandidates = undefined;
+  directory.relativeLegacyNames = undefined;
+  directory.ambiguousResourceNames = undefined;
+  directory.invalidated = false;
+}
+
+/** Invocation-local observations only; never share this across ingestion runs. */
+export class KnowledgeAllocationSession {
+  private readonly directories = new Map<string, KnowledgeDirectoryAllocation>();
+
+  private async enqueue<T>(
+    outputDir: string,
+    write: (directory: KnowledgeDirectoryAllocation) => Promise<T>,
+  ): Promise<T> {
+    let directory = this.directories.get(outputDir);
+    if (!directory) {
+      directory = { titles: new Map(), tail: Promise.resolve() };
+      this.directories.set(outputDir, directory);
+    }
+    const allocation = directory;
+    const result = allocation.tail.then(() => write(allocation));
+    allocation.tail = result.then(() => undefined, () => undefined);
+    return await result;
+  }
+
+  async allocate<T>(
+    outputDir: string,
+    slug: string,
+    write: (
+      state: KnowledgeTitleAllocation,
+      siblings: () => Promise<Deno.DirEntry[]>,
+      recordWrite: (candidate: string, owner: string) => void,
+      selectedSlug: string,
+      cachedOwner: (candidate: string) => { owner: string | undefined } | undefined,
+      publishedCandidate?: string,
+      selectedOutputName?: string,
+    ) => Promise<T>,
+    identity?: {
+      owners: string[][];
+      localPath?: string;
+      hints?: () => Promise<SourceOutputHint[]>;
+      readOwner: (candidate: string) => Promise<string | undefined>;
+    },
+    guard?: (write: () => Promise<T>) => Promise<T>,
+  ): Promise<T> {
+    return await this.enqueue(outputDir, async (directory) => {
+      const allocate = async () => {
+        const version = knowledgePublicationVersion(outputDir);
+        if (directory.invalidated || directory.publicationVersion !== version) {
+          invalidateKnowledgeDirectory(directory);
+        }
+        directory.publicationVersion = version;
+        const loadListing = async () => {
+          if (directory.listing) return directory.listing;
+          const families = new Map<string, Map<string, Deno.DirEntry>>();
+          let entries: Deno.DirEntry[];
+          try {
+            entries = await Array.fromAsync(Deno.readDir(outputDir));
+          } catch (error) {
+            if (!(error instanceof Deno.errors.NotFound)) throw error;
+            entries = [];
+          }
+          for (const entry of entries) {
+            if (
+              !entry.name.toLowerCase().endsWith(".md") ||
+              !isKnowledgeSourceOutputCandidate(entry.name.slice(0, -3))
+            ) continue;
+            const stem = entry.name.slice(0, -3);
+            const names = [stem];
+            const suffix = /^(.*)-([1-9]\d*)$/.exec(stem);
+            if (
+              suffix && suffix[1] !== undefined && Number.isSafeInteger(Number(suffix[2])) &&
+              Number(suffix[2]) >= 2
+            ) names.push(suffix[1]);
+            for (const name of names) {
+              const family = families.get(name) ?? new Map<string, Deno.DirEntry>();
+              family.set(entry.name, entry);
+              families.set(name, family);
+            }
+          }
+          directory.listing = families;
+          return families;
+        };
+        const recordCandidate = (candidate: string, owner: string) => {
+          const fileName = knowledgeCandidateFileName(candidate);
+          const stem = fileName.slice(0, -3);
+          const prior = directory.sourceOwners?.get(candidate);
+          if (prior !== undefined && prior !== owner) {
+            directory.sourceCandidates?.get(prior)?.delete(candidate);
+          }
+          directory.sourceOwners?.set(candidate, owner);
+          const legacyName = relativeLegacyLocalName(owner);
+          if (legacyName !== undefined) directory.relativeLegacyNames?.add(legacyName);
+          const resourceName = ambiguousRelativeResourceName(owner);
+          if (resourceName !== undefined) directory.ambiguousResourceNames?.add(resourceName);
+          if (directory.sourceCandidates) {
+            const candidates = directory.sourceCandidates.get(owner) ?? new Set<string>();
+            candidates.add(candidate);
+            directory.sourceCandidates.set(owner, candidates);
+          }
+          const exactState = candidate.startsWith("\0")
+            ? directory.titles.get(candidate)
+            : undefined;
+          if (exactState) {
+            observeKnowledgeCandidate(exactState, 1, owner, exactState.observed.has(1));
+          }
+          const families: Array<{ name: string; attempt: number }> = [{
+            name: stem,
+            attempt: 1,
+          }];
+          const suffix = /^(.*)-([1-9]\d*)$/.exec(stem);
+          if (
+            suffix?.[1] !== undefined && Number.isSafeInteger(Number(suffix[2])) &&
+            Number(suffix[2]) >= 2
+          ) {
+            families.push({ name: suffix[1], attempt: Number(suffix[2]) });
+          }
+          const entry: Deno.DirEntry = {
+            name: fileName,
+            isFile: true,
+            isDirectory: false,
+            isSymlink: false,
+          };
+          for (const family of families) {
+            if (directory.listing) {
+              const entries = directory.listing.get(family.name) ??
+                new Map<string, Deno.DirEntry>();
+              entries.set(entry.name, entry);
+              directory.listing.set(family.name, entries);
+            }
+            const affected = candidate.startsWith("\0")
+              ? undefined
+              : directory.titles.get(family.name);
+            if (affected) {
+              observeKnowledgeCandidate(
+                affected,
+                family.attempt,
+                owner,
+                affected.observed.has(family.attempt),
+              );
+            }
+          }
+        };
+        let publishedCandidate: string | undefined;
+        let selectedOutputName: string | undefined;
+        if (identity && identity.owners.length) {
+          if (!directory.sourceOwners) {
+            const owners = new Map<string, string | undefined>();
+            const names = new Map<string, Deno.DirEntry>();
+            for (const family of (await loadListing()).values()) {
+              for (const [name, entry] of family) names.set(name, entry);
+            }
+            for (const [name, entry] of names) {
+              if (entry.isFile && !entry.isSymlink) {
+                const candidate = knowledgeCandidateKey(name);
+                owners.set(candidate, await identity.readOwner(candidate));
+              }
+            }
+            directory.sourceOwners = owners;
+            directory.sourceCandidates = new Map();
+            directory.relativeLegacyNames = new Set();
+            directory.ambiguousResourceNames = new Set();
+            for (const [name, owner] of owners) {
+              const legacyName = relativeLegacyLocalName(owner);
+              if (legacyName !== undefined) directory.relativeLegacyNames.add(legacyName);
+              const resourceName = ambiguousRelativeResourceName(owner);
+              if (resourceName !== undefined) directory.ambiguousResourceNames.add(resourceName);
+              if (owner === undefined) continue;
+              const candidates = directory.sourceCandidates.get(owner) ?? new Set<string>();
+              candidates.add(name);
+              directory.sourceCandidates.set(owner, candidates);
+            }
+          }
+          const published = new Map<string, string>();
+          for (const hint of await identity.hints?.() ?? []) {
+            const candidate = hint.fileName === undefined
+              ? hint.candidate
+              : knowledgeCandidateKey(hint.fileName);
+            if (await identity.readOwner(candidate) === hint.owner) {
+              recordCandidate(candidate, hint.owner);
+              published.set(hint.owner, candidate);
+            }
+          }
+          // A compatible exact-path writer can migrate an ambiguous document between
+          // allocations. Re-read only matching cached candidates before refusing.
+          if (identity.localPath !== undefined && isAbsolute(identity.localPath)) {
+            const name = basename(identity.localPath);
+            if (
+              directory.relativeLegacyNames?.has(name) ||
+              directory.ambiguousResourceNames?.has(name)
+            ) {
+              for (const [candidate, owner] of directory.sourceOwners ?? []) {
+                const cachedPositive = owner !== undefined &&
+                  identity.owners.some((group) => group.includes(owner));
+                if (
+                  !cachedPositive && relativeLegacyLocalName(owner) !== name &&
+                  ambiguousRelativeResourceName(owner) !== name
+                ) continue;
+                const current = await identity.readOwner(candidate);
+                if (current === owner) continue;
+                if (current !== undefined) recordCandidate(candidate, current);
+                else {
+                  if (owner !== undefined) {
+                    directory.sourceCandidates?.get(owner)?.delete(candidate);
+                  }
+                  directory.sourceOwners?.set(candidate, undefined);
+                }
+              }
+              directory.relativeLegacyNames?.delete(name);
+              directory.ambiguousResourceNames?.delete(name);
+              for (const owner of directory.sourceOwners?.values() ?? []) {
+                if (relativeLegacyLocalName(owner) === name) {
+                  directory.relativeLegacyNames?.add(name);
+                }
+                if (ambiguousRelativeResourceName(owner) === name) {
+                  directory.ambiguousResourceNames?.add(name);
+                }
+              }
+            }
+          }
+          const knownOwner = identity.owners.some((group) =>
+            group.some((owner) => (directory.sourceCandidates?.get(owner)?.size ?? 0) > 0)
+          );
+          if (
+            identity.localPath !== undefined && isAbsolute(identity.localPath) && !knownOwner &&
+            directory.relativeLegacyNames?.has(basename(identity.localPath))
+          ) {
+            throw new Error(
+              "Cannot establish local knowledge ownership from a relative legacy source. " +
+                "Verify the existing document and use --slug to migrate its explicit output path.",
+            );
+          }
+          if (
+            identity.localPath !== undefined && isAbsolute(identity.localPath) && !knownOwner &&
+            directory.ambiguousResourceNames?.has(basename(identity.localPath))
+          ) {
+            throw new Error(
+              "Cannot establish knowledge ownership from an ambiguous relative resource. " +
+                "Verify the existing document and use --slug to migrate its explicit output path.",
+            );
+          }
+          ownerSelection: for (const group of identity.owners) {
+            const matches = [
+              ...new Set(
+                group.flatMap((owner) => [...(directory.sourceCandidates?.get(owner) ?? [])]),
+              ),
+            ];
+            if (!matches.length) continue;
+            const attempt = (name: string) => {
+              if (name === slug) return 1;
+              const tail = name.startsWith(slug + "-") ? name.slice(slug.length + 1) : "";
+              return /^[1-9]\d*$/.test(tail) && Number.isSafeInteger(Number(tail)) &&
+                  Number(tail) >= 2
+                ? Number(tail)
+                : Infinity;
+            };
+            const preferred = new Set(group.flatMap((owner) => {
+              const candidate = published.get(owner);
+              return candidate === undefined ? [] : [candidate];
+            }));
+            matches.sort((a, b) =>
+              Number(preferred.has(b)) - Number(preferred.has(a)) ||
+              attempt(a) - attempt(b) || a.localeCompare(b)
+            );
+            for (const candidate of matches) {
+              const current = await identity.readOwner(candidate);
+              if (current === undefined || !group.includes(current)) {
+                const prior = directory.sourceOwners.get(candidate);
+                if (prior !== undefined) directory.sourceCandidates?.get(prior)?.delete(candidate);
+                directory.sourceOwners.set(candidate, current);
+                if (current !== undefined) {
+                  const candidates = directory.sourceCandidates?.get(current) ?? new Set<string>();
+                  candidates.add(candidate);
+                  directory.sourceCandidates?.set(current, candidates);
+                }
+                continue;
+              }
+              if (candidate.startsWith("\0")) {
+                selectedOutputName = knowledgeCandidateFileName(candidate);
+                slug = selectedOutputName.slice(0, -3);
+                publishedCandidate = slug;
+              } else {
+                if (!Number.isFinite(attempt(candidate))) slug = candidate;
+                if (preferred.has(candidate)) publishedCandidate = candidate;
+              }
+              break ownerSelection;
+            }
+          }
+        }
+        const stateKey = selectedOutputName === undefined
+          ? slug
+          : knowledgeCandidateKey(selectedOutputName);
+        let state = directory.titles.get(stateKey);
+        if (!state) {
+          state = {
+            observed: new Map(),
+            sources: new Map(),
+            candidates: new Map(),
+            next: 1,
+            owners: new Map(),
+            discoveryComplete: false,
+          };
+          directory.titles.set(stateKey, state);
+        }
+        return write(
+          state,
+          async () =>
+            [...((await loadListing()).get(slug)?.values() ?? [])].filter((entry) =>
+              selectedOutputName === undefined
+                ? entry.name.endsWith(".md")
+                : entry.name === selectedOutputName
+            ),
+          (candidate, owner) => {
+            if (directory.publicationVersion !== knowledgePublicationVersion(outputDir)) {
+              directory.invalidated = true;
+            }
+            directory.publicationVersion = knowledgePublicationVersion(outputDir, true);
+            recordCandidate(
+              selectedOutputName !== undefined && candidate === slug
+                ? knowledgeCandidateKey(selectedOutputName)
+                : candidate,
+              owner,
+            );
+          },
+          slug,
+          (candidate) => {
+            const key = selectedOutputName !== undefined && candidate === slug
+              ? knowledgeCandidateKey(selectedOutputName)
+              : candidate;
+            return directory.sourceOwners?.has(key)
+              ? { owner: directory.sourceOwners.get(key) }
+              : undefined;
+          },
+          publishedCandidate,
+          selectedOutputName,
+        );
+      };
+      try {
+        return await (guard ? guard(allocate) : allocate());
+      } catch (error) {
+        // A failed writer can still have published before reporting its failure.
+        directory.publicationVersion = knowledgePublicationVersion(outputDir, true);
+        invalidateKnowledgeDirectory(directory);
+        throw error;
+      }
+    });
+  }
+
+  /** Exact-path writers may replace any observed identity, even when they fail. */
+  async directWrite<T>(outputDir: string, write: () => Promise<T>): Promise<T> {
+    return await this.enqueue(outputDir, async (directory) => {
+      try {
+        return await write();
+      } finally {
+        directory.publicationVersion = knowledgePublicationVersion(outputDir, true);
+        invalidateKnowledgeDirectory(directory);
+      }
+    });
+  }
+}
+
+/** Keep allocation callers on the shared, generation-aware claim protocol. */
+const acquireKnowledgeCandidate = acquireKnowledgeTargetOutputClaim;
+
+/** A relative legacy origin has no recorded working directory and cannot prove ownership. */
+function relativeLegacyLocalName(owner: string | undefined): string | undefined {
+  if (owner === undefined) return undefined;
+  const value: unknown = JSON.parse(owner);
+  if (!Array.isArray(value) || value.length !== 2 || typeof value[1] !== "string") return undefined;
+  if (value[0] === "legacy-local") return isAbsolute(value[1]) ? undefined : basename(value[1]);
+  if (value[0] !== "sourceKey") return undefined;
+  let key: unknown;
+  try {
+    key = JSON.parse(value[1]);
+  } catch {
+    return undefined;
+  }
+  return Array.isArray(key) && key.length === 2 && key[0] === "local" &&
+      typeof key[1] === "string" && !isAbsolute(key[1])
+    ? basename(key[1])
+    : undefined;
+}
+
+/** An untyped relative resource cannot establish its original local working directory. */
+function ambiguousRelativeResourceName(owner: string | undefined): string | undefined {
+  if (owner === undefined) return undefined;
+  const value: unknown = JSON.parse(owner);
+  if (
+    !Array.isArray(value) || value.length !== 2 || value[0] !== "resource" ||
+    typeof value[1] !== "string" || isAbsolute(value[1]) ||
+    /^[a-z][a-z\d+.-]*:/i.test(value[1])
+  ) return undefined;
+  const path = normalize(value[1]).replaceAll("\\", "/");
+  return basename(path);
+}
+
+function knowledgeOwnerFromContent(path: string, content: string): string | undefined {
+  const metadata = inspectOkfDocument(path, content).metadata;
+  const storedKey = readKnowledgeIngestSourceKey(metadata);
+  const generated = metadata.generated;
+  if (generated !== null && typeof generated === "object" && "source_key" in generated) {
+    return storedKey === undefined ? undefined : JSON.stringify(["sourceKey", storedKey]);
+  }
+  if (metadata.resource === undefined) {
+    const local = readProvableLegacyLocalKnowledgeSource(metadata);
+    return local === undefined ? undefined : JSON.stringify(["legacy-local", local]);
+  }
+  const legacyGenerated = generated !== null && typeof generated === "object" &&
+    "by" in generated && typeof generated.by === "string" &&
+    /^veryfront\/\d/.test(generated.by);
+  return legacyGenerated && typeof metadata.resource === "string"
+    ? JSON.stringify(["resource", metadata.resource])
+    : undefined;
+}
+
+/** Exact paths share candidate reservations but deliberately permit sequential replacement. */
+async function writeExactKnowledgeOutput(
+  outputDir: string,
+  path: string,
+  content: string | Uint8Array<ArrayBuffer>,
+  signal: AbortSignal | undefined,
+): Promise<void> {
+  signal?.throwIfAborted();
+  const name = relative(outputDir, path).replaceAll("\\", "/");
+  // Markdown shares its stem with default allocation. NUL cannot occur in a filename,
+  // so asset claims cannot collide with any Markdown stem, including extensionless assets.
+  const candidate = name.toLowerCase().endsWith(".md") ? name.slice(0, -3) : `\0asset\0${name}`;
+  const bytes = typeof content === "string" ? new TextEncoder().encode(content) : content;
+  const claim = await acquireKnowledgeTargetOutputClaim(
+    outputDir,
+    candidate,
+    name,
+    await computeHash(JSON.stringify(["exact-path", name])),
+    await computeHashBytes(bytes),
+  );
+  if (claim.kind === "busy") throw new Error(`Knowledge output is busy or reserved: ${name}`);
+  const stage = join(dirname(claim.path), `${claim.generation}.output`);
+  try {
+    signal?.throwIfAborted();
+    await claim.validateTarget();
+    let mode: number | null = null;
+    try {
+      const existing = await Deno.lstat(path);
+      if (!existing.isFile || existing.isSymlink) {
+        throw new Error(`Knowledge output is not a regular file: ${name}`);
+      }
+      mode = existing.mode;
+    } catch (error) {
+      if (!isMissingKnowledgeOutput(error)) throw error;
+    }
+    await Deno.writeFile(stage, bytes, {
+      createNew: true,
+      signal,
+      ...(mode === null ? {} : { mode: mode & 0o777 }),
+    });
+    if (mode !== null) await Deno.chmod(stage, mode & 0o777);
+    signal?.throwIfAborted();
+    await claim.validateTarget();
+    await Deno.rename(stage, path);
+    // Automatic allocation only discovers top-level Markdown documents. Publish the
+    // same ownership hint for exact writers so already-primed sessions see them.
+    if (
+      typeof content === "string" && name.toLowerCase().endsWith(".md") && !name.includes("/") &&
+      isKnowledgeSourceOutputCandidate(candidate)
+    ) {
+      const owner = knowledgeOwnerFromContent(name, content);
+      if (owner !== undefined) {
+        await withKnowledgeSourceClaim(
+          outputDir,
+          owner,
+          signal,
+          (index) => index.record(owner, candidate, name),
+        );
+      }
+    }
+  } finally {
+    try {
+      await Deno.remove(stage).catch((error) => {
+        if (!isMissingKnowledgeOutput(error)) throw error;
+      });
+    } finally {
+      await releaseKnowledgeTargetOutputClaim(claim);
+    }
+  }
+}
+
+/** Re-read every reuse candidate; cached conflicts only avoid redundant probes. */
+async function writeKnowledgeFile(
+  outputDir: string,
+  slug: string,
+  identity: { resource: string; sourceKey?: string; localPath?: string; inputPath: string },
+  markdown: string,
+  signal: AbortSignal | undefined,
+  session: KnowledgeAllocationSession,
+): Promise<{ slug: string; path: string }> {
+  const publicationHash = await computeHash(markdown);
+  const sourceIdentity = (resource: string, sourceKey?: string) =>
+    JSON.stringify(
+      sourceKey === undefined ? ["resource", resource] : ["sourceKey", sourceKey],
+    );
+  const source = sourceIdentity(identity.resource, identity.sourceKey);
+  // A bare relative resource does not record whether it came from disk or an
+  // upload. Only an absolute origin can prove ownership without a typed key.
+  const legacySource = sourceIdentity(identity.resource);
+  const provableLegacyResource = isAbsolute(identity.resource) ||
+    /^[a-z][a-z\d+.-]*:/i.test(identity.resource);
+  const legacyOwners = identity.sourceKey === undefined || provableLegacyResource
+    ? [legacySource]
+    : [];
+  let localPath = identity.sourceKey === undefined ? identity.localPath : undefined;
+  if (identity.sourceKey !== undefined) {
+    try {
+      const key: unknown = JSON.parse(identity.sourceKey);
+      if (
+        Array.isArray(key) && key.length === 2 && key[0] === "local" &&
+        typeof key[1] === "string"
+      ) localPath = normalize(key[1]);
+    } catch { /* Opaque typed keys still retain their exact identity. */ }
+  }
+  const legacyLocalSource = localPath === undefined
+    ? undefined
+    : JSON.stringify(["legacy-local", localPath]);
+  const matchesOwner = (owner: string | undefined) =>
+    owner === source || (provableLegacyResource && owner === legacySource) ||
+    (legacyLocalSource !== undefined && owner === legacyLocalSource);
+  const reservationOwner = await computeHash(source);
+
+  const canonicalSource = localPath !== undefined
+    ? JSON.stringify(["local", localPath])
+    : identity.sourceKey === undefined
+    ? JSON.stringify(["local-input", normalize(identity.inputPath)])
+    : source;
+  const globalIdentity = identity.sourceKey !== undefined || localPath !== undefined;
+  let sourceIndex: SourceOutputIndex;
+  return await session.allocate(
+    outputDir,
+    slug,
+    async (
+      state,
+      listSiblings,
+      recordWrite,
+      selectedSlug,
+      cachedOwner,
+      publishedCandidate,
+      selectedOutputName,
+    ) => {
+      slug = selectedSlug;
+      const observe = (attempt: number, owner: string | undefined, occupied = true) =>
+        observeKnowledgeCandidate(state, attempt, owner, occupied);
+      const forgetAbsent = (attempt: number) => {
+        observe(attempt, undefined);
+        state.observed.delete(attempt);
+        state.owners.delete(attempt);
+        state.next = Math.min(state.next, attempt);
+      };
+      const inspectPath = async (path: string) => {
+        try {
+          const value = await inspectLink(path, { bigint: true });
+          const stage = value.isFile() && !value.isSymbolicLink() && value.nlink === 2n
+            ? await readProvenKnowledgeOutputStage(outputDir, basename(path).slice(0, -3))
+            : undefined;
+          return {
+            reusable: value.isFile() && !value.isSymbolicLink() &&
+              (value.nlink === 1n || stage !== undefined),
+            stage,
+          };
+        } catch (error) {
+          if (error instanceof Error && "code" in error && error.code === "ENOENT") {
+            throw new Deno.errors.NotFound();
+          }
+          throw error;
+        }
+      };
+      const reusablePath = async (path: string, recover = false) => {
+        const inspected = await inspectPath(path);
+        if (recover && inspected.stage) {
+          // This call is only made while holding the candidate reservation.
+          await Deno.remove(inspected.stage.stagePath);
+          const fresh = await inspectLink(path, { bigint: true });
+          return fresh.isFile() && !fresh.isSymbolicLink() && fresh.nlink === 1n;
+        }
+        return inspected.reusable;
+      };
+      // Sibling ownership is a snapshot for this ingestion run. Selected paths are always reread.
+      const discover = async (attempt: number, path: string) => {
+        signal?.throwIfAborted();
+        try {
+          const name = basename(path).slice(0, -3);
+          const claimPath = await knowledgeOutputClaimPath(outputDir, name);
+          try {
+            if (await readKnowledgeClaimOwner(claimPath) === reservationOwner) {
+              throw new Error(`Knowledge output is busy or reserved: ${name}.md`);
+            }
+          } catch (error) {
+            if (!(error instanceof Deno.errors.NotFound)) throw error;
+          }
+          const cached = cachedOwner(name);
+          if (cached !== undefined) {
+            observe(attempt, cached.owner, false);
+            return;
+          }
+          if (!(await inspectPath(path)).reusable) {
+            observe(attempt, undefined, false);
+            return;
+          }
+          observe(attempt, knowledgeOwnerFromContent(path, await Deno.readTextFile(path)), false);
+        } catch (error) {
+          if (error instanceof Deno.errors.NotFound) forgetAbsent(attempt);
+          else if (
+            error instanceof Deno.errors.PermissionDenied ||
+            (error instanceof Error && "code" in error &&
+              (error.code === "EACCES" || error.code === "EPERM"))
+          ) {
+            observe(attempt, undefined, false);
+          } else throw error;
+        }
+      };
+      if (!state.discoveryComplete) {
+        const siblings: Array<{ attempt: number; path: string }> = [];
+        for (const entry of await listSiblings()) {
+          if (!entry.isFile || entry.isSymlink) continue;
+          const suffix =
+            entry.name.startsWith(`${slug}-`) && entry.name.toLowerCase().endsWith(".md")
+              ? entry.name.slice(slug.length + 1, -3)
+              : undefined;
+          const attempt = entry.name.slice(0, -3) === slug
+            ? 1
+            : suffix && /^[1-9]\d*$/.test(suffix) && Number.isSafeInteger(Number(suffix)) &&
+                Number(suffix) >= 2
+            ? Number(suffix)
+            : undefined;
+          if (attempt !== undefined) {
+            siblings.push({ attempt, path: join(outputDir, entry.name) });
+          }
+        }
+        siblings.sort((a, b) => a.attempt - b.attempt);
+        for (const sibling of siblings) await discover(sibling.attempt, sibling.path);
+        state.discoveryComplete = true;
+      }
+      const preferredCandidate = () => {
+        const publishedAttempt = publishedCandidate === slug
+          ? 1
+          : publishedCandidate?.startsWith(slug + "-")
+          ? Number(publishedCandidate.slice(slug.length + 1))
+          : undefined;
+        const publishedOwner = publishedAttempt === undefined
+          ? undefined
+          : state.owners.get(publishedAttempt);
+        const typed = identity.sourceKey === undefined ? undefined : state.sources.get(source);
+        if (typed !== undefined) return publishedOwner === source ? publishedAttempt : typed;
+        if (publishedAttempt !== undefined && matchesOwner(publishedOwner)) return publishedAttempt;
+        const resourceOwner = identity.sourceKey === undefined || provableLegacyResource
+          ? state.sources.get(legacySource)
+          : undefined;
+        const localOwner = legacyLocalSource === undefined
+          ? undefined
+          : state.sources.get(legacyLocalSource);
+        if (resourceOwner === undefined) return localOwner;
+        return localOwner === undefined ? resourceOwner : Math.min(resourceOwner, localOwner);
+      };
+      const firstCandidate = preferredCandidate() ?? state.next;
+      for (let attempt = firstCandidate;; attempt += 1) {
+        signal?.throwIfAborted();
+        if (!Number.isSafeInteger(attempt) || attempt < 1) {
+          throw new Error(`Knowledge output suffix exhausted: ${slug}.md`);
+        }
+        const observed = state.owners.get(attempt);
+        if (observed !== undefined && !matchesOwner(observed)) continue;
+        const remember = (owner: string | undefined) => {
+          observe(attempt, owner);
+        };
+        const candidate = attempt === 1 ? slug : `${slug}-${attempt}`;
+        const path = join(
+          outputDir,
+          selectedOutputName !== undefined && attempt === 1
+            ? selectedOutputName
+            : `${candidate}.md`,
+        );
+        const priorOwner = state.owners.get(attempt);
+        const reselectLostHint = () => {
+          if (!matchesOwner(priorOwner)) return false;
+          const fallback = preferredCandidate();
+          if (fallback === undefined || fallback === attempt) return false;
+          attempt = fallback - 1;
+          return true;
+        };
+        const inspectOwner = (content: string) => {
+          const owner = knowledgeOwnerFromContent(path, content);
+          remember(owner);
+          return {
+            matches: matchesOwner(owner),
+            keyed: owner !== undefined && owner !== legacySource,
+          };
+        };
+        signal?.throwIfAborted();
+        const lock = await acquireKnowledgeCandidate(
+          outputDir,
+          candidate,
+          basename(path),
+          reservationOwner,
+          publicationHash,
+        );
+        if (lock.kind === "busy") {
+          if (
+            (identity.sourceKey !== undefined && state.sources.get(source) === attempt) ||
+            lock.owner === reservationOwner ||
+            lock.owner === undefined
+          ) {
+            throw new Error(`Knowledge output is busy or reserved: ${candidate}.md`);
+          }
+          continue;
+        }
+        try {
+          signal?.throwIfAborted();
+          let existing: string;
+          try {
+            if (!await reusablePath(path, true)) {
+              remember(undefined);
+              reselectLostHint();
+              continue;
+            }
+            existing = await Deno.readTextFile(path);
+          } catch (error) {
+            if (!(error instanceof Deno.errors.NotFound)) throw error;
+            forgetAbsent(attempt);
+            if (reselectLostHint()) continue;
+            try {
+              const owner = knowledgeOwnerFromContent(path, markdown);
+              if (globalIdentity && owner !== undefined) {
+                await sourceIndex.record(owner, candidate, basename(path));
+              }
+              signal?.throwIfAborted();
+              await publishKnowledgeOutput({
+                path,
+                claim: lock,
+                content: markdown,
+                signal,
+                publication: { kind: "create" },
+              });
+              remember(source);
+              recordWrite(candidate, source);
+              return { slug: candidate, path };
+            } catch (writeError) {
+              if (!(writeError instanceof Deno.errors.AlreadyExists)) throw writeError;
+              // Noncooperating writers and dangling links still require a winner re-read.
+              try {
+                if (!await reusablePath(path, true)) {
+                  remember(undefined);
+                  reselectLostHint();
+                  continue;
+                }
+                existing = await Deno.readTextFile(path);
+              } catch (readError) {
+                if (!(readError instanceof Deno.errors.NotFound)) throw readError;
+                remember(undefined);
+                continue;
+              }
+            }
+          }
+          if (!await reusablePath(path, true)) {
+            remember(undefined);
+            reselectLostHint();
+            continue;
+          }
+          if (!inspectOwner(existing).matches) {
+            reselectLostHint();
+            continue;
+          }
+          signal?.throwIfAborted();
+          const owner = knowledgeOwnerFromContent(path, markdown);
+          if (globalIdentity && owner !== undefined) {
+            await sourceIndex.record(owner, candidate, basename(path));
+          }
+          signal?.throwIfAborted();
+          const published = await publishKnowledgeOutput({
+            path,
+            claim: lock,
+            content: markdown,
+            signal,
+            publication: {
+              kind: "replace",
+              validate: async () => {
+                if (!await reusablePath(path, true)) return false;
+                const current = await Deno.readTextFile(path);
+                return current === existing && inspectOwner(current).matches;
+              },
+            },
+          });
+          if (!published) {
+            remember(undefined);
+            reselectLostHint();
+            continue;
+          }
+          remember(source);
+          recordWrite(candidate, source);
+          return { slug: candidate, path };
+        } finally {
+          await releaseKnowledgeTargetOutputClaim(lock);
+        }
+      }
+    },
+    {
+      localPath,
+      hints: () =>
+        sourceIndex.read([
+          source,
+          ...legacyOwners,
+          ...(legacyLocalSource === undefined ? [] : [legacyLocalSource]),
+        ]),
+      owners: !globalIdentity
+        ? []
+        : identity.sourceKey === undefined
+        ? [[...legacyOwners, ...(legacyLocalSource === undefined ? [] : [legacyLocalSource])]]
+        : [[source], [
+          ...legacyOwners,
+          ...(legacyLocalSource === undefined ? [] : [legacyLocalSource]),
+        ]],
+      readOwner: async (candidate) => {
+        signal?.throwIfAborted();
+        const path = join(outputDir, knowledgeCandidateFileName(candidate));
+        try {
+          const stat = await inspectLink(path, { bigint: true });
+          if (!stat.isFile() || stat.isSymbolicLink()) return undefined;
+          if (stat.nlink !== 1n) {
+            if (stat.nlink !== 2n) return undefined;
+            const stage = await readProvenKnowledgeOutputStage(
+              outputDir,
+              knowledgeCandidateFileName(candidate).slice(0, -3),
+            );
+            return stage === undefined ? undefined : knowledgeOwnerFromContent(path, stage.content);
+          }
+          return knowledgeOwnerFromContent(path, await Deno.readTextFile(path));
+        } catch (error) {
+          if (
+            error instanceof Deno.errors.NotFound ||
+            error instanceof Deno.errors.PermissionDenied ||
+            (error instanceof Error && "code" in error &&
+              ["ENOENT", "EACCES", "EPERM"].includes(String(error.code)))
+          ) return undefined;
+          throw error;
+        }
+      },
+    },
+    (allocate) =>
+      withKnowledgeSourceClaim(outputDir, canonicalSource, signal, async (index) => {
+        sourceIndex = index;
+        return await allocate();
+      }),
+  );
 }
 
 function validateOkfBundleRelativePath(path: string): string {
@@ -321,7 +2537,7 @@ async function preserveOkfCompanion(input: {
   const outputPath = join(input.outputDir, ...relativePath.split("/"));
   await Deno.mkdir(dirname(outputPath), { recursive: true });
   input.signal?.throwIfAborted();
-  await Deno.writeFile(outputPath, bytes, { signal: input.signal });
+  await writeExactKnowledgeOutput(input.outputDir, outputPath, bytes, input.signal);
   return {
     success: true,
     source_path: input.filePath,
@@ -359,7 +2575,7 @@ async function preserveOkfDocument(input: {
   const outputPath = join(input.outputDir, ...relativePath.split("/"));
   await Deno.mkdir(dirname(outputPath), { recursive: true });
   input.signal?.throwIfAborted();
-  await Deno.writeTextFile(outputPath, source, { signal: input.signal });
+  await writeExactKnowledgeOutput(input.outputDir, outputPath, source, input.signal);
   const title = typeof inspected.metadata.title === "string" && inspected.metadata.title.trim()
     ? inspected.metadata.title
     : titleizeFilename(relativePath);
@@ -471,7 +2687,7 @@ async function parseCsvLike(path: string, delimiter: "," | "\t"): Promise<Parser
 }
 
 async function parseText(path: string): Promise<ParserOutput> {
-  const content = cleanText(await Deno.readTextFile(path));
+  const content = cleanText(await Deno.readTextFile(path), /\.mdx?$/i.test(path));
   return {
     content,
     stats: { characters: content.length, lines: content ? content.split("\n").length : 0 },
@@ -533,6 +2749,7 @@ async function parseWithKreuzberg(
       onProgress: deps.onProgress,
       signal: deps.signal,
     }),
+    true,
   );
   return {
     content: content || "_No extractable text found in document._",
@@ -630,26 +2847,12 @@ async function defaultExtractDocumentText(
   );
 }
 
-export async function runKnowledgeParser(input: {
-  filePath: string;
-  outputDir: string;
-  description?: string;
-  slug?: string;
-  sourceReference?: string;
-  okfRelativePath?: string;
-  okfRole?: "companion";
-}, deps: RunKnowledgeParsersDeps = {}): Promise<KnowledgeParserResult> {
-  const [result] = await runKnowledgeParsers({
-    files: [{
-      filePath: input.filePath,
-      description: input.description,
-      slug: input.slug,
-      sourceReference: input.sourceReference,
-      okfRelativePath: input.okfRelativePath,
-      okfRole: input.okfRole,
-    }],
-    outputDir: input.outputDir,
-  }, deps);
+export async function runKnowledgeParser(
+  input: KnowledgeParserInput & { outputDir: string },
+  deps: RunKnowledgeParsersDeps = {},
+): Promise<KnowledgeParserResult> {
+  const { outputDir, ...file } = input;
+  const [result] = await runKnowledgeParsers({ files: [file], outputDir }, deps);
 
   if (!result) {
     throw new Error("knowledge ingest parser returned no results");
@@ -675,6 +2878,7 @@ export async function runKnowledgeParsers(input: {
 
   deps.signal?.throwIfAborted();
   await Deno.mkdir(input.outputDir, { recursive: true });
+  const allocationSession = deps.allocationSession ?? new KnowledgeAllocationSession();
   const results: KnowledgeParserResult[] = [];
 
   function preserveOkfFile(file: KnowledgeParserInput): Promise<KnowledgeParserResult> {
@@ -713,7 +2917,10 @@ export async function runKnowledgeParsers(input: {
 
       deps.signal?.throwIfAborted();
       if (file.okfRelativePath !== undefined) {
-        const preserve = preserveOkfFile(file);
+        const preserve = allocationSession.directWrite(
+          input.outputDir,
+          () => preserveOkfFile(file),
+        );
         results.push(await preserve);
         continue;
       }
@@ -721,37 +2928,86 @@ export async function runKnowledgeParsers(input: {
       const definition = selectParserDefinition(file.filePath);
       const parsed = await definition.parse(file.filePath, parserDeps);
       deps.signal?.throwIfAborted();
-      const content = cleanText(parsed.content);
-      const fileName = basename(file.filePath);
+      const content = cleanText(
+        parsed.content,
+        definition.sourceType === "md" || definition.sourceType === "mdx" ||
+          parsed.stats.engine === "kreuzberg",
+      );
+      const fileName = file.sourceName ?? basename(file.filePath);
       const extension = extname(fileName);
-      const stem = extension ? fileName.slice(0, -extension.length) : fileName;
-      const slug = file.slug ?? slugifyKnowledgeValue(stem);
-      const description = file.description ?? `Parsed from ${basename(file.filePath)}`;
-      const title = titleizeFilename(file.filePath);
-      const outputPath = join(input.outputDir, `${slug}.md`);
+      const stem = (extension ? fileName.slice(0, -extension.length) : fileName).trim() ||
+        fileName;
+      const description = file.description ?? `Parsed from ${fileName}`;
+      // Only Markdown output has headings; in code and plain text `#` starts a comment.
+      const isMarkdown = definition.sourceType === "md" || definition.sourceType === "mdx" ||
+        parsed.stats.engine === "kreuzberg";
+      const heading = isMarkdown
+        ? findFirstH1(content, definition.sourceType === "mdx")
+        : undefined;
+      const title = heading || stem;
+      const sourceReference = file.sourceReference ?? (file.resource === undefined &&
+          file.sourceKey === undefined && file.sourceKind !== "upload"
+        ? normalize(file.filePath)
+        : fileName);
+      const resource = file.resource ?? sourceReference;
+      const localReference = file.sourceReference ?? resource;
+      const localPath = file.sourceKind !== "upload" &&
+          normalize(resource) === normalize(file.filePath) &&
+          normalize(localReference) === normalize(file.filePath)
+        ? normalizeProvableLegacyLocalKnowledgePath(localReference, true)
+        : undefined;
       const markdown = [
-        buildFrontmatter(
-          file.sourceReference ?? basename(file.filePath),
-          definition.sourceType,
+        buildFrontmatter({
+          title,
           description,
-        ),
+          resource,
+          sourceKey: file.sourceKey,
+          tags: (file.sourceKind === undefined
+              ? sourceReference.startsWith("uploads/")
+              : file.sourceKind === "upload")
+            ? ["upload", definition.sourceType]
+            : [definition.sourceType],
+          source: fileName,
+          sourceType: definition.sourceType,
+        }),
         "",
-        `# ${title}`,
-        "",
+        ...(heading !== undefined ? [] : [`# ${title}`, ""]),
         content,
         "",
       ].join("\n");
 
       deps.signal?.throwIfAborted();
-      await Deno.writeTextFile(outputPath, markdown, { signal: deps.signal });
+      const preferredSlug = file.slug ?? slugifyTitle(title);
+      let slug: string;
+      let outputPath: string;
+      if (file.slug) {
+        slug = file.slug;
+        outputPath = join(input.outputDir, `${slug}.md`);
+        await allocationSession.directWrite(
+          input.outputDir,
+          () => writeExactKnowledgeOutput(input.outputDir, outputPath, markdown, deps.signal),
+        );
+      } else {
+        ({ slug, path: outputPath } = await writeKnowledgeFile(
+          input.outputDir,
+          preferredSlug,
+          { resource, sourceKey: file.sourceKey, localPath, inputPath: file.filePath },
+          markdown,
+          deps.signal,
+          allocationSession,
+        ));
+      }
       results.push({
         success: true,
         source_path: file.filePath,
         source_filename: basename(file.filePath),
         source_type: definition.sourceType,
         slug,
+        preferred_slug: preferredSlug,
         sandbox_output_path: outputPath,
-        suggested_project_path: `knowledge/${slug}.md`,
+        suggested_project_path: `knowledge/${
+          relative(input.outputDir, outputPath).replaceAll("\\", "/")
+        }`,
         description,
         title,
         summary: buildSummary(definition.sourceType, parsed.stats),

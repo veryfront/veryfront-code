@@ -79,6 +79,25 @@ describe("yaml general parser", () => {
     assertEquals(parser.parseYaml(""), null);
   });
 
+  it("normalizes unresolved-alias conversion failures without rejecting valid aliases", () => {
+    const general = createYamlParser();
+    const skill = createStdYamlSkillDocumentParserProvider();
+    for (
+      const parse of [
+        (source: string) => parseYamlSource(source),
+        (source: string) => general.parseYaml(source),
+        (source: string) => skill.parseFrontmatter(source),
+      ]
+    ) {
+      const error = assertThrows(() => parse("reference: *missing"), SyntaxError);
+      assertEquals(error.cause instanceof ReferenceError, true);
+      assertEquals(parse("original: &known\n  title: Demo\nreference: *known"), {
+        original: { title: "Demo" },
+        reference: { title: "Demo" },
+      });
+    }
+  });
+
   it("rejects duplicate keys unless the caller opts in", () => {
     assertThrows(() => parseYamlSource("name: a\nname: b"), SyntaxError);
     assertEquals(parseYamlSource("name: a\nname: b", { allowDuplicateKeys: true }), {

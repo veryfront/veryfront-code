@@ -4,15 +4,13 @@ import {
   normalizeVeryfrontApiBaseUrl,
   resolveVeryfrontInferenceApiBaseUrlFromHostEnv,
 } from "#veryfront/platform/cloud/resolver.ts";
-import { getHostEnv } from "#veryfront/platform/compat/process.ts";
 import { readResponseTextPrefix } from "#veryfront/utils/response-body.ts";
 import {
   createVeryfrontApiOriginBoundOutboundFetch,
   HOST_ALLOWED_INTERNAL_PROVIDER_ORIGINS_ENV,
-  HOST_INTERNAL_EGRESS_OVERRIDE_ENV,
   isHostAllowedInternalProviderOrigin,
+  isHostInternalEgressOverrideEnabled,
 } from "#veryfront/security/http/outbound-fetch.ts";
-import { isInternalEgressOverrideEnabled } from "#veryfront/security/sandbox/worker-egress-guard.ts";
 import {
   assertNativeRequestProcessing,
   createNativeRequest,
@@ -199,7 +197,7 @@ export function requireSecureInferenceApiBaseUrl(value: string): void {
   if (
     readNativeURLString(url, URLProtocolGet) !== "https:" && !loopback &&
     !isHostAllowedInternalProviderOrigin(url) &&
-    !isInternalEgressOverrideEnabled(getHostEnv(HOST_INTERNAL_EGRESS_OVERRIDE_ENV))
+    !isHostInternalEgressOverrideEnabled()
   ) {
     throw CONFIG_INVALID.create({
       detail:
