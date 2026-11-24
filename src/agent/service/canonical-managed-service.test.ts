@@ -239,8 +239,17 @@ async function fixture(
                     try {
                       yield { type: "start", messageId: base.run.messageId } as const;
                       if (mode === "api-tools-early") {
-                        yield { type: "tool-input-start", toolCallId: "tool_1", toolName: "review_claim" } as const;
-                        yield { type: "tool-input-available", toolCallId: "tool_1", toolName: "review_claim", input: {} } as const;
+                        yield {
+                          type: "tool-input-start",
+                          toolCallId: "tool_1",
+                          toolName: "review_claim",
+                        } as const;
+                        yield {
+                          type: "tool-input-available",
+                          toolCallId: "tool_1",
+                          toolName: "review_claim",
+                          input: {},
+                        } as const;
                         entered.resolve();
                         await executeRelease.promise;
                       }
@@ -693,9 +702,19 @@ Deno.test("canonical API results are accepted after publication and before tool 
     body = response.text();
     await f.entered;
     assertEquals(f.resumed.length, 0);
-    const unknown = await f.control("resume", { type: "tool_result", toolCallId: "unknown", result: "foreign", isError: false });
+    const unknown = await f.control("resume", {
+      type: "tool_result",
+      toolCallId: "unknown",
+      result: "foreign",
+      isError: false,
+    });
     assertEquals(unknown.status, 409);
-    const early = await f.control("resume", { type: "tool_result", toolCallId: "tool_1", result: "early-result", isError: false });
+    const early = await f.control("resume", {
+      type: "tool_result",
+      toolCallId: "tool_1",
+      result: "early-result",
+      isError: false,
+    });
     assertEquals(early.status, 200);
     f.allowExecution();
     await body;

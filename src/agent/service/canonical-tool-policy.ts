@@ -120,19 +120,17 @@ export async function prepareCanonicalBrokerTools(input: {
       definition.tools,
       getForwardedHostedRuntimeOverrides(input.ingress.executor.input.forwardedProps)?.allowedTools,
     );
-    raw = closedTools
-      ? []
-      : createHostedProjectRemoteToolSources({
-        authToken: input.ingress.privateAuthority.apiAuthToken,
-        apiMcpUrl: input.apiMcpUrl,
-        studioMcpUrl: input.studioMcpUrl,
-        mcpServers: definition.mcpServers,
-        clientProfile: resolveRuntimeClientProfile(input.ingress.executor.input.forwardedProps),
-        getProjectId: () => identity.projectId,
-        defaultProjectId: () => identity.projectId,
-        conversationId: run.conversationId,
-        createRemoteToolSource: input.createRemoteToolSource,
-      });
+    raw = closedTools ? [] : createHostedProjectRemoteToolSources({
+      authToken: input.ingress.privateAuthority.apiAuthToken,
+      apiMcpUrl: input.apiMcpUrl,
+      studioMcpUrl: input.studioMcpUrl,
+      mcpServers: definition.mcpServers,
+      clientProfile: resolveRuntimeClientProfile(input.ingress.executor.input.forwardedProps),
+      getProjectId: () => identity.projectId,
+      defaultProjectId: () => identity.projectId,
+      conversationId: run.conversationId,
+      createRemoteToolSource: input.createRemoteToolSource,
+    });
     const limits = executorToolLimits();
     const projectToolNames = [
       ...getServerResolvedProjectToolNames(input.ingress.executor.input.forwardedProps),
