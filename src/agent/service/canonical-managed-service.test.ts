@@ -25,7 +25,7 @@ const sourceId = "00000000-0000-4000-8000-000000000099";
 // Synthetic executor and API transports exercise the real canonical adapter,
 // persistence and run owner. Real executor-session behavior is tested separately.
 async function fixture(
-  mode: "cancel" | "resume" | "api-tools" = "cancel",
+  mode: "cancel" | "resume" | "api-tools" | "api-tools-parallel" = "cancel",
   holdCleanup = false,
   prepareFailure?: { value: unknown },
   negotiate = true,
@@ -51,7 +51,7 @@ async function fixture(
       runtimeTargetEnvironmentName: "Production",
     },
     agentEntrypoint: { path: "agents/selected.ts" },
-    ...(mode === "api-tools"
+    ...(mode.startsWith("api-tools")
       ? { tools: [{ name: "review_claim", parameters: { type: "object" } }] }
       : {}),
     credentials: {
@@ -202,7 +202,7 @@ async function fixture(
     broker: {
       async start(input) {
         started++;
-        if (mode === "api-tools") {
+        if (mode.startsWith("api-tools")) {
           assertEquals(
             input.tools.sources.size,
             0,
@@ -237,8 +237,18 @@ async function fixture(
                   return (async function* () {
                     try {
                       yield { type: "start", messageId: base.run.messageId } as const;
-                      if (mode === "resume" || mode === "api-tools") {
-                        const result = mode === "api-tools"
+                      if (mode === "resume" || mode.startsWith("api-tools")) {
+                        const result = mode === "api-tools-parallel"
+                          ? Promise.all(
+                            ["tool_1", "tool_2"].map((toolCallId) =>
+                              apiTools!.source.executeTool("review_claim", {}, {
+                                ...apiTools!.context,
+                                toolCallId,
+                              })
+                            ),
+                          )
+                            .then((result) => ({ result, isError: false }))
+                          : mode.startsWith("api-tools")
                           ? apiTools!.source.executeTool("review_claim", {}, {
                             ...apiTools!.context,
                             toolCallId: "tool_1",
@@ -329,6 +339,54 @@ async function fixture(
 }
 
 describe("canonical managed service ownership", () => {
+  it("routes two simultaneous API calls through authenticated out-of-order resumes", async () => {
+    const f = await fixture("api-tools-parallel");
+    let reading: Promise<string> | undefined;
+    try {
+      const response = await f.start();
+      reading = response.text();
+      assertEquals(response.status, 200);
+      await f.entered;
+      assertEquals(
+        (await f.control("resume", { type: "tool_result", toolCallId: "tool_2", result: "second" }))
+          .status,
+        200,
+      );
+      assertEquals(
+        (await f.control("resume", { type: "tool_result", toolCallId: "tool_1", result: "first" }))
+          .status,
+        200,
+      );
+      assert((await reading).includes("event: RunFinished"));
+      assertEquals(f.resumed, [{ result: ["first", "second"], isError: false }]);
+    } finally {
+      await f.service.close();
+      await reading;
+    }
+  });
+  it("cancels all simultaneous API result waits through the same run owner", async () => {
+    const f = await fixture("api-tools-parallel", true);
+    let reading: Promise<string> | undefined;
+    try {
+      const response = await f.start();
+      reading = response.text();
+      assertEquals(response.status, 200);
+      await f.entered;
+      assertEquals((await f.control("cancel", { confirmStopped: true })).status, 202);
+      await f.cleanupEntered;
+      f.release();
+      assertEquals((await reading).includes("event: RunFinished"), false);
+      assertEquals(f.resumed, []);
+      const stopped = await f.control("cancel", { confirmStopped: true });
+      assertEquals(stopped.status, 200);
+      assertEquals(await stopped.json(), { accepted: true, stopped: true });
+    } finally {
+      f.release();
+      await f.service.close();
+      await reading;
+    }
+  });
+
   it("binds API-declared tools to the same authenticated resume owner and retires the capability", async () => {
     const f = await fixture("api-tools", true);
     let reading: Promise<string> | undefined;

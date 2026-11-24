@@ -60,7 +60,7 @@ type SubmittedValue<T> = {
 };
 
 type WaitingState<T> = {
-  waitKey: string;
+  promise: Promise<T>;
   resolve: (value: SubmittedValue<T>) => void;
   reject: (reason?: unknown) => void;
 };
@@ -71,10 +71,10 @@ type RunSession<T> = {
   startedFromEventId?: number;
   status: RunSessionStatus;
   abortController: AbortController;
-  waitingState: WaitingState<T> | null;
+  waitingStates: Map<string, WaitingState<T>>;
   preparedWaitKeys: Set<string>;
   submittedValues: Map<string, SubmittedValue<T>>;
-  waitingTimeoutId: ReturnType<typeof setTimeout> | null;
+  waitingTimeoutIds: Map<string, ReturnType<typeof setTimeout>>;
   sessionTimeoutId: ReturnType<typeof setTimeout> | null;
 };
 
@@ -99,6 +99,8 @@ export interface RunResumeSessionManagerOptions<T> {
   /** Maximum delayed-start cancellations retained by one manager instance. */
   maxCancellationTombstones?: number;
   maxConcurrentSessions?: number;
+  /** Bound independent keyed waits per run; default one, maximum 32. */
+  maxPendingWaitsPerRun?: number;
   setTimeoutFn?: typeof setTimeout;
   clearTimeoutFn?: typeof clearTimeout;
   getConflictKey?: (value: T) => string;
@@ -122,9 +124,16 @@ export class RunResumeSessionManager<T> {
   /** Signals of executions whose run id a later start has taken over. */
   private readonly supersededSignals = new WeakSet<AbortSignal>();
 
+  private readonly maxPendingWaitsPerRun: number;
   constructor(
     private readonly options: RunResumeSessionManagerOptions<T> = {},
-  ) {}
+  ) {
+    const maximum = options.maxPendingWaitsPerRun ?? 1;
+    if (!Number.isSafeInteger(maximum) || maximum < 1 || maximum > 32) {
+      throw new TypeError("Invalid pending wait limit");
+    }
+    this.maxPendingWaitsPerRun = maximum;
+  }
 
   private get waitingTtlMs(): number {
     return this.options.waitingTtlMs ?? DEFAULT_WAITING_TTL_MS;
@@ -213,10 +222,15 @@ export class RunResumeSessionManager<T> {
       startedFromEventId < tombstone.refusesStartsBeforeEventId;
   }
 
-  private clearWaitingTimeout(session: RunSession<T>): void {
-    if (session.waitingTimeoutId === null) return;
-    this.clearTimeoutFn(session.waitingTimeoutId);
-    session.waitingTimeoutId = null;
+  private clearWaitingTimeout(session: RunSession<T>, waitKey?: string): void {
+    if (waitKey !== undefined) {
+      const handle = session.waitingTimeoutIds.get(waitKey);
+      if (handle !== undefined) this.clearTimeoutFn(handle);
+      session.waitingTimeoutIds.delete(waitKey);
+      return;
+    }
+    for (const handle of session.waitingTimeoutIds.values()) this.clearTimeoutFn(handle);
+    session.waitingTimeoutIds.clear();
   }
 
   private clearSessionTimeout(session: RunSession<T>): void {
@@ -233,11 +247,14 @@ export class RunResumeSessionManager<T> {
     }, this.sessionTtlMs);
   }
 
-  private scheduleWaitingTimeout(session: RunSession<T>): void {
-    this.clearWaitingTimeout(session);
-    session.waitingTimeoutId = this.setTimeoutFn(() => {
-      this.cancelRun(session.runId, session.abortController.signal);
+  private scheduleWaitingTimeout(session: RunSession<T>, waitKey: string): void {
+    this.clearWaitingTimeout(session, waitKey);
+    const handle = this.setTimeoutFn(() => {
+      if (session.waitingStates.has(waitKey)) {
+        this.cancelRun(session.runId, session.abortController.signal);
+      }
     }, this.waitingTtlMs);
+    session.waitingTimeoutIds.set(waitKey, handle);
   }
 
   private touchSession(session: RunSession<T>): void {
@@ -253,7 +270,12 @@ export class RunResumeSessionManager<T> {
     session.status = status;
     this.clearWaitingTimeout(session);
     this.clearSessionTimeout(session);
-    session.waitingState = null;
+    for (const state of [...session.waitingStates.values()]) {
+      state.reject(
+        status === "cancelled" ? new RunCancelledError() : new RunNotActiveError(session.runId),
+      );
+    }
+    session.waitingStates.clear();
     if (
       status === "cancelled" &&
       !this.rememberSettlingCancellation(session.runId, session.abortController.signal)
@@ -313,10 +335,10 @@ export class RunResumeSessionManager<T> {
         : {}),
       status: "running",
       abortController: new AbortController(),
-      waitingState: null,
+      waitingStates: new Map(),
       preparedWaitKeys: new Set(),
       submittedValues: new Map(),
-      waitingTimeoutId: null,
+      waitingTimeoutIds: new Map(),
       sessionTimeoutId: null,
     };
 
@@ -370,54 +392,56 @@ export class RunResumeSessionManager<T> {
     if (!session || session.status === "completed" || session.status === "failed") {
       throw new RunNotActiveError(runId);
     }
-
     if (session.abortController.signal.aborted || session.status === "cancelled") {
       throw new RunCancelledError();
     }
-
     session.preparedWaitKeys.add(waitKey);
     const existingValue = session.submittedValues.get(waitKey);
     if (existingValue) {
-      session.status = "running";
+      session.status = session.waitingStates.size ? "waiting" : "running";
       this.touchSession(session);
       return existingValue.value;
     }
-
-    if (session.waitingState && session.waitingState.waitKey !== waitKey) {
+    const existingWait = session.waitingStates.get(waitKey);
+    if (existingWait) return await existingWait.promise;
+    if (session.waitingStates.size >= this.maxPendingWaitsPerRun) {
       throw new WaitNotPendingError(runId, waitKey);
     }
-
-    session.status = "waiting";
-    this.scheduleWaitingTimeout(session);
-    this.touchSession(session);
-
-    return await new Promise<T>((resolve, reject) => {
-      const abortHandler = () => {
-        this.clearWaitingTimeout(session);
-        session.waitingState = null;
-        session.status = "cancelled";
-        reject(new RunCancelledError());
-      };
-
-      session.abortController.signal.addEventListener("abort", abortHandler, { once: true });
-      session.waitingState = {
-        waitKey,
-        resolve: (value) => {
-          session.abortController.signal.removeEventListener("abort", abortHandler);
-          this.clearWaitingTimeout(session);
-          session.waitingState = null;
-          session.status = "running";
+    const result = Promise.withResolvers<T>();
+    const remove = () => {
+      this.clearWaitingTimeout(session, waitKey);
+      session.waitingStates.delete(waitKey);
+      if (session.status === "running" || session.status === "waiting") {
+        session.status = session.waitingStates.size ? "waiting" : "running";
+      }
+    };
+    session.waitingStates.set(waitKey, {
+      promise: result.promise,
+      resolve: (value) => {
+        remove();
+        try {
           this.touchSession(session);
-          resolve(value.value);
-        },
-        reject: (reason) => {
-          session.abortController.signal.removeEventListener("abort", abortHandler);
-          this.clearWaitingTimeout(session);
-          session.waitingState = null;
-          reject(reason);
-        },
-      };
+        } catch (error) {
+          result.reject(error);
+          this.cancelRun(session.runId, session.abortController.signal);
+          throw error;
+        }
+        result.resolve(value.value);
+      },
+      reject: (reason) => {
+        remove();
+        result.reject(reason);
+      },
     });
+    session.status = "waiting";
+    try {
+      this.scheduleWaitingTimeout(session, waitKey);
+      this.touchSession(session);
+    } catch (error) {
+      session.waitingStates.get(waitKey)?.reject(error);
+      this.cancelRun(session.runId, session.abortController.signal);
+    }
+    return await result.promise;
   }
 
   submitSignal(
@@ -450,23 +474,20 @@ export class RunResumeSessionManager<T> {
       throw new RunNotActiveError(runId);
     }
 
-    if (!session.waitingState) {
-      if (!session.preparedWaitKeys.has(input.waitKey)) {
+    const waiting = session.waitingStates.get(input.waitKey);
+    if (!waiting) {
+      if (
+        !session.preparedWaitKeys.has(input.waitKey) ||
+        (this.maxPendingWaitsPerRun === 1 && session.waitingStates.size !== 0)
+      ) {
         throw new WaitNotPendingError(runId, input.waitKey);
       }
-
       session.submittedValues.set(input.waitKey, normalized);
       this.touchSession(session);
       return { accepted: true };
     }
-
-    if (session.waitingState.waitKey !== input.waitKey) {
-      throw new WaitNotPendingError(runId, input.waitKey);
-    }
-
     session.submittedValues.set(input.waitKey, normalized);
-    this.touchSession(session);
-    session.waitingState.resolve(normalized);
+    waiting.resolve(normalized);
     return { accepted: true };
   }
 
@@ -597,13 +618,14 @@ export class RunResumeSessionManager<T> {
       return false;
     }
 
-    const waitingState = session.waitingState;
+    const waitingStates = [...session.waitingStates.values()];
+    session.status = "cancelled";
     // Abort with an AbortError-shaped DOMException so provider SDK fetch
     // consumers treat it as cancellation and don't surface unhandled
     // rejections. The waiting-state reject path keeps RunCancelledError
     // so callers can still `instanceof` it.
     session.abortController.abort(new DOMException("Run cancelled", "AbortError"));
-    waitingState?.reject(new RunCancelledError());
+    for (const state of waitingStates) state.reject(new RunCancelledError());
     this.finalizeSession(session, "cancelled");
     return true;
   }

@@ -55,7 +55,10 @@ export function createCanonicalManagedBrokerService<T>(
     throw new TypeError("Invalid canonical run ownership limit");
   }
   const tracker = createDetachedRunTracker<AgUiResumeValue>({
-    sessionManager: new RunResumeSessionManager({ maxConcurrentSessions: maxActiveRuns }),
+    sessionManager: new RunResumeSessionManager({
+      maxConcurrentSessions: maxActiveRuns,
+      maxPendingWaitsPerRun: 32,
+    }),
   });
   const control = createHostedRunControlHandler({
     tracker,
