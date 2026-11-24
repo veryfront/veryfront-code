@@ -165,6 +165,58 @@ describe("runtime stream Provider Adapter", () => {
     );
   });
 
+  it("keeps a preliminary provider error payload as progress and fails a final one", () => {
+    const toolSnapshot = {
+      ...snapshot,
+      tools: [{
+        id: "native-1",
+        name: "web_search",
+        phase: "input_ready" as const,
+        inputText: "{}",
+        inputDeltas: [],
+        input: {},
+        providerExecuted: true,
+      }],
+    };
+    const providerError = { type: "web_search_tool_result_error", error_code: "unavailable" };
+    const decodeResult = (preliminary: boolean) =>
+      decodeRuntimeStreamPart(
+        {
+          type: "tool-result",
+          toolCallId: "native-1",
+          toolName: "web_search",
+          output: providerError,
+          preliminary,
+        },
+        toolSnapshot,
+        options,
+      ).at(-1);
+
+    assertEquals(decodeResult(true), {
+      kind: "protocol",
+      event: {
+        type: "provider_tool_result",
+        toolCallId: "native-1",
+        toolName: "web_search",
+        output: providerError,
+        isError: false,
+        providerExecuted: true,
+        preliminary: true,
+      },
+    });
+    assertEquals(decodeResult(false), {
+      kind: "protocol",
+      event: {
+        type: "provider_tool_result",
+        toolCallId: "native-1",
+        toolName: "web_search",
+        output: providerError,
+        isError: true,
+        providerExecuted: true,
+      },
+    });
+  });
+
   it("flags configured dynamic tools that the project registry does not know", () => {
     const part = { type: "tool-input-start", id: "call-1", toolName: "create_file" };
     const event = {

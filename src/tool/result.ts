@@ -137,14 +137,48 @@ function getMcpToolErrorMessage(result: unknown): string | undefined {
   return error;
 }
 
-/** Return the displayable error for a failed tool result. */
+/** Read the `type` of a provider error payload such as `web_search_tool_result_error`. */
+function getProviderToolResultErrorType(result: unknown): string | undefined {
+  const type = readToolResultOwnDataProperty(result, "type");
+  if (
+    typeof type !== "string" ||
+    !(ReflectApply(StringPrototypeEndsWith, type, [
+      PROVIDER_TOOL_RESULT_ERROR_TYPE_SUFFIX,
+    ]) as boolean)
+  ) {
+    return undefined;
+  }
+  return type;
+}
+
+/** The provider `error_code`, or the payload type when the provider sent no code. */
+function getProviderToolResultErrorMessage(result: unknown): string | undefined {
+  if (!isNonArrayRecord(result)) {
+    return undefined;
+  }
+
+  const type = getProviderToolResultErrorType(result);
+  if (type === undefined) {
+    return undefined;
+  }
+
+  const errorCode = readToolResultOwnDataProperty(result, "error_code");
+  return hasNonBlankString(errorCode) ? errorCode : type;
+}
+
+/**
+ * Return the displayable error for a failed tool result.
+ *
+ * A provider error payload, e.g. `{ type: "web_fetch_tool_result_error", error_code }`,
+ * yields its `error_code`. An explicit error marker on the same result wins.
+ */
 export function getToolResultError(result: unknown): string | undefined {
   if (isIntegrationAuthenticationActionResult(result)) {
     return undefined;
   }
 
   if (!hasToolExecutionErrorMarker(result)) {
-    return undefined;
+    return getProviderToolResultErrorMessage(result);
   }
 
   if (hasIntegrationAuthenticationActionError(result)) {
@@ -211,11 +245,7 @@ function parseSerializedToolOutput(output: unknown): unknown {
  * as an object or serialized as a JSON string.
  */
 export function isProviderToolResultError(output: unknown): boolean {
-  const type = readToolResultOwnDataProperty(parseSerializedToolOutput(output), "type");
-  return typeof type === "string" &&
-    ReflectApply(StringPrototypeEndsWith, type, [
-      PROVIDER_TOOL_RESULT_ERROR_TYPE_SUFFIX,
-    ]) as boolean;
+  return getProviderToolResultErrorType(parseSerializedToolOutput(output)) !== undefined;
 }
 
 /**

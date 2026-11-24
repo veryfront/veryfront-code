@@ -7,6 +7,7 @@ import {
 } from "#veryfront/provider/runtime-usage.ts";
 import {
   getToolResultError,
+  hasToolExecutionErrorMarker,
   isIntegrationAuthenticationActionResult,
   isProviderToolResultError,
 } from "#veryfront/tool/result.ts";
@@ -401,8 +402,13 @@ function providerToolTerminalSignals(
     : "output" in typed && typed.output !== undefined
     ? typed.output
     : typed.result;
-  const inferredToolError = typed.type === "tool-error" ? undefined : getToolResultError(rawOutput);
-  // A preliminary provider error payload is progress, as on the legacy path.
+  // A preliminary provider error payload is progress, as on the legacy path,
+  // so its error code must not be inferred as a terminal tool error either.
+  const isPreliminaryProviderError = typed.preliminary === true &&
+    isProviderToolResultError(rawOutput) && !hasToolExecutionErrorMarker(rawOutput);
+  const inferredToolError = typed.type === "tool-error" || isPreliminaryProviderError
+    ? undefined
+    : getToolResultError(rawOutput);
   const isExplicitError = (typed.type === "tool-error" || typed.isError === true ||
     (typed.preliminary !== true && isProviderToolResultError(rawOutput))) &&
     !isIntegrationAuthenticationActionResult(rawOutput);
