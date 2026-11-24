@@ -72,6 +72,58 @@ describe("tool/result", () => {
     );
   });
 
+  it("returns the provider error code for a provider error payload", () => {
+    assertEquals(
+      getToolResultError({
+        type: "web_fetch_tool_result_error",
+        error_code: "url_not_in_prior_context",
+      }),
+      "url_not_in_prior_context",
+    );
+    assertEquals(
+      getToolResultError({ type: "web_search_tool_result_error" }),
+      "web_search_tool_result_error",
+    );
+    assertEquals(
+      getToolResultError({ type: "web_search_tool_result_error", error_code: "  " }),
+      "web_search_tool_result_error",
+    );
+    assertEquals(
+      getToolResultError({ type: "web_search_tool_result_error", error_code: 429 }),
+      "web_search_tool_result_error",
+    );
+  });
+
+  it("keeps an explicit error marker ahead of the provider error code", () => {
+    assertEquals(
+      getToolResultError({
+        type: "web_fetch_tool_result_error",
+        error_code: "unavailable",
+        error: "tool_error",
+        message: "Fetch failed",
+      }),
+      "Fetch failed",
+    );
+  });
+
+  it("does not treat other typed outputs as provider error payloads", () => {
+    assertEquals(getToolResultError({ type: "web_search_result", answer: "ok" }), undefined);
+    assertEquals(
+      getToolResultError({ type: "tool_result_error_report", error_code: "x" }),
+      undefined,
+    );
+    assertEquals(getToolResultError({ type: 7, error_code: "x" }), undefined);
+    assertEquals(getToolResultError([{ type: "web_fetch_tool_result_error" }]), undefined);
+    assertEquals(getToolResultError('{"type":"web_fetch_tool_result_error"}'), undefined);
+
+    const accessorType = {
+      get type() {
+        return "web_fetch_tool_result_error";
+      },
+    };
+    assertEquals(getToolResultError(accessorType), undefined);
+  });
+
   it("detects standard error markers on tool result objects", () => {
     assertEquals(hasToolExecutionErrorMarker({ error: "failed" }), true);
     assertEquals(hasToolExecutionErrorMarker({ isError: true }), true);
