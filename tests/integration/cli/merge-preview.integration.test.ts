@@ -4,7 +4,9 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import { makeTempDir } from "#veryfront/testing/deno-compat.ts";
 import { _resetEnvironmentConfig } from "#veryfront/config/environment-config.ts";
-import { cliLogger } from "../../../cli/utils/index.ts";
+import { cliLogger } from "#cli/utils";
+// No #cli/* alias exists for these two modules, and an alias needs a caller in cli/ or src/
+// (tests/integration/deno-config-cli-aliases.test.ts), so a test-only alias would be dead.
 import { mergeCommand } from "../../../cli/commands/merge/command.ts";
 import {
   computeSourceDigest,
