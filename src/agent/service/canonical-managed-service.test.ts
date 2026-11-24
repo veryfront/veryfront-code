@@ -72,7 +72,7 @@ async function fixture(
         canonicalRunId: canonicalId,
         tokenUse: "run_event_writer",
         writerPurpose: "current_run_terminal",
-        dispatchNonce: "generation",
+        dispatchNonce: "33333333-3333-4333-8333-333333333333",
       }),
     )
   }.signature`;
@@ -115,6 +115,27 @@ async function fixture(
         r.headers.get("authorization"),
         url.pathname.endsWith("/events") ? "Bearer run-event-token" : "Bearer api-auth-token",
       );
+      if (url.pathname.endsWith("/runtime/admission")) {
+        assertEquals(r.headers.get("x-veryfront-run-terminal-token"), terminal);
+        assertEquals(await r.json(), { latest_event_id: 0, latest_external_event_sequence: 0 });
+        return Response.json({
+          version: 1,
+          accepted: true,
+          identity: {
+            project_id: projectId,
+            canonical_run_id: canonicalId,
+            public_run_id: base.run.runId,
+          },
+          generation: {
+            worker_id: "worker",
+            dispatch_nonce: "33333333-3333-4333-8333-333333333333",
+            transport_recovery_attempt: 0,
+          },
+          lease_remaining_ms: 1000,
+          acknowledged_event_id: 0,
+          acknowledged_external_sequence: 0,
+        });
+      }
       if (r.method === "GET") return Response.json({ id: canonicalId, status: "running" });
       if (url.pathname.endsWith("/events")) {
         const value = await r.json();

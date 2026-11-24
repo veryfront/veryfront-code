@@ -1,3 +1,4 @@
+import { claimManagedBrokerAdmission } from "./managed-broker-admission.ts";
 import { getCanonicalRunStatus } from "../conversation/durable.ts";
 import {
   createManagedBrokerPersistence,
@@ -23,6 +24,7 @@ type HandlerOptions<T> = Parameters<typeof createManagedBrokerHandler<T>>[0];
 
 /**
  * Signed canonical admission with API-owned lifecycle, append cursors and persistence.
+ * The API consumes the live dispatch once before deployment preparation or allocation.
  * The deployment supplies executor/image/model/tool policy, never application callbacks.
  * This does not advertise a protocol or enable account-chat execution.
  */
@@ -50,6 +52,7 @@ export function createCanonicalManagedBrokerHandler<T>(
 ) {
   // Capture host policy and transport before accepting requests.
   const { apiUrl, fetch: transport, prepareExecutor, resolveProvider } = options;
+  const onExecutionError = options.onExecutionError?.bind(options);
   const toolCallAdmissions = options.toolCallAdmissions === true;
   const runtimeObservations = options.runtimeObservations === true;
   return createManagedBrokerHandler({
@@ -58,7 +61,7 @@ export function createCanonicalManagedBrokerHandler<T>(
     maxActiveRuns: options.maxActiveRuns,
     signal: options.signal,
     resolveIngressOptions: options.resolveIngressOptions,
-    onExecutionError: options.onExecutionError,
+    onExecutionError,
     async prepare({ ingress, signal }) {
       const run = ingress.executor.run;
       const authority = ingress.privateAuthority;
@@ -95,6 +98,25 @@ export function createCanonicalManagedBrokerHandler<T>(
       // an old signed request still carries its previous resume decision.
       if (!["pending", "running"].includes(lifecycle.status)) {
         throw new BrokerIngressError(409, "BROKER_RUN_NOT_ACTIVE");
+      }
+      try {
+        await claimManagedBrokerAdmission({
+          apiUrl,
+          authToken: authority.apiAuthToken,
+          terminalAuthToken: authority.terminalAuthToken,
+          projectId: run.project.projectId,
+          runId: run.runId,
+          canonicalRunId: cursor.canonicalRunId,
+          latestEventId: cursor.latestEventId,
+          latestExternalEventSequence: cursor.latestExternalEventSequence,
+          signal,
+          fetch: transport,
+        });
+      } catch (error) {
+        try {
+          onExecutionError?.(error, run.runId);
+        } catch { /* Diagnostics cannot own admission. */ }
+        throw error;
       }
       const snapshot: ManagedBrokerRunSnapshot = {
         ...cursor,

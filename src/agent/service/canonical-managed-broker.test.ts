@@ -24,7 +24,7 @@ const terminal = `header.${
     canonicalRunId: canonicalId,
     tokenUse: "run_event_writer",
     writerPurpose: "current_run_terminal",
-    dispatchNonce: "generation",
+    dispatchNonce: "33333333-3333-4333-8333-333333333333",
   }))
 }.signature`;
 
@@ -44,6 +44,9 @@ async function fixture(input: {
   probeAppend?: boolean;
   stream?: boolean;
   projectWriter?: "valid" | "foreign" | "stale" | "unsafe";
+  admission?: { claimed: boolean };
+  admissionStatus?: number;
+  admissionMismatch?: boolean;
 } = {}) {
   const base = invocation();
   const body = invocation({
@@ -119,6 +122,38 @@ async function fixture(input: {
     fetch: (value, init) => {
       const url = new URL(String(value));
       calls.push({ url, authorization: new Headers(init?.headers).get("authorization") });
+      if (url.pathname.endsWith("/runtime/admission")) {
+        assertEquals(new Headers(init?.headers).get("authorization"), "Bearer api-auth-token");
+        assertEquals(new Headers(init?.headers).get("x-veryfront-run-terminal-token"), terminal);
+        assertEquals(init?.redirect, "error");
+        assertEquals(JSON.parse(String(init?.body)), {
+          latest_event_id: durableCursor,
+          latest_external_event_sequence: externalCursor,
+        });
+        if (input.admissionStatus || input.admission?.claimed) {
+          return Promise.resolve(new Response(null, { status: input.admissionStatus ?? 409 }));
+        }
+        if (input.admission) input.admission.claimed = true;
+        return Promise.resolve(
+          Response.json({
+            version: 1,
+            accepted: true,
+            identity: {
+              project_id: input.admissionMismatch ? sourceId : projectId,
+              canonical_run_id: canonicalId,
+              public_run_id: base.run.runId,
+            },
+            generation: {
+              worker_id: "worker",
+              dispatch_nonce: "33333333-3333-4333-8333-333333333333",
+              transport_recovery_attempt: 0,
+            },
+            lease_remaining_ms: 1000,
+            acknowledged_event_id: durableCursor,
+            acknowledged_external_sequence: externalCursor,
+          }),
+        );
+      }
       if (url.pathname.endsWith("/finalize")) {
         const body = JSON.parse(String(init?.body));
         finalizations.push({
@@ -330,6 +365,52 @@ describe("canonical managed broker preparation", () => {
       await result.close();
     }
   });
+  it("requires atomic API admission across independent broker replicas before preparation", async () => {
+    const admission = { claimed: false };
+    const replicas = await Promise.all([
+      fixture({ stream: true, projectWriter: "valid", admission }),
+      fixture({ stream: true, projectWriter: "valid", admission }),
+    ]);
+    try {
+      assertEquals(replicas.map((result) => result.response.status).sort(), [200, 409]);
+      const accepted = replicas.find((result) => result.response.status === 200)!;
+      const refused = replicas.find((result) => result.response.status === 409)!;
+      assertEquals(refused.prepared, 0);
+      assertEquals(refused.started, undefined);
+      await accepted.response.text();
+    } finally {
+      await Promise.all(replicas.map((result) => result.close()));
+    }
+  });
+  for (const admissionStatus of [401, 403, 404, 409, 500]) {
+    it(`refuses API admission ${admissionStatus} before preparation`, async () => {
+      const result = await fixture({ admissionStatus });
+      try {
+        assertEquals(
+          result.response.status,
+          admissionStatus === 409
+            ? 409
+            : admissionStatus === 401 || admissionStatus === 403
+            ? 403
+            : 503,
+        );
+        assertEquals(result.prepared, 0);
+        assertEquals(result.started, undefined);
+      } finally {
+        await result.close();
+      }
+    });
+  }
+  it("refuses a foreign admission receipt before preparation", async () => {
+    const result = await fixture({ admissionMismatch: true });
+    try {
+      assertEquals(result.response.status, 403);
+      assertEquals(result.prepared, 0);
+    } finally {
+      await result.close();
+    }
+  });
+
   it("marks a signed resumed segment consistently with the API opening event", async () => {
     const result = await fixture({ stream: true, projectWriter: "valid", resume: true });
     try {
@@ -398,6 +479,7 @@ describe("canonical managed broker preparation", () => {
     assertEquals(result.cleaned, 1);
     assertEquals(result.calls.map((call) => [call.url.pathname, call.authorization]), [
       [`/runs/${canonicalId}`, "Bearer api-auth-token"],
+      [`/runs/${canonicalId}/runtime/admission`, "Bearer api-auth-token"],
     ]);
     assert(result.started?.bindSessionOwnedWork);
     assert(result.started.persistence.publishParentRunEvents);
