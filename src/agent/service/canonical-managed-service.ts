@@ -140,7 +140,7 @@ export function createCanonicalManagedBrokerService<T>(
           }, 1000);
         }
         const preparationSignal = AbortSignal.any([input.signal, ownedSignal]);
-        const waitForToolResult = (toolCallId: string, signal?: AbortSignal) => {
+        const prepareToolResult = (toolCallId: string) => {
           if (
             retired || ownedSignal.aborted ||
             tracker.sessionManager.isSupersededRun(run.runId, ownedSignal)
@@ -153,18 +153,23 @@ export function createCanonicalManagedBrokerService<T>(
             throw new TypeError("Invalid run-control wait key");
           }
           tracker.sessionManager.prepareForSignal(run.runId, toolCallId);
+        };
+        const waitForToolResult = (toolCallId: string, signal?: AbortSignal) => {
+          prepareToolResult(toolCallId);
           return tracker.sessionManager.waitForSignal(run.runId, toolCallId, signal);
         };
+        const apiTools = createCanonicalApiToolSource({
+          ingress: input.ingress,
+          signal: AbortSignal.any([preparationSignal, apiToolLifetime.signal]),
+          waitForToolResult,
+        });
         const prepared = await prepareExecutor({
           ...input,
           signal: preparationSignal,
           waitForToolResult,
-          apiTools: createCanonicalApiToolSource({
-            ingress: input.ingress,
-            signal: AbortSignal.any([preparationSignal, apiToolLifetime.signal]),
-            waitForToolResult,
-          }),
+          apiTools,
         });
+        const beforeApiToolInput = prepared.beforeApiToolInput?.bind(prepared);
         const cleanup = prepared.cleanup?.bind(prepared);
         const cancelPrepared = prepared.cancelExecution?.bind(prepared);
         const executionSignal = AbortSignal.any([prepared.executionSignal, ownedSignal]);
@@ -172,6 +177,10 @@ export function createCanonicalManagedBrokerService<T>(
         let cleanupPromise: Promise<void> | undefined;
         return {
           ...prepared,
+          beforeApiToolInput(input) {
+            if (apiTools.allowedToolNames.has(input.toolName)) prepareToolResult(input.toolCallId);
+            beforeApiToolInput?.(input);
+          },
           executionSignal,
           cancelExecution() {
             if (retired) return;

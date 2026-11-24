@@ -25,7 +25,7 @@ const sourceId = "00000000-0000-4000-8000-000000000099";
 // Synthetic executor and API transports exercise the real canonical adapter,
 // persistence and run owner. Real executor-session behavior is tested separately.
 async function fixture(
-  mode: "cancel" | "resume" | "api-tools" | "api-tools-parallel" = "cancel",
+  mode: "cancel" | "resume" | "api-tools" | "api-tools-parallel" | "api-tools-early" = "cancel",
   holdCleanup = false,
   prepareFailure?: { value: unknown },
   negotiate = true,
@@ -87,6 +87,7 @@ async function fixture(
   const entered = Promise.withResolvers<void>(),
     cleanupEntered = Promise.withResolvers<void>(),
     cleanupRelease = Promise.withResolvers<void>();
+  const executeRelease = Promise.withResolvers<void>();
   const finalizations: string[] = [], resumed: AgUiResumeValue[] = [];
   const executionController = new AbortController();
   const runtimeController = new AbortController();
@@ -237,6 +238,12 @@ async function fixture(
                   return (async function* () {
                     try {
                       yield { type: "start", messageId: base.run.messageId } as const;
+                      if (mode === "api-tools-early") {
+                        yield { type: "tool-input-start", toolCallId: "tool_1", toolName: "review_claim" } as const;
+                        yield { type: "tool-input-available", toolCallId: "tool_1", toolName: "review_claim", input: {} } as const;
+                        entered.resolve();
+                        await executeRelease.promise;
+                      }
                       if (mode === "resume" || mode.startsWith("api-tools")) {
                         const result = mode === "api-tools-parallel"
                           ? Promise.all(
@@ -303,6 +310,7 @@ async function fixture(
   }
   return {
     service,
+    allowExecution: () => executeRelease.resolve(),
     entered: entered.promise,
     cleanupEntered: cleanupEntered.promise,
     release: () => cleanupRelease.resolve(),
@@ -675,4 +683,26 @@ describe("canonical signed run deadlines", () => {
       await f.service.close();
     }
   });
+});
+
+Deno.test("canonical API results are accepted after publication and before tool execution starts", async () => {
+  const f = await fixture("api-tools-early");
+  let body: Promise<string> | undefined;
+  try {
+    const response = await f.start();
+    body = response.text();
+    await f.entered;
+    assertEquals(f.resumed.length, 0);
+    const unknown = await f.control("resume", { type: "tool_result", toolCallId: "unknown", result: "foreign", isError: false });
+    assertEquals(unknown.status, 409);
+    const early = await f.control("resume", { type: "tool_result", toolCallId: "tool_1", result: "early-result", isError: false });
+    assertEquals(early.status, 200);
+    f.allowExecution();
+    await body;
+    assertEquals(f.resumed, [{ result: "early-result", isError: false }]);
+  } finally {
+    f.allowExecution();
+    await f.service.close();
+    await body?.catch(() => {});
+  }
 });

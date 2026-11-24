@@ -44,6 +44,8 @@ export function createCanonicalManagedBrokerHandler<T>(
       executionSignal: AbortSignal;
       /** Synchronously cancel pending host work before waiting for executor retirement. */
       cancelExecution?: () => void;
+      /** Register an owned API result key before its input events can reach the control plane. */
+      beforeApiToolInput?(input: { toolCallId: string; toolName: string }): void;
       initialCheckpoints?: ExecutorInitialCheckpointState;
       latestConversationUserText?: (signal: AbortSignal) => Promise<string | null>;
       cleanup?: () => Promise<void>;
@@ -221,7 +223,15 @@ export function createCanonicalManagedBrokerHandler<T>(
             model: { ...start.model, runEventSink: persistence.modelRunEventSink },
             tools: { ...start.tools, admitToolCall: persistence.admitToolCall },
           },
-          output: persistence.output,
+          output: {
+            write(chunk) {
+              if (chunk.type === "tool-input-start" || chunk.type === "tool-input-available") {
+                prepared.beforeApiToolInput?.({ toolCallId: chunk.toolCallId, toolName: chunk.toolName });
+              }
+              return persistence!.output.write(chunk);
+            },
+            finish: persistence.output.finish.bind(persistence.output),
+          },
           ...(negotiated ? { eventPersistence: negotiated.mode } : {}),
           cleanup,
         };
