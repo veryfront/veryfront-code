@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assert, assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
+import { assert, assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   readIngressCredential,
@@ -15,6 +15,7 @@ import {
   userId,
 } from "./broker-ingress.test-helpers.ts";
 import type { ManagedExecutorRuntime } from "../hosted/managed-executor-broker.ts";
+import type { ExecutorToolCapability } from "../hosted/executor-tool-bridge.ts";
 import type { AgUiResumeValue } from "../ag-ui/tool-shared.ts";
 
 const canonicalId = "30000000-3000-4000-8000-300000000001";
@@ -23,7 +24,7 @@ const sourceId = "00000000-0000-4000-8000-000000000099";
 // Synthetic executor and API transports exercise the real canonical adapter,
 // persistence and run owner. Real executor-session behavior is tested separately.
 async function fixture(
-  mode: "cancel" | "resume" = "cancel",
+  mode: "cancel" | "resume" | "api-tools" = "cancel",
   holdCleanup = false,
   prepareFailure?: { value: unknown },
   negotiate = true,
@@ -47,6 +48,9 @@ async function fixture(
       runtimeTargetEnvironmentName: "Production",
     },
     agentEntrypoint: { path: "agents/selected.ts" },
+    ...(mode === "api-tools"
+      ? { tools: [{ name: "review_claim", parameters: { type: "object" } }] }
+      : {}),
     credentials: {
       authToken: "api-auth-token",
       sourceAuthToken: "source-read-token",
@@ -85,6 +89,7 @@ async function fixture(
   const runtimeController = new AbortController();
   let prepared = 0, started = 0, cleaned = 0, cursor = 0;
   let signal: AbortSignal | undefined;
+  let apiTools: ExecutorToolCapability | undefined;
   let wait: ((toolCallId: string) => Promise<AgUiResumeValue>) | undefined;
   const service = createCanonicalManagedBrokerService({
     responseMode: "sse",
@@ -156,6 +161,7 @@ async function fixture(
       prepared++;
       signal = input.signal;
       wait = input.waitForToolResult;
+      apiTools = input.apiTools;
       if (prepareFailure) throw prepareFailure.value;
       const start = managedStart({ agentId: "builder" });
       start.trustedRuntime = {
@@ -188,6 +194,13 @@ async function fixture(
     broker: {
       async start(input) {
         started++;
+        if (mode === "api-tools") {
+          assertEquals(
+            input.tools.sources.size,
+            0,
+            "Providing a capability must not grant tools automatically",
+          );
+        }
         input.bindSessionOwnedWork!((operation) => operation());
         const settled = Promise.withResolvers<void>();
         let sourceEnded = false, closeRequested = false;
@@ -216,8 +229,14 @@ async function fixture(
                   return (async function* () {
                     try {
                       yield { type: "start", messageId: base.run.messageId } as const;
-                      if (mode === "resume") {
-                        const result = wait!("tool_1");
+                      if (mode === "resume" || mode === "api-tools") {
+                        const result = mode === "api-tools"
+                          ? apiTools!.source.executeTool("review_claim", {}, {
+                            ...apiTools!.context,
+                            toolCallId: "tool_1",
+                          })
+                            .then((result) => ({ result, isError: false }))
+                          : wait!("tool_1");
                         entered.resolve();
                         resumed.push(await result);
                         yield { type: "text-start", id: "text" } as const;
@@ -295,10 +314,48 @@ async function fixture(
       return cleaned;
     },
     lateWait: () => wait!("late_tool"),
+    get apiTools() {
+      return apiTools!;
+    },
   };
 }
 
 describe("canonical managed service ownership", () => {
+  it("binds API-declared tools to the same authenticated resume owner and retires the capability", async () => {
+    const f = await fixture("api-tools", true);
+    let reading: Promise<string> | undefined;
+    try {
+      const response = await f.start();
+      assertEquals(response.status, 200);
+      reading = response.text();
+      await f.entered;
+      assertEquals(f.apiTools.context.projectId, projectId);
+      assertEquals([...f.apiTools.allowedToolNames], ["review_claim"]);
+      const result = { type: "tool_result", toolCallId: "tool_1", result: { approved: true } };
+      assertEquals((await f.control("resume", result, "run_foreign")).status, 403);
+      assertEquals((await f.control("resume", result)).status, 200);
+      await f.cleanupEntered;
+      f.release();
+      assert((await reading).includes("event: RunFinished"));
+      assertEquals(f.resumed, [{ result: { approved: true }, isError: false }]);
+      await assertRejects(
+        () => f.apiTools.source.listTools(f.apiTools.context),
+        Error,
+        "ownership has ended",
+      );
+      await assertRejects(() =>
+        f.apiTools.source.executeTool("review_claim", {}, {
+          ...f.apiTools.context,
+          toolCallId: "late",
+        })
+      );
+    } finally {
+      f.release();
+      await f.service.close();
+      await reading;
+    }
+  });
+
   for (const cancellation of ["request", "execution", "runtime", "body"] as const) {
     it(`retires a pending host-tool wait on ${cancellation} cancellation`, async () => {
       const f = await fixture("resume");

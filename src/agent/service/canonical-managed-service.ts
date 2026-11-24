@@ -9,6 +9,8 @@ import {
 } from "../runtime/resume-session.ts";
 import type { AgUiResumeValue } from "../ag-ui/tool-shared.ts";
 import type { HostedServiceAuth } from "./auth.ts";
+import type { ExecutorToolCapability } from "../hosted/executor-tool-bridge.ts";
+import { createCanonicalApiToolSource } from "./canonical-api-tool-source.ts";
 
 type CanonicalOptions<T> = Parameters<typeof createCanonicalManagedBrokerHandler<T>>[0];
 type Prepare<T> = CanonicalOptions<T>["prepareExecutor"];
@@ -27,6 +29,8 @@ export function createCanonicalManagedBrokerService<T>(
       input: Parameters<Prepare<T>>[0] & {
         /** Host-tool callback; never serialize or forward this function to project execution. */
         waitForToolResult(toolCallId: string): Promise<AgUiResumeValue>;
+        /** API result capability, not an automatic tool grant. Retained only by the broker. */
+        apiTools: ExecutorToolCapability;
       },
     ): ReturnType<Prepare<T>>;
   },
@@ -75,6 +79,7 @@ export function createCanonicalManagedBrokerService<T>(
       const settled = Promise.withResolvers<void>();
       tracker.registerExecution(run.runId, settled.promise);
       let retired = false;
+      const apiToolLifetime = new AbortController();
       const cancellationSources = new Set<AbortSignal>();
       const cancelOwned = () => {
         if (!retired) tracker.sessionManager.cancelRun(run.runId, ownedSignal);
@@ -88,6 +93,7 @@ export function createCanonicalManagedBrokerService<T>(
       const retire = (failed: boolean, error?: unknown) => {
         if (retired) return;
         retired = true;
+        apiToolLifetime.abort(new RunCancelledError("Run-control ownership has ended"));
         for (const signal of cancellationSources) signal.removeEventListener("abort", cancelOwned);
         cancellationSources.clear();
         if (!failed) {
@@ -100,24 +106,31 @@ export function createCanonicalManagedBrokerService<T>(
       };
       followCancellation(input.signal);
       try {
+        const preparationSignal = AbortSignal.any([input.signal, ownedSignal]);
+        const waitForToolResult = (toolCallId: string) => {
+          if (
+            retired || ownedSignal.aborted ||
+            tracker.sessionManager.isSupersededRun(run.runId, ownedSignal)
+          ) {
+            throw new RunCancelledError("Run-control ownership has ended");
+          }
+          if (
+            typeof toolCallId !== "string" || toolCallId.length < 1 || toolCallId.length > 256
+          ) {
+            throw new TypeError("Invalid run-control wait key");
+          }
+          tracker.sessionManager.prepareForSignal(run.runId, toolCallId);
+          return tracker.sessionManager.waitForSignal(run.runId, toolCallId);
+        };
         const prepared = await prepareExecutor({
           ...input,
-          signal: AbortSignal.any([input.signal, ownedSignal]),
-          waitForToolResult(toolCallId) {
-            if (
-              retired || ownedSignal.aborted ||
-              tracker.sessionManager.isSupersededRun(run.runId, ownedSignal)
-            ) {
-              throw new RunCancelledError("Run-control ownership has ended");
-            }
-            if (
-              typeof toolCallId !== "string" || toolCallId.length < 1 || toolCallId.length > 256
-            ) {
-              throw new TypeError("Invalid run-control wait key");
-            }
-            tracker.sessionManager.prepareForSignal(run.runId, toolCallId);
-            return tracker.sessionManager.waitForSignal(run.runId, toolCallId);
-          },
+          signal: preparationSignal,
+          waitForToolResult,
+          apiTools: createCanonicalApiToolSource({
+            ingress: input.ingress,
+            signal: AbortSignal.any([preparationSignal, apiToolLifetime.signal]),
+            waitForToolResult,
+          }),
         });
         const cleanup = prepared.cleanup?.bind(prepared);
         const cancelPrepared = prepared.cancelExecution?.bind(prepared);
