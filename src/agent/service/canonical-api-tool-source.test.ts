@@ -7,7 +7,10 @@ import { createCanonicalApiToolSource } from "./canonical-api-tool-source.ts";
 import type { AgUiResumeValue } from "../ag-ui/tool-shared.ts";
 
 async function fixture(
-  wait: (id: string) => Promise<AgUiResumeValue> = async () => ({ result: "ok", isError: false }),
+  wait: (id: string, signal?: AbortSignal) => Promise<AgUiResumeValue> = async () => ({
+    result: "ok",
+    isError: false,
+  }),
 ) {
   const sourceId = "00000000-0000-4000-8000-000000000099";
   const base = invocation();
@@ -133,4 +136,25 @@ describe("canonical API tools", () => {
       "Claim not found",
     );
   });
+});
+
+Deno.test("canonical API tool forwards operation cancellation to its waiter", async () => {
+  let waitSignal: AbortSignal | undefined;
+  const result = Promise.withResolvers<AgUiResumeValue>();
+  const f = await fixture((_id, signal) => {
+    waitSignal = signal;
+    signal?.addEventListener("abort", () => result.reject(signal.reason), { once: true });
+    return result.promise;
+  });
+  const operation = new AbortController();
+  const pending = f.capability.source.executeTool("review_claim", {}, {
+    ...f.capability.context,
+    toolCallId: "cancel-one",
+    abortSignal: operation.signal,
+  });
+  assertEquals(waitSignal instanceof AbortSignal, true);
+  const rejected = assertRejects(() => pending, DOMException, "operation stopped");
+  operation.abort(new DOMException("operation stopped", "AbortError"));
+  await rejected;
+  assertEquals(f.lifetime.signal.aborted, false);
 });

@@ -387,7 +387,8 @@ export class RunResumeSessionManager<T> {
     this.touchSession(session);
   }
 
-  async waitForSignal(runId: string, waitKey: string): Promise<T> {
+  async waitForSignal(runId: string, waitKey: string, signal?: AbortSignal): Promise<T> {
+    signal?.throwIfAborted();
     const session = this.sessions.get(runId);
     if (!session || session.status === "completed" || session.status === "failed") {
       throw new RunNotActiveError(runId);
@@ -433,6 +434,13 @@ export class RunResumeSessionManager<T> {
         result.reject(reason);
       },
     });
+    const ownedWait = session.waitingStates.get(waitKey);
+    const abortWait = () => {
+      if (session.waitingStates.get(waitKey) !== ownedWait) return;
+      session.preparedWaitKeys.delete(waitKey);
+      session.waitingStates.get(waitKey)?.reject(signal?.reason ?? new RunCancelledError());
+    };
+    signal?.addEventListener("abort", abortWait, { once: true });
     session.status = "waiting";
     try {
       this.scheduleWaitingTimeout(session, waitKey);
@@ -441,7 +449,12 @@ export class RunResumeSessionManager<T> {
       session.waitingStates.get(waitKey)?.reject(error);
       this.cancelRun(session.runId, session.abortController.signal);
     }
-    return await result.promise;
+    try {
+      if (signal?.aborted) abortWait();
+      return await result.promise;
+    } finally {
+      signal?.removeEventListener("abort", abortWait);
+    }
   }
 
   submitSignal(

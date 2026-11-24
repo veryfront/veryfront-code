@@ -916,3 +916,23 @@ it("rejects every waiter and preserves a timer failure during result delivery", 
   assertEquals(signal.aborted, true);
   manager.settleCancelledRun("timer-failure", signal);
 });
+
+Deno.test("operation cancellation retires only its keyed waiter", async () => {
+  const manager = new RunResumeSessionManager<string>({ maxPendingWaitsPerRun: 2 });
+  const owner = manager.startRun({ runId: "operation-cancel", threadId: "thread" });
+  const operation = new AbortController();
+  const first = manager.waitForSignal("operation-cancel", "first", operation.signal);
+  const rejected = assertRejects(() => first, DOMException, "cancelled operation");
+  const second = manager.waitForSignal("operation-cancel", "second");
+  operation.abort(new DOMException("cancelled operation", "AbortError"));
+  await rejected;
+  assertEquals(owner.aborted, false);
+  assertThrows(
+    () => manager.submitSignal("operation-cancel", { waitKey: "first", value: "late" }),
+    WaitNotPendingError,
+  );
+  manager.submitSignal("operation-cancel", { waitKey: "second", value: "sibling" });
+  assertEquals(await second, "sibling");
+  manager.completeRun("operation-cancel");
+  manager.reset();
+});

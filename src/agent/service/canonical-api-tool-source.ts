@@ -19,7 +19,7 @@ export const CANONICAL_API_TOOL_SOURCE_ID = "canonical-api-tools";
 export function createCanonicalApiToolSource<T>(input: {
   ingress: BrokerRuntimeAgentIngress<T>;
   signal: AbortSignal;
-  waitForToolResult(toolCallId: string): Promise<AgUiResumeValue>;
+  waitForToolResult(toolCallId: string, signal?: AbortSignal): Promise<AgUiResumeValue>;
 }): ExecutorToolCapability {
   const run = input.ingress.executor.run;
   const identity = Object.freeze({
@@ -77,7 +77,10 @@ export function createCanonicalApiToolSource<T>(input: {
       if (pending.has(callId)) throw new TypeError("Canonical API tool call is already pending");
       pending.add(callId);
       try {
-        const result = await wait(callId);
+        const result = await wait(
+          callId,
+          AbortSignal.any([lifetime, ...(context?.abortSignal ? [context.abortSignal] : [])]),
+        );
         assertOwner(context);
         if (result.isError) {
           throw AGENT_ERROR.create({

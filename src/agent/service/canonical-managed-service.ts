@@ -35,7 +35,7 @@ export function createCanonicalManagedBrokerService<T>(
     prepareExecutor(
       input: Parameters<Prepare<T>>[0] & {
         /** Host-tool callback; never serialize or forward this function to project execution. */
-        waitForToolResult(toolCallId: string): Promise<AgUiResumeValue>;
+        waitForToolResult(toolCallId: string, signal?: AbortSignal): Promise<AgUiResumeValue>;
         /** API result capability, not an automatic tool grant. Retained only by the broker. */
         apiTools: ExecutorToolCapability;
       },
@@ -140,7 +140,7 @@ export function createCanonicalManagedBrokerService<T>(
           }, 1000);
         }
         const preparationSignal = AbortSignal.any([input.signal, ownedSignal]);
-        const waitForToolResult = (toolCallId: string) => {
+        const waitForToolResult = (toolCallId: string, signal?: AbortSignal) => {
           if (
             retired || ownedSignal.aborted ||
             tracker.sessionManager.isSupersededRun(run.runId, ownedSignal)
@@ -153,7 +153,7 @@ export function createCanonicalManagedBrokerService<T>(
             throw new TypeError("Invalid run-control wait key");
           }
           tracker.sessionManager.prepareForSignal(run.runId, toolCallId);
-          return tracker.sessionManager.waitForSignal(run.runId, toolCallId);
+          return tracker.sessionManager.waitForSignal(run.runId, toolCallId, signal);
         };
         const prepared = await prepareExecutor({
           ...input,
