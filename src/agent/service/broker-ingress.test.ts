@@ -232,6 +232,56 @@ describe("managed broker ingress", () => {
     const result = await parseBrokerRuntimeAgentIngress(encoded, options(signed.publicKeyPem));
     assertEquals(result.executor.run.runId, "run-1");
   });
+  for (const bodyCarriesCredentials of [false, true]) {
+    it(
+      `takes inference and source credentials from ingress headers (body ${
+        bodyCarriesCredentials ? "matching" : "without them"
+      })`,
+      async () => {
+        const signed = await signedRequest(
+          bodyCarriesCredentials ? invocation() : invocation({
+            credentials: { authToken: "api-auth-token" },
+          }),
+        );
+        signed.request.headers.set("x-veryfront-inference-token", "inference-token");
+        signed.request.headers.set("x-veryfront-source-token", "source-read-token");
+        const result = await parseBrokerRuntimeAgentIngress(signed.request, {
+          ...options(signed.publicKeyPem),
+          authorizeScope(input) {
+            assertEquals(input.sourceAuthToken, "source-read-token");
+            return { principal: { userId }, runEventWriter: { id: "writer-1" } };
+          },
+        });
+        assertEquals(result.privateAuthority.inferenceAuthToken, "inference-token");
+        assertEquals(result.privateAuthority.sourceAuthToken, "source-read-token");
+        const visible = JSON.stringify(result.executor);
+        assertEquals(visible.includes("inference-token"), false);
+        assertEquals(visible.includes("source-read-token"), false);
+      },
+    );
+  }
+
+  for (const header of ["x-veryfront-inference-token", "x-veryfront-source-token"]) {
+    it(`rejects a ${header} that differs from the body before scope authorization`, async () => {
+      const signed = await signedRequest();
+      signed.request.headers.set(header, "different-token");
+      let authorized = false;
+      await assertIngressError(
+        () =>
+          parseBrokerRuntimeAgentIngress(signed.request, {
+            ...options(signed.publicKeyPem),
+            authorizeScope() {
+              authorized = true;
+              return { principal: { userId }, runEventWriter: { id: "writer-1" } };
+            },
+          }),
+        400,
+        "BROKER_INGRESS_INVALID_BODY",
+      );
+      assertEquals(authorized, false);
+    });
+  }
+
   it("verifies the exact body and produces disjoint private authority and executor data", async () => {
     const signed = await signedRequest();
     const result = await parseBrokerRuntimeAgentIngress(

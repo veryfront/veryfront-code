@@ -16,6 +16,20 @@ Every bounded body read uses this reader, not only runtime invocations. If `Prom
 
 The invocation contract reads invocation fields as own properties. It validates a copy of the parsed body made of arrays and null-prototype records, and returns the parsed invocation in null-prototype records. A field that the body leaves out is undefined for validation and for every later reader, whatever `Object.prototype` defines under that name. The copy that the schema validates carries a placeholder for each credential string, with the same length, UTF-8 size and visible-ASCII outcome. The parsed invocation carries the original values. The agent stream handler validates its stream request the same way.
 
+## Host credentials in ingress headers
+
+The run-scoped inference credential and the source read credential can arrive as ingress headers instead of body fields: `x-veryfront-inference-token` and `x-veryfront-source-token`. Ingress sealing takes both off the request, with the other credential headers, before any await, so application code cannot read them from the request. The hosted invocation route, the managed broker and the agent stream handler read them before they read the body and pass them to the invocation contract, which puts them in the validated copy:
+
+| Header                                                | Body field                | Result                             |
+| ----------------------------------------------------- | ------------------------- | ---------------------------------- |
+| absent                                                | absent or present         | the body field, as before          |
+| present                                               | absent                    | the header value                   |
+| present                                               | equal to the header       | the header value                   |
+| present                                               | different from the header | rejected with 400 before execution |
+| present but empty or not visible ASCII, or over 16 KB | any                       | rejected with 400                  |
+
+A header is used only when the body has a `credentials` record; it travels with the body's `authToken`. Validation messages name the field, never a value. The body fields stay accepted while control planes move to the headers.
+
 The framework captures the compared values when its modules load, so it must load before project code.
 
 ## Ownership and limits

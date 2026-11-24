@@ -57,6 +57,7 @@ import {
   INGRESS_RUN_STOP_TOKEN_HEADER,
   INGRESS_RUN_TERMINAL_TOKEN_HEADER,
   readIngressCredential,
+  readInvocationIngressCredentials,
 } from "#veryfront/security/http/ingress-credentials.ts";
 import { assertNativeBodyProcessing } from "#veryfront/security/http/native-body-processing.ts";
 import {
@@ -1048,6 +1049,7 @@ function finishVerifiedRuntimeInvocation(
   if (verifiedRequest.serverEnvelopeVerified === true && invocation.resumeToolCall) {
     verifiedRequest.serverResolvedResumeToolCall = invocation.resumeToolCall;
   }
+  // The parsed invocation holds the header credential when one was sent.
   registerHostedInferenceCredential(
     verifiedRequest,
     verifiedRequest.serverEnvelopeVerified === true
@@ -1091,13 +1093,20 @@ export async function parseRuntimeAgentRunInvocationHostedChatRequestFromRequest
     return authenticatedRequest;
   }
 
+  // The inference and source credentials may arrive as ingress headers, which
+  // the runtime took off the request before any await. A header takes the
+  // place of the body field; a body field that differs from it is rejected.
+  const ingressCredentials = readInvocationIngressCredentials(request);
   // Validate native body processing before and after reading the body.
   assertNativeBodyProcessing();
   const requestBody = await parseRequestJson(request, DEFAULT_MAX_BODY_SIZE_BYTES);
   assertNativeBodyProcessing();
   if (requestBody instanceof Response) return requestBody;
 
-  const invocation = safeParseRuntimeAgentRunInvocationValue(requestBody.value);
+  const invocation = safeParseRuntimeAgentRunInvocationValue(
+    requestBody.value,
+    ingressCredentials,
+  );
   if (!invocation.success) {
     return createValidationErrorResponse({
       messagePrefix: "Invalid runtime agent invocation",
