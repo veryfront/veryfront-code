@@ -206,8 +206,10 @@ export function getForwardedHostedRuntimeOverrides(
 export function isHostedToolSelectionClosed(
   configuredTools: RuntimeAgentMarkdownDefinition["tools"],
   requestedTools?: readonly string[],
+  configuredDeniedTools?: readonly string[],
 ): boolean {
-  return configuredTools === false || requestedTools?.length === 0;
+  return configuredTools === false || requestedTools?.length === 0 ||
+    (configuredTools === true && (configuredDeniedTools?.length ?? 0) > 0);
 }
 
 /** Resolves hosted runtime thinking override. */

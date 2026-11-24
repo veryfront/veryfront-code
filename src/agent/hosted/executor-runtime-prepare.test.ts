@@ -2454,6 +2454,21 @@ describe("executor runtime preparation review regressions", () => {
   for (
     const selection of [
       { name: "declared delegate", expected: ["read_file", "agent_writer"] },
+      {
+        name: "unrestricted denial with caller tools",
+        frontmatter: "tools: true",
+        denied: ["read_file"],
+        caller: ["api_review"],
+        expected: [],
+      },
+      {
+        name: "unrestricted denial with explicit caller selection",
+        frontmatter: "tools: true",
+        denied: ["read_file"],
+        caller: ["api_review"],
+        requested: ["api_review"],
+        expected: [],
+      },
       { name: "narrowed request", requested: ["read_file"], expected: ["read_file"] },
       { name: "empty request", requested: [], expected: [] },
       { name: "denied delegate", denied: ["agent_writer"], expected: ["read_file"] },
@@ -2495,14 +2510,22 @@ Synthetic source instructions.`,
         load: () => Promise.resolve(state),
         grant: {
           ...grant,
-          allowedToolNames: selection.granted ?? ["read_file", "agent_writer", "agent_undeclared"],
+          allowedToolNames: selection.granted ??
+            ["read_file", "agent_writer", "agent_undeclared", ...(selection.caller ?? [])],
           hostToolFacadeIds: ["delegates"],
         },
         facades: {
+          callerToolNames: selection.caller,
           hostTools: new Map([[
             "delegates",
             Object.fromEntries(
-              ["read_file", "agent_writer", "agent_ungranted", "agent_undeclared"].map((name) => [
+              [
+                "read_file",
+                "agent_writer",
+                "agent_ungranted",
+                "agent_undeclared",
+                ...(selection.caller ?? []),
+              ].map((name) => [
                 name,
                 {
                   ...syntheticHostTool(),

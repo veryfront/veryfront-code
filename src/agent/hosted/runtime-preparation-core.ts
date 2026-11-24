@@ -664,7 +664,9 @@ export function createRuntimePreparationCore(input: RuntimePreparationCoreOption
       typeof facades.resolveModelRuntime !== "function" || typeof facades.cleanup !== "function"
     ) refuse("EXECUTOR_RUNTIME_CAPABILITY_UNAVAILABLE");
     requireGrantedSourceFacades(effective);
-    if (!isHostedToolSelectionClosed(definition.tools, requestedToolNames)) {
+    if (
+      !isHostedToolSelectionClosed(definition.tools, requestedToolNames, definition.deniedTools)
+    ) {
       requireConfiguredServerFacades(definition, effective);
     }
     if (
@@ -821,7 +823,13 @@ export function createRuntimePreparationCore(input: RuntimePreparationCoreOption
         }
       };
       // A closed selector calls no tools, so no remote source is connected or listed.
-      if (!isHostedToolSelectionClosed(definition.tools, request.allowedToolNames)) {
+      if (
+        !isHostedToolSelectionClosed(
+          definition.tools,
+          request.allowedToolNames,
+          definition.deniedTools,
+        )
+      ) {
         populateRemoteToolSources();
       }
       if (remoteToolSources.length > 0) resourcesStarted = true;
@@ -834,7 +842,8 @@ export function createRuntimePreparationCore(input: RuntimePreparationCoreOption
           configuredKnowledge: definition.knowledge,
           requestedTools: undefined,
         });
-        const sourceToolNames = authoredToolNames === undefined || definition.tools === false
+        const sourceToolNames = authoredToolNames === undefined ||
+            isHostedToolSelectionClosed(definition.tools, undefined, definition.deniedTools)
           ? authoredToolNames
           : [...createPrivateSet([...authoredToolNames, ...(facades.callerToolNames ?? [])])];
         const allowedToolNames = intersectNames(

@@ -119,6 +119,7 @@ export async function prepareCanonicalBrokerTools(input: {
     const closedTools = isHostedToolSelectionClosed(
       definition.tools,
       getForwardedHostedRuntimeOverrides(input.ingress.executor.input.forwardedProps)?.allowedTools,
+      definition.deniedTools,
     );
     raw = closedTools ? [] : createHostedProjectRemoteToolSources({
       authToken: input.ingress.privateAuthority.apiAuthToken,

@@ -339,3 +339,38 @@ Deno.test("code agents retain source model metadata when the API structured proj
     assertEquals(requests.length, count);
   });
 });
+
+Deno.test("canonical output override leaves room for additive reasoning", async () => {
+  const base = await ingress("consumer-inference", "anthropic/claude-sonnet-4-6");
+  const input = {
+    ...base,
+    executor: {
+      ...base.executor,
+      input: {
+        ...base.executor.input,
+        forwardedProps: { runtimeOverrides: { maxOutputTokens: 8192, thinking: 4096 } },
+      },
+    },
+  };
+  await withCatalog(async () => {
+    const policy = await prepareCanonicalBrokerModel({
+      ingress: input,
+      sourceDefinition: input.executor.agentConfig!,
+      apiBaseUrl: "https://93.184.216.34/api",
+      signal: new AbortController().signal,
+      limits: { ...limits, maxOutputTokens: 8192 },
+    });
+    try {
+      assertEquals(policy.maxOutputTokens, 4096);
+      assertEquals(policy.model.grant.models.get(policy.modelId)?.maxOutputTokens, 8192);
+    } finally {
+      policy.cleanup();
+    }
+  }, [{
+    ...model,
+    id: "anthropic/claude-sonnet-4-6",
+    modelId: "anthropic/claude-sonnet-4-6",
+    aliases: [],
+    capabilities: { limit: { output: 8192 } },
+  }]);
+});

@@ -9,8 +9,11 @@ import {
 } from "#veryfront/provider/veryfront-cloud/catalog-client.ts";
 import { requireSecureInferenceApiBaseUrl } from "#veryfront/provider/veryfront-cloud/shared.ts";
 import {
+  isVeryfrontCloudAnthropicSurfaceModel,
   resolveVeryfrontCloudDefaultModelId,
   resolveVeryfrontCloudModelThinking,
+  resolveVeryfrontCloudReasoningOption,
+  resolveVeryfrontCloudThinkingProviderOptions,
 } from "#veryfront/provider/veryfront-cloud/model-catalog.ts";
 import { createVeryfrontCloudInferenceModelResolver } from "../hosted/inference-credential.ts";
 import { resolveHostedRuntimeRequestConfig } from "../hosted/runtime-request-config.ts";
@@ -19,6 +22,7 @@ import {
   getExecutorModelOptionsSchema,
   parseExecutorModelData,
 } from "../hosted/executor-model-schema.ts";
+import { getExecutorModelAdditiveReasoningTokens } from "../hosted/executor-model-grant.ts";
 import { createModelRuntimeResolverAbortGuard } from "../runtime/model-transport.ts";
 import type { ManagedExecutorStartInput } from "../hosted/managed-executor-broker.ts";
 
@@ -101,6 +105,25 @@ export async function prepareCanonicalBrokerModel<T>(input: {
   if (
     !Number.isSafeInteger(output) || output < 1 || !Number.isSafeInteger(maxSteps) || maxSteps < 1
   ) throw new TypeError("Invalid canonical model budget");
+  // The grant covers total provider output; preparation receives only the
+  // answer allowance, leaving additive reasoning inside that same ceiling.
+  const maxOutputTokens = config.requestedMaxOutputTokens === undefined ? undefined : scoped(() => {
+    const thinking = config.requestedThinking ?? resolveVeryfrontCloudModelThinking(modelId);
+    const reasoning = isVeryfrontCloudAnthropicSurfaceModel(modelId)
+      ? getExecutorModelAdditiveReasoningTokens({
+        model: { id: modelId, modelId, provider: "anthropic" },
+        options: {
+          reasoning: resolveVeryfrontCloudReasoningOption(modelId, thinking),
+          providerOptions: resolveVeryfrontCloudThinkingProviderOptions(modelId, thinking),
+        },
+      })
+      : 0;
+    const available = Math.min(config.requestedMaxOutputTokens!, output - reasoning);
+    if (!Number.isSafeInteger(available) || available < 1) {
+      throw new BrokerIngressError(403, "BROKER_INGRESS_SCOPE_DENIED");
+    }
+    return available;
+  });
   const resolver = createVeryfrontCloudInferenceModelResolver(credential, {
     apiBaseUrl: input.apiBaseUrl,
     projectSlug: scope.projectSlug,
@@ -124,9 +147,7 @@ export async function prepareCanonicalBrokerModel<T>(input: {
     provider: row.provider,
     providerToolNames: providerTools.map((tool) => tool.name),
     maxSteps,
-    maxOutputTokens: config.requestedMaxOutputTokens === undefined
-      ? undefined
-      : Math.min(config.requestedMaxOutputTokens, output),
+    maxOutputTokens,
     thinking: config.requestedThinking,
     cleanup: () => guard.dispose(),
   };

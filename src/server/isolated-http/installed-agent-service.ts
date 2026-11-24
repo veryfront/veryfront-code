@@ -257,13 +257,16 @@ export function createInstalledCanonicalAgentService(options: {
         const requestedToolNames = invocationConfig.effectiveRuntimeOverrides?.allowedTools;
         const deniedToolNames = new Set(source.definition.deniedTools ?? []);
         const callerToolNames = [...apiTools.allowedToolNames];
-        const selectedCallerTools =
-          isHostedToolSelectionClosed(source.definition.tools, requestedToolNames)
-            ? []
-            : callerToolNames.filter((name) =>
-              !deniedToolNames.has(name) &&
-              (requestedToolNames === undefined || requestedToolNames.includes(name))
-            );
+        const selectedCallerTools = isHostedToolSelectionClosed(
+            source.definition.tools,
+            requestedToolNames,
+            source.definition.deniedTools,
+          )
+          ? []
+          : callerToolNames.filter((name) =>
+            !deniedToolNames.has(name) &&
+            (requestedToolNames === undefined || requestedToolNames.includes(name))
+          );
         const invocationToolNames = requestedToolNames === undefined ? undefined : [
           ...new Set([...(invocationConfig.requestedAllowedTools ?? []), ...selectedCallerTools]),
         ];
