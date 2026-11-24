@@ -11,6 +11,11 @@ import type { AgUiResumeValue } from "../ag-ui/tool-shared.ts";
 import type { HostedServiceAuth } from "./auth.ts";
 import type { ExecutorToolCapability } from "../hosted/executor-tool-bridge.ts";
 import { createCanonicalApiToolSource } from "./canonical-api-tool-source.ts";
+import {
+  executorNodeClock,
+  scheduleExecutorNodeDeadline,
+} from "../hosted/executor-node-deadline.ts";
+import type { HostedExecutorSessionClock } from "../hosted/executor-session.ts";
 
 type CanonicalOptions<T> = Parameters<typeof createCanonicalManagedBrokerHandler<T>>[0];
 type Prepare<T> = CanonicalOptions<T>["prepareExecutor"];
@@ -25,6 +30,8 @@ export function createCanonicalManagedBrokerService<T>(
       "authenticateRequest" | "verifyRunCancellationToken" | "verifyRunResumeToken"
     >;
     maxActiveRuns?: number;
+    /** Host UTC/elapsed clock shared with executor deadlines. */
+    clock?: HostedExecutorSessionClock;
     prepareExecutor(
       input: Parameters<Prepare<T>>[0] & {
         /** Host-tool callback; never serialize or forward this function to project execution. */
@@ -35,8 +42,14 @@ export function createCanonicalManagedBrokerService<T>(
     ): ReturnType<Prepare<T>>;
   },
 ) {
-  const { auth, maxActiveRuns = 16, prepareExecutor, responseMode = "sse", ...canonicalOptions } =
-    options;
+  const {
+    auth,
+    maxActiveRuns = 16,
+    prepareExecutor,
+    responseMode = "sse",
+    clock = executorNodeClock,
+    ...canonicalOptions
+  } = options;
   if (responseMode !== "sse") throw new TypeError("Canonical API service requires SSE");
   if (!Number.isSafeInteger(maxActiveRuns) || maxActiveRuns < 1 || maxActiveRuns > 1024) {
     throw new TypeError("Invalid canonical run ownership limit");
@@ -61,6 +74,12 @@ export function createCanonicalManagedBrokerService<T>(
       const negotiated = input.ingress.privateAuthority.projectEventPersistence;
       if (!negotiated) throw new BrokerIngressError(503, "BROKER_UNAVAILABLE");
       const run = input.ingress.executor.run;
+      const deadline = run.effectiveDeadlineAt === undefined
+        ? undefined
+        : Date.parse(run.effectiveDeadlineAt);
+      if (deadline !== undefined && (!Number.isFinite(deadline) || deadline <= clock.now())) {
+        throw new BrokerIngressError(409, "BROKER_RUN_NOT_ACTIVE");
+      }
       const cursor = negotiated;
       if (!cursor) throw new BrokerIngressError(503, "BROKER_UNAVAILABLE");
       let ownedSignal: AbortSignal;
@@ -79,6 +98,7 @@ export function createCanonicalManagedBrokerService<T>(
       const settled = Promise.withResolvers<void>();
       tracker.registerExecution(run.runId, settled.promise);
       let retired = false;
+      let stopDeadline: (() => void) | undefined;
       const apiToolLifetime = new AbortController();
       const cancellationSources = new Set<AbortSignal>();
       const cancelOwned = () => {
@@ -93,6 +113,7 @@ export function createCanonicalManagedBrokerService<T>(
       const retire = (failed: boolean, error?: unknown) => {
         if (retired) return;
         retired = true;
+        stopDeadline?.();
         apiToolLifetime.abort(new RunCancelledError("Run-control ownership has ended"));
         for (const signal of cancellationSources) signal.removeEventListener("abort", cancelOwned);
         cancellationSources.clear();
@@ -106,6 +127,15 @@ export function createCanonicalManagedBrokerService<T>(
       };
       followCancellation(input.signal);
       try {
+        if (deadline !== undefined) {
+          const deadlineOwner = new AbortController();
+          followCancellation(deadlineOwner.signal);
+          // Observe forward UTC corrections without large-timer overflow or
+          // letting a backward correction extend the elapsed run budget.
+          stopDeadline = scheduleExecutorNodeDeadline(clock, deadline, () => {
+            deadlineOwner.abort(new RunCancelledError("Canonical run deadline elapsed"));
+          }, 1000);
+        }
         const preparationSignal = AbortSignal.any([input.signal, ownedSignal]);
         const waitForToolResult = (toolCallId: string) => {
           if (

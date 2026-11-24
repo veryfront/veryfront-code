@@ -17,6 +17,7 @@ import { stripLeadingEmptyObjectPlaceholder } from "#veryfront/agent/streaming/d
 import { getRuntimeAgentMarkdownDefinitionSchema } from "#veryfront/agent/runtime/agent-definition.ts";
 import {
   getRuntimeAgentCredentialsSchema,
+  getRuntimeAgentDeadlineSchema,
   getRuntimeAgentEntrypointSchema,
   getRuntimeAgentProjectContextSchema,
   getRuntimeAgentSourceContextSchema,
@@ -85,6 +86,7 @@ export const getInternalAgentControlPlaneStreamRequestSchema = defineSchema((v) 
     messageId: v.string().uuid().optional(),
     taskId: getRuntimeAgentTaskIdSchema().optional(),
     parentRunId: getRunIdSchema().optional(),
+    effectiveDeadlineAt: getRuntimeAgentDeadlineSchema().optional(),
     state: v.unknown().optional(),
     messages: v.array(
       v.union([getRuntimeMessageSchema(), getInternalAgentCompatibilityMessageSchema()]),
@@ -455,6 +457,7 @@ export function toRuntimeRunAgentInput(
     ...(input.messageId ? { messageId: input.messageId } : {}),
     ...(input.taskId ? { taskId: input.taskId } : {}),
     ...(input.parentRunId ? { parentRunId: input.parentRunId } : {}),
+    ...(input.effectiveDeadlineAt ? { effectiveDeadlineAt: input.effectiveDeadlineAt } : {}),
     ...(input.state !== undefined ? { state: input.state } : {}),
     ...(input.allowDelegation !== undefined ? { allowDelegation: input.allowDelegation } : {}),
     messages: input.messages.map(toRuntimeMessage),
@@ -495,6 +498,7 @@ export type { RuntimeAgentSourceContext };
 export type RuntimeInjectedTool = InferSchema<ReturnType<typeof getRuntimeInjectedToolSchema>>;
 export type RuntimeContextItem = AgUiRuntimeContextItem;
 export type RuntimeRunAgentInput = AgUiRuntimeRequest & {
+  effectiveDeadlineAt?: string;
   taskId?: string;
   allowDelegation?: boolean;
   messageId?: string;

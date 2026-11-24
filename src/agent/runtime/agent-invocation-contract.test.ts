@@ -17,6 +17,10 @@ import {
   parseRuntimeAgentRunInvocationValue,
   safeParseRuntimeAgentRunInvocationValue,
 } from "./agent-invocation-contract.ts";
+import {
+  getInternalAgentStreamRequestSchema,
+  toRuntimeRunAgentInput,
+} from "../../internal-agents/schema.ts";
 import { DEFAULT_LIMITS } from "#veryfront/security/input-validation/types.ts";
 
 const conversationId = "10000000-1000-4000-8000-100000000001";
@@ -1222,4 +1226,43 @@ describe("agent/runtime-agent-invocation-contract", () => {
     assertEquals(body.error, "Invalid runtime agent invocation");
     assertEquals(Array.isArray(body.details), true);
   });
+});
+
+describe("signed run deadlines", () => {
+  for (const deadline of ["2026-05-01T00:05:00.000Z", "2026-05-01T05:35:00+05:30"]) {
+    it(`preserves ${deadline} through invocation and runtime adapters`, () => {
+      const base = createInvocation();
+      const parsed = parseRuntimeAgentRunInvocationValue({
+        ...base,
+        run: { ...base.run, effectiveDeadlineAt: deadline },
+      });
+      assertEquals(parsed.run.effectiveDeadlineAt, deadline);
+      const request = buildRuntimeAgentControlPlaneStreamRequestFromInvocation(parsed);
+      assertEquals(request.effectiveDeadlineAt, deadline);
+      assertEquals(
+        toRuntimeRunAgentInput(getInternalAgentStreamRequestSchema().parse(request))
+          .effectiveDeadlineAt,
+        deadline,
+      );
+    });
+  }
+  for (
+    const deadline of [
+      "tomorrow",
+      "2026-05-01T00:05:00",
+      "2026-02-30T00:00:00Z",
+      "2026-05-01T00:05:00+25:00",
+    ]
+  ) {
+    it(`rejects malformed absolute deadline ${deadline}`, () => {
+      const base = createInvocation();
+      assertEquals(
+        safeParseRuntimeAgentRunInvocationValue({
+          ...base,
+          run: { ...base.run, effectiveDeadlineAt: deadline },
+        }).success,
+        false,
+      );
+    });
+  }
 });

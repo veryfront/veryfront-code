@@ -16,6 +16,7 @@ import {
 } from "./broker-ingress.test-helpers.ts";
 import type { ManagedExecutorRuntime } from "../hosted/managed-executor-broker.ts";
 import type { ExecutorToolCapability } from "../hosted/executor-tool-bridge.ts";
+import type { HostedExecutorSessionClock } from "../hosted/executor-session.ts";
 import type { AgUiResumeValue } from "../ag-ui/tool-shared.ts";
 
 const canonicalId = "30000000-3000-4000-8000-300000000001";
@@ -28,11 +29,13 @@ async function fixture(
   holdCleanup = false,
   prepareFailure?: { value: unknown },
   negotiate = true,
+  deadline?: { at: string; clock: HostedExecutorSessionClock; preparation?: Promise<void> },
 ) {
   const base = invocation();
   const body = invocation({
     run: {
       ...base.run,
+      ...(deadline ? { effectiveDeadlineAt: deadline.at } : {}),
       eventCursor: {
         canonicalRunId: canonicalId,
         latestEventId: 0,
@@ -93,6 +96,7 @@ async function fixture(
   let wait: ((toolCallId: string) => Promise<AgUiResumeValue>) | undefined;
   const service = createCanonicalManagedBrokerService({
     responseMode: "sse",
+    ...(deadline ? { clock: deadline.clock } : {}),
     apiUrl: "https://api.example.test",
     resolveProvider: () => "openai",
     auth: {
@@ -162,6 +166,10 @@ async function fixture(
       signal = input.signal;
       wait = input.waitForToolResult;
       apiTools = input.apiTools;
+      if (deadline?.preparation) {
+        entered.resolve();
+        await deadline.preparation;
+      }
       if (prepareFailure) throw prepareFailure.value;
       const start = managedStart({ agentId: "builder" });
       start.trustedRuntime = {
@@ -490,6 +498,123 @@ describe("canonical managed service ownership", () => {
       f.release();
       await f.service.close();
       await reading;
+    }
+  });
+});
+
+function deadlineClock() {
+  let now = 5000;
+  const pending = new Map<object, { run: () => void; due: number; delay: number }>();
+  const clock: HostedExecutorSessionClock = {
+    now: () => now,
+    schedule(run, delay) {
+      const key = {};
+      pending.set(key, { run, due: now + delay, delay });
+      return key;
+    },
+    cancel(key) {
+      pending.delete(key as object);
+    },
+  };
+  return {
+    clock,
+    pending,
+    advance(to: number) {
+      now = to;
+      for (const [key, task] of [...pending]) {
+        if (task.due <= now) {
+          pending.delete(key);
+          task.run();
+        }
+      }
+    },
+  };
+}
+
+describe("canonical signed run deadlines", () => {
+  it("refuses an expired signed deadline before deployment preparation or allocation", async () => {
+    const timer = deadlineClock();
+    const f = await fixture("cancel", false, undefined, true, {
+      at: new Date(4999).toISOString(),
+      clock: timer.clock,
+    });
+    let reading: Promise<string> | undefined;
+    try {
+      const response = await f.start();
+      reading = response.text();
+      assertEquals(response.status, 409);
+      assertEquals(f.prepared, 0);
+      assertEquals(f.started, 0);
+      assertEquals(timer.pending.size, 0);
+    } finally {
+      await f.service.close();
+      await reading;
+    }
+  });
+  it("cancels active execution at its signed deadline and releases its timer", async () => {
+    const timer = deadlineClock();
+    const f = await fixture("cancel", false, undefined, true, {
+      at: new Date(6000).toISOString(),
+      clock: timer.clock,
+    });
+    let reading: Promise<string> | undefined;
+    try {
+      const response = await f.start();
+      reading = response.text();
+      assertEquals(response.status, 200);
+      await f.entered;
+      timer.advance(6000);
+      const wire = await reading;
+      assertEquals(f.signal?.aborted, true);
+      assertEquals(wire.includes("event: RunFinished"), false);
+      assertEquals(timer.pending.size, 0);
+    } finally {
+      await f.service.close();
+      await reading;
+    }
+  });
+  it("refuses allocation when policy preparation returns after the deadline", async () => {
+    const timer = deadlineClock(), policy = Promise.withResolvers<void>();
+    const f = await fixture("cancel", false, undefined, true, {
+      at: new Date(6000).toISOString(),
+      clock: timer.clock,
+      preparation: policy.promise,
+    });
+    try {
+      const response = f.start();
+      await f.entered;
+      timer.advance(6000);
+      policy.resolve();
+      const result = await response;
+      await result.text();
+      assertEquals(f.signal?.aborted, true);
+      assertEquals(f.started, 0);
+      assertEquals(f.cleaned, 1);
+      assertEquals(timer.pending.size, 0);
+    } finally {
+      policy.resolve();
+      await f.service.close();
+    }
+  });
+  it("bounds distant deadline timers and cancels them on preparation failure", async () => {
+    const timer = deadlineClock();
+    const policy = Promise.withResolvers<void>();
+    const f = await fixture("cancel", false, { value: new Error("policy failure") }, true, {
+      at: "2099-01-01T00:00:00Z",
+      clock: timer.clock,
+      preparation: policy.promise,
+    });
+    try {
+      const response = f.start();
+      await f.entered;
+      assertEquals([...timer.pending.values()][0]?.delay, 1000);
+      policy.resolve();
+      await (await response).text();
+      assertEquals(f.started, 0);
+      assertEquals(timer.pending.size, 0);
+    } finally {
+      policy.resolve();
+      await f.service.close();
     }
   });
 });

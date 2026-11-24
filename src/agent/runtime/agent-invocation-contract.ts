@@ -24,6 +24,21 @@ const encoder = new PrivateTextEncoder();
 const IntrinsicReflectApply = Reflect.apply;
 const RegExpPrototypeTest = RegExp.prototype.test;
 const INFERENCE_CREDENTIAL_PATTERN = /^[\x21-\x7e]+$/;
+const parseDeadlineDate = Date.parse;
+const replaceDeadlineOffset = String.prototype.replace;
+
+/** API-issued absolute deadline; preserve explicit offsets as well as UTC. */
+export const getRuntimeAgentDeadlineSchema = defineSchema((v) => {
+  const utc = v.string().datetime();
+  const validateUtc = utc.safeParse.bind(utc);
+  return v.string().max(64).refine(
+    (value) =>
+      validateUtc(IntrinsicReflectApply(replaceDeadlineOffset, value, [/[+-]\d{2}:\d{2}$/, "Z"]))
+        .success &&
+      Number.isFinite(IntrinsicReflectApply(parseDeadlineDate, undefined, [value])),
+    "Invalid runtime deadline",
+  );
+});
 
 function isWithinJsonSizeLimit(value: unknown, maxBytes: number): boolean {
   try {
@@ -323,6 +338,7 @@ export const getRuntimeAgentRunContextSchema = defineSchema((v) =>
       latestExternalEventSequence: v.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
     }).strict().optional(),
     requestedByUserId: v.string().uuid(),
+    effectiveDeadlineAt: getRuntimeAgentDeadlineSchema().optional(),
     project: getRuntimeAgentProjectContextSchema(),
     parentConversationId: v.string().uuid().nullable().optional(),
     parentRunId: getRuntimeAgentRunIdSchema().nullable().optional(),
@@ -1049,6 +1065,7 @@ export type RuntimeAgentControlPlaneStreamRequest = {
   agentId: RuntimeAgentRunContext["agentId"];
   threadId: RuntimeAgentRunContext["conversationId"];
   runId: RuntimeAgentRunContext["runId"];
+  effectiveDeadlineAt?: RuntimeAgentRunContext["effectiveDeadlineAt"];
   messageId?: RuntimeAgentRunContext["messageId"];
   taskId?: string;
   parentRunId?: Exclude<RuntimeAgentRunContext["parentRunId"], null | undefined>;
@@ -1088,6 +1105,9 @@ export function buildRuntimeAgentControlPlaneStreamRequestFromInvocation(
     ...(input.agentEntrypoint ? { agentEntrypoint: input.agentEntrypoint } : {}),
     threadId: input.run.conversationId,
     runId: input.run.runId,
+    ...(input.run.effectiveDeadlineAt
+      ? { effectiveDeadlineAt: input.run.effectiveDeadlineAt }
+      : {}),
     messageId: input.run.messageId,
     ...(input.taskId ? { taskId: input.taskId } : {}),
     ...(input.run.parentRunId ? { parentRunId: input.run.parentRunId } : {}),
