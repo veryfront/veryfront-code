@@ -2603,6 +2603,9 @@ jobs:
     runs-on: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.ubuntu26 == true && 'ubuntu-26.04' || 'ubuntu-latest' }}
     environment: production
     timeout-minutes: 65
+    outputs:
+      # Set only when this run dispatched its release to the components.
+      current_release: ${{ steps.sandbox-dispatch.outcome == 'success' && steps.version.outputs.version || '' }}
     steps:
       - name: Require fresh Sonar quality gate
         env:
@@ -2858,6 +2861,7 @@ jobs:
           client-payload: ${{ steps.payload.outputs.payload }}
 
       - name: Trigger sandbox deploy
+        id: sandbox-dispatch
         if: ${{ success() && needs.publish-public-release.result == 'success' && ((needs.version-check.outputs.is_stable == 'true' && needs.release.result == 'success') || (needs.version-check.outputs.is_stable == 'false' && needs.prerelease.result == 'success' && needs.github-prerelease.result == 'success' && needs.registry-validation-rc.result == 'success')) && steps.current.outputs.dispatch == 'true' && !(github.event_name == 'workflow_dispatch' && inputs.maintenance_release_number != '') }}
         timeout-minutes: 5
         uses: peter-evans/repository-dispatch@28959ce8df70de7be546dd1250a005dd32156697 # v4.0.1
@@ -2866,6 +2870,138 @@ jobs:
           repository: veryfront/veryfront-sandbox
           event-type: veryfront-code-released
           client-payload: ${{ steps.payload.outputs.payload }}
+
+  publish-current-release:
+    # Component builds on a push to main take the framework version from this
+    # record instead of a committed pin. Fixed workflow code only: no checkout.
+    concurrency:
+      group: veryfront-current-release
+      queue: max
+    name: Publish current release record
+    needs: [quality-gate-registry, prerelease]
+    if: ${{ always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && needs.quality-gate-registry.result == 'success' && needs.quality-gate-registry.outputs.current_release != '' }}
+    runs-on: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.ubuntu26 == true && 'ubuntu-26.04' || 'ubuntu-latest' }}
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - name: Publish current release record
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          VERSION: ${{ needs.quality-gate-registry.outputs.current_release }}
+          RELEASE_BASE: https://github.com/veryfront/veryfront/releases/download
+          NPM_REGISTRY: https://registry.npmjs.org/veryfront
+          RECORD_TAG: current-release
+          # While npm refuses the core, the release carries its tarball and provenance.
+          NPM_CORE_SUSPENDED: ${{ needs.prerelease.outputs.npm_core_suspended == 'true' }}
+        run: |
+          set -euo pipefail
+          semver='^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$'
+          if [[ ! "$VERSION" =~ $semver ]]; then
+            echo "::error::Refusing to record malformed release version '${VERSION}'"
+            exit 1
+          fi
+          work="${RUNNER_TEMP}/current-release-record"
+          mkdir "$work"
+          fetch() {
+            curl --fail --silent --show-error --location --max-time 600 --retry 3 --retry-all-errors \
+              --proto '=https' --proto-redir '=https' --output "$2" "$1"
+          }
+          # The record carries only what the published tarball's bytes prove.
+          sha512() {
+            echo "sha512-$(openssl dgst -sha512 -binary "$1" | openssl base64 -A)"
+          }
+          if [ "$NPM_CORE_SUSPENDED" = true ]; then
+            tarball_url="${RELEASE_BASE}/v${VERSION}/veryfront-${VERSION}.tgz"
+            fetch "${RELEASE_BASE}/v${VERSION}/veryfront-${VERSION}.npm-provenance.json" "$work/provenance.json"
+            fetch "$tarball_url" "$work/package.tgz"
+            jq -ce --arg version "$VERSION" --arg integrity "$(sha512 "$work/package.tgz")" --arg url "$tarball_url" '
+              if type == "object" and (keys == ["git_head", "package", "repository", "schema_version"])
+                and .schema_version == 1
+                and (.package | type == "object" and keys == ["integrity", "name", "version"])
+                and .package.name == "veryfront" and .package.version == $version
+                and .package.integrity == $integrity
+                and .repository == "https://github.com/veryfront/veryfront-code"
+                and (.git_head | type == "string" and test("^[0-9a-f]{40}$"))
+              then {schema_version: 1, version: $version, tarball_url: $url,
+                    integrity: $integrity, source_sha: .git_head}
+              else error("Release provenance does not match its published tarball") end
+            ' "$work/provenance.json" > "$work/record.json"
+          else
+            tarball_url="${NPM_REGISTRY}/-/veryfront-${VERSION}.tgz"
+            fetch "${NPM_REGISTRY}/${VERSION}" "$work/metadata.json"
+            fetch "$tarball_url" "$work/package.tgz"
+            jq -ce --arg version "$VERSION" --arg integrity "$(sha512 "$work/package.tgz")" --arg url "$tarball_url" '
+              if type == "object" and .name == "veryfront" and .version == $version
+                and .repository.url == "git+https://github.com/veryfront/veryfront-code.git"
+                and .dist.integrity == $integrity and .dist.tarball == $url
+                and (.gitHead | type == "string" and test("^[0-9a-f]{40}$"))
+              then {schema_version: 1, version: $version, tarball_url: $url,
+                    integrity: $integrity, source_sha: .gitHead}
+              else error("npm metadata does not match its published tarball") end
+            ' "$work/metadata.json" > "$work/record.json"
+          fi
+
+          if gh release view "$RECORD_TAG" --json body --jq .body > "$work/current.json" 2> "$work/view.err"; then
+            exists=true
+          elif grep -qx 'release not found' "$work/view.err"; then
+            exists=false
+          else
+            cat "$work/view.err" >&2
+            echo "::error::Could not read the current release record"
+            exit 1
+          fi
+
+          if [ "$exists" = true ]; then
+            # Queued runs can finish out of order; never move the record back.
+            old=""
+            # Only a complete record may hold its place; anything else is repaired.
+            if jq -e '
+              type == "object"
+              and (keys == ["integrity", "schema_version", "source_sha", "tarball_url", "version"])
+              and .schema_version == 1
+              and (.version | type == "string")
+              and (.tarball_url | type == "string" and startswith("https://"))
+              and (.integrity | type == "string" and test("^sha512-[A-Za-z0-9+/]{86}==$"))
+              and (.source_sha | type == "string" and test("^[0-9a-f]{40}$"))
+            ' "$work/current.json" > /dev/null 2>&1; then
+              old="$(jq -r .version "$work/current.json")"
+            fi
+            if [[ "$old" =~ $semver ]]; then
+              order="$(jq -nr --arg next "$VERSION" --arg old "$old" '
+                def key:
+                  capture("^(?<a>[0-9]+)\\.(?<b>[0-9]+)\\.(?<c>[0-9]+)(?:-(?<pre>.+))?$") as $v
+                  | ([$v.a, $v.b, $v.c] | map([0, length, .]))
+                    + (if $v.pre == null then [[1]]
+                       else [[0]] + ($v.pre | split(".") | map(if test("^[0-9]+$") then [0, length, .] else [1, .] end))
+                       end);
+                if ($old | key) > ($next | key) then "newer" else "replace" end
+              ')"
+              if [ "$order" = newer ]; then
+                echo "::notice::The current release record already names ${old}, newer than ${VERSION}; leaving it."
+                exit 0
+              fi
+            else
+              echo "::warning::The current release record is unreadable; replacing it with ${VERSION}."
+            fi
+            gh release edit "$RECORD_TAG" --notes-file "$work/record.json"
+          else
+            gh release create "$RECORD_TAG" --target "$GITHUB_SHA" --title "Current Veryfront release" \
+              --notes-file "$work/record.json" --prerelease --latest=false
+          fi
+
+          gh release view "$RECORD_TAG" --json body --jq .body > "$work/written.json"
+          if ! jq -e --slurpfile want "$work/record.json" '. == $want[0]' "$work/written.json" > /dev/null; then
+            echo "::error::The current release record did not read back as written"
+            exit 1
+          fi
+          {
+            echo "### Current release record"
+            echo '```json'
+            cat "$work/record.json"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
 
   # ============================================
   # CD: Update Homebrew (stable releases only)
