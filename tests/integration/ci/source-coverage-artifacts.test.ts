@@ -5,7 +5,7 @@ import {
   recordSourceCoverage,
   selectSourceCoverage,
   SOURCE_COVERAGE_LABELS,
-} from "./source-coverage-artifacts.ts";
+} from "../../../scripts/ci/source-coverage-artifacts.ts";
 
 const ID: CoverageIdentity = { source: "a".repeat(40), run: "123", attempt: 2 };
 const LCOV = "SF:src/example.ts\nDA:1,1\nend_of_record\n";
@@ -153,12 +153,12 @@ Deno.test("the workflow CLI records and selects both producer receipts", () =>
         args: [
           "run",
           "--config",
-          fromFileUrl(new URL("../test.deno.json", import.meta.url)),
+          fromFileUrl(new URL("../../../scripts/test.deno.json", import.meta.url)),
           "--no-npm",
           "--allow-read",
           "--allow-write",
           "--allow-env=GITHUB_SHA,GITHUB_RUN_ID,GITHUB_RUN_ATTEMPT",
-          fromFileUrl(new URL("./source-coverage-artifacts.ts", import.meta.url)),
+          fromFileUrl(new URL("../../../scripts/ci/source-coverage-artifacts.ts", import.meta.url)),
           ...args,
         ],
         clearEnv: true,

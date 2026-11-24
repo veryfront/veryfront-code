@@ -206,26 +206,42 @@ describe("cicd coverage workflow", () => {
   });
 
   it("retains service attribution intrinsic regressions in coverage collectors", async () => {
+    const consumer = jobBlock(await readWorkflow(), "sonar-coverage");
+    assertStringIncludes(consumer, "source-coverage-context-ownership");
+    assertStringIncludes(consumer, "coverage-profiles/coverage-context-ownership");
+    assertStringIncludes(consumer, "Verify and select current-source coverage receipts");
     const fixture =
       "tests/integration/semantic-unit-boundary/src/agent/service/runtime-attribution-intrinsics.test.ts";
-    assertStringIncludes(jobBlock(await readWorkflow(), "sonar-coverage"), fixture);
+    assertStringIncludes(
+      jobBlock(await readWorkflow(), "source-coverage-context-ownership"),
+      fixture,
+    );
     assertStringIncludes(jobBlock(await readPoolWorkflow(), "coverage-shards"), fixture);
     const headerFixture =
       "tests/integration/semantic-unit-boundary/src/utils/header-identity-intrinsics.test.ts";
-    assertStringIncludes(jobBlock(await readWorkflow(), "sonar-coverage"), headerFixture);
+    assertStringIncludes(
+      jobBlock(await readWorkflow(), "source-coverage-context-ownership"),
+      headerFixture,
+    );
     assertStringIncludes(jobBlock(await readPoolWorkflow(), "coverage-shards"), headerFixture);
     const cleanupFixture =
       "tests/integration/semantic-unit-boundary/server/handlers/request/response-cleanup-intrinsics.test.ts";
-    assertStringIncludes(jobBlock(await readWorkflow(), "sonar-coverage"), cleanupFixture);
+    assertStringIncludes(
+      jobBlock(await readWorkflow(), "source-coverage-context-ownership"),
+      cleanupFixture,
+    );
     assertStringIncludes(jobBlock(await readPoolWorkflow(), "coverage-shards"), cleanupFixture);
     const startupFixture =
       "tests/integration/semantic-unit-boundary/src/agent/service/runtime-identity-startup.test.ts";
-    assertStringIncludes(jobBlock(await readWorkflow(), "sonar-coverage"), startupFixture);
+    assertStringIncludes(
+      jobBlock(await readWorkflow(), "source-coverage-context-ownership"),
+      startupFixture,
+    );
     assertStringIncludes(jobBlock(await readPoolWorkflow(), "coverage-shards"), startupFixture);
     const processTargetStartupFixture =
       "tests/integration/semantic-unit-boundary/src/agent/service/runtime-identity-process-target-startup.test.ts";
     assertStringIncludes(
-      jobBlock(await readWorkflow(), "sonar-coverage"),
+      jobBlock(await readWorkflow(), "source-coverage-context-ownership"),
       processTargetStartupFixture,
     );
     assertStringIncludes(
@@ -234,7 +250,10 @@ describe("cicd coverage workflow", () => {
     );
     const envFileFixture =
       "tests/integration/semantic-unit-boundary/src/agent/service/runtime-identity-env-file-startup.test.ts";
-    assertStringIncludes(jobBlock(await readWorkflow(), "sonar-coverage"), envFileFixture);
+    assertStringIncludes(
+      jobBlock(await readWorkflow(), "source-coverage-context-ownership"),
+      envFileFixture,
+    );
     assertStringIncludes(jobBlock(await readPoolWorkflow(), "coverage-shards"), envFileFixture);
   });
 
