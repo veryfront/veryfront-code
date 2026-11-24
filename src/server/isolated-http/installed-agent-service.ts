@@ -81,6 +81,7 @@ export function createInstalledCanonicalAgentService(options: {
     toolLimits.maxConcurrent > toolLimits.maxCalls
   ) throw new TypeError("Invalid installed agent execution limits");
   const ingressOptions = Object.freeze({ ...options.ingress });
+  const apiUrl = options.apiUrl;
   const inferenceApiBaseUrl = options.inferenceApiBaseUrl;
   const apiMcpUrl = options.apiMcpUrl;
   const studioMcpUrl = options.studioMcpUrl;
@@ -104,7 +105,7 @@ export function createInstalledCanonicalAgentService(options: {
   const service = createCanonicalManagedBrokerService({
     auth: options.auth,
     broker,
-    apiUrl: options.apiUrl,
+    apiUrl,
     fetch: options.fetch,
     signal,
     maxActiveRuns: options.maxActive,
@@ -289,6 +290,12 @@ export function createInstalledCanonicalAgentService(options: {
           trustedRuntime: {
             projectToolNames,
             sourceIntegrationPolicy: source.sourceIntegrationPolicy,
+            // Keep source knowledge authority in the host, separate from run billing/persistence.
+            hostedKnowledgeAuthToken: ingress.privateAuthority.sourceAuthToken ??
+              ((ingress.executor.sourceProject ?? run.project).projectId === run.project.projectId
+                ? ingress.privateAuthority.apiAuthToken
+                : undefined),
+            hostedKnowledgeApiUrl: apiUrl,
           },
           model: prepared.model.model,
           tools: prepared.tools.tools,

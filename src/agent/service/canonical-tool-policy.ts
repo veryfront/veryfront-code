@@ -2,6 +2,7 @@ import {
   getForwardedHostedRuntimeOverrides,
   isHostedToolSelectionClosed,
 } from "../hosted/runtime-request-config.ts";
+import { isKnowledgeEnabled } from "../runtime/knowledge-tools.ts";
 import { readCanonicalSourceDefinition } from "./canonical-source-definition.ts";
 import type { RuntimeAgentMarkdownDefinition } from "../runtime/agent-definition.ts";
 import type { BrokerRuntimeAgentIngress } from "./broker-ingress.ts";
@@ -115,11 +116,11 @@ export async function prepareCanonicalBrokerTools(input: {
     return task;
   };
   try {
-    raw = isHostedToolSelectionClosed(
-        definition.tools,
-        getForwardedHostedRuntimeOverrides(input.ingress.executor.input.forwardedProps)
-          ?.allowedTools,
-      )
+    const closedTools = isHostedToolSelectionClosed(
+      definition.tools,
+      getForwardedHostedRuntimeOverrides(input.ingress.executor.input.forwardedProps)?.allowedTools,
+    );
+    raw = closedTools
       ? []
       : createHostedProjectRemoteToolSources({
         authToken: input.ingress.privateAuthority.apiAuthToken,
@@ -139,6 +140,11 @@ export async function prepareCanonicalBrokerTools(input: {
     const catalog = new Map<string, { ownerAgentId?: string; shortName?: string }>(
       projectToolNames.map((name) => [name, {}]),
     );
+    if (!closedTools && isKnowledgeEnabled(definition.knowledge)) {
+      const name = "veryfront__search_knowledge";
+      if (catalog.has(name)) throw new TypeError("Ambiguous canonical knowledge ownership");
+      catalog.set(name, {});
+    }
     const sources = new Map<string, ExecutorToolCapability>();
     if (input.apiTools.allowedToolNames.size) {
       sources.set(input.apiTools.source.id, input.apiTools);

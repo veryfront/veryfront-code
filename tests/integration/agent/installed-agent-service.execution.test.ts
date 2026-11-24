@@ -51,6 +51,7 @@ signed.request.headers.set("x-veryfront-run-event-token", data.token);
 signed.request.headers.set("x-veryfront-run-terminal-token", terminal);
 const realAuth = createHostedServiceAuth({ getConfig: () => ({ OAUTH_PUBLIC_KEY: data.publicKeyPem, SERVICE_ACCOUNT_VERYFRONT_SERVER_ID: data.serverId, NODE_ENV: "production", VERYFRONT_API_URL: apiUrl }) });
 const auth = { ...realAuth, verifyJwt: async () => ({ success: true, userId, email: "synthetic@example.test", token: "broker-token" }), verifyRunTerminalToken: async value => value.token === terminal && value.projectId === projectId && value.runId === "run-1" };
+let knowledgeReads = 0;
 let allocations = 0, executions = 0, modelCalls = 0, cursor = 0, wire = "";
 const events = [];
 let currentRequest, peer, peerCleanup = Promise.resolve();
@@ -61,7 +62,7 @@ const connectTransport = async ({ binding }) => {
  const inbound = new TransformStream();
  const installation = createExecutorRuntimeInstallation({ mode: "project-tools", binding, artifact: { version: 1, owner, source, root: "project" }, async install(input, signal, context) {
   const inspect = tool({ id: "inspect", description: "Inspect a claim", inputSchema: defineSchema(v => v.object({ query: v.string() }))(), execute: (args, call) => { executions++; assertEquals(args, { query: "approved" }); assertEquals(call.projectId, projectId); assertEquals(call.userId, userId); assertEquals(call.runId, "run-1"); return { ok: true }; } });
-  const discovery = createExecutorDiscovery({ binding, source, projectDir: "/synthetic-project", defaultAgentId: input.context.agentId, agentEntrypoint: input.agentEntrypoint, signal, backend: { load: async () => ({ agents: new Map([["builder", agent({ id: "builder", model: "veryfront-cloud/openai/synthetic", system: "Use inspect then answer", tools: data.disableTools ? false : { inspect: true }, skills: false, ...(data.explicitMcp ? { mcpServers: [{ kind: "veryfront-api", id: "unneeded" }] } : data.disableTools ? {} : { mcpServers: [] }) })]]), tools: new Map([["inspect", inspect]]), skills: new Map(), prompts: new Map(), resources: new Map(), workflows: new Map(), tasks: new Map(), schedules: new Map(), webhooks: new Map(), evals: new Map(), errors: [], sourceIntegrationPolicy: { schemaVersion: 1, mode: "unrestricted" } }), cleanup: async () => {} } });
+  const discovery = createExecutorDiscovery({ binding, source, projectDir: "/synthetic-project", defaultAgentId: input.context.agentId, agentEntrypoint: input.agentEntrypoint, signal, backend: { load: async () => ({ agents: new Map([["builder", agent({ id: "builder", model: "veryfront-cloud/openai/synthetic", system: "Use inspect then answer", tools: data.disableTools ? false : { inspect: true }, skills: false, ...(data.knowledge ? { knowledge: true } : {}), ...(data.explicitMcp ? { mcpServers: [{ kind: "veryfront-api", id: "unneeded" }] } : data.disableTools ? {} : { mcpServers: [] }) })]]), tools: new Map([["inspect", inspect]]), skills: new Map(), prompts: new Map(), resources: new Map(), workflows: new Map(), tasks: new Map(), schedules: new Map(), webhooks: new Map(), evals: new Map(), errors: [], sourceIntegrationPolicy: { schemaVersion: 1, mode: "unrestricted" } }), cleanup: async () => {} } });
   return await createExecutorProjectToolRuntime({ input, discovery, signal, deadline: context.deadline });
  } });
  peer = createExecutorChannel({ binding, operations: installation.operations, transport: { readable: outbound.readable, writable: inbound.writable } });
@@ -72,6 +73,9 @@ const rest = async (value, init) => {
  if (url.pathname.includes("/projects/")) {
   assertStringIncludes(url.pathname, "/projects/" + sourceId + "/releases/release-1/files");
   assertEquals(request.headers.get("authorization"), "Bearer source-read-token");
+  if (data.knowledge && !url.pathname.endsWith("/AGENTS.md")) {
+   return Response.json({ release_id: "release-1", release_version: "v1", data: [{ id: "knowledge-file", version_id: "knowledge-version", release_id: "release-1", release_version: "v1", path: "knowledge/claim.md", content: "Claim approval requires signed evidence.", type: "file", size: 45, updated_at: "2026-01-01T00:00:00.000Z" }], page_info: { self: null, first: null, next: null, prev: null } });
+  }
   return url.pathname.endsWith("/AGENTS.md") ? Response.json({ path: "AGENTS.md", content: "Captured source context" }) : Response.json({ data: [], page_info: { next: null } });
  }
  assertStringIncludes(url.pathname, "/runs/" + canonicalId);
@@ -82,6 +86,7 @@ const rest = async (value, init) => {
 };
 const transport = async (value, init) => {
  const request = new Request(value, init), url = new URL(request.url);
+ if (data.knowledge && url.pathname.includes("/projects/")) { knowledgeReads++; return rest(request); }
  assertEquals(request.headers.get("authorization"), "Bearer inference-token");
  assertEquals(request.headers.get("x-veryfront-project-slug"), "demo-project");
  if (url.pathname.endsWith("/ai/models")) return Response.json({ models: [{ id: "synthetic", modelId: "openai/synthetic", provider: "openai", aliases: [], surface: "openai", operations: ["chat-completions"], transport: "chat-completions", supportedProviderTools: [], capabilities: { limit: { output: 4096 } } }] });
@@ -89,7 +94,8 @@ const transport = async (value, init) => {
  const inference = await request.json();
  if (data.emptyTools || data.disableTools) assertEquals(inference.tools === undefined || inference.tools.length === 0, true);
  modelCalls++;
- const delta = data.emptyTools || data.disableTools ? { role: "assistant", content: "Tool-free reply" } : modelCalls === 1 ? { role: "assistant", tool_calls: [{ index: 0, id: "inspect-call", type: "function", function: { name: "inspect", arguments: JSON.stringify({ query: "approved" }) } }] } : { role: "assistant", content: "Claim inspected" };
+ if (data.knowledge && modelCalls === 2) assertStringIncludes(JSON.stringify(inference.messages), "Claim approval requires signed evidence.");
+ const delta = data.emptyTools || data.disableTools ? { role: "assistant", content: "Tool-free reply" } : modelCalls === 1 ? { role: "assistant", tool_calls: [{ index: 0, id: "inspect-call", type: "function", function: { name: data.knowledge ? "veryfront__search_knowledge" : "inspect", arguments: JSON.stringify(data.knowledge ? { query: "Claim", lookup_target: "knowledge/claim.md" } : { query: "approved" }) } }] } : { role: "assistant", content: "Claim inspected" };
  const chunks = [{ id: "response-" + modelCalls, object: "chat.completion.chunk", model: "synthetic", choices: [{ index: 0, delta, finish_reason: null }] }, { id: "response-" + modelCalls, object: "chat.completion.chunk", model: "synthetic", choices: [{ index: 0, delta: {}, finish_reason: (data.emptyTools || data.disableTools) ? "stop" : modelCalls === 1 ? "tool_calls" : "stop" }], usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 } }];
  return new Response(chunks.map(chunk => "data: " + JSON.stringify(chunk) + "\\n\\n").join("") + "data: [DONE]\\n\\n", { headers: { "content-type": "text/event-stream" } });
 };
@@ -101,7 +107,8 @@ await __runWithOutboundFetchTransportForTests({ fetch: transport, pinnedFetch: (
   assertEquals(response.status, 200, text);
   assertStringIncludes(text, data.emptyTools || data.disableTools ? "Tool-free reply" : "Claim inspected");
   assertEquals(allocations, 1);
-  assertEquals(executions, data.emptyTools || data.disableTools ? 0 : 1);
+  assertEquals(executions, data.emptyTools || data.disableTools || data.knowledge ? 0 : 1);
+  assertEquals(knowledgeReads, data.knowledge && !data.emptyTools && !data.disableTools ? 1 : 0);
   assertEquals(modelCalls, data.emptyTools || data.disableTools ? 1 : 2);
   assert(events.length > 0);
   for (const secret of ["api-auth-token", "source-read-token", "inference-token", "never-forward", data.token]) assertEquals(wire.includes(secret), false);
@@ -116,6 +123,14 @@ for (
       name:
         "installed canonical service executes the selected code agent and native tool with one source allocation",
       input: {},
+    },
+    {
+      name: "installed canonical agents retrieve immutable source knowledge without exposing credentials",
+      input: { knowledge: true },
+    },
+    {
+      name: "empty invocation tools prevent source knowledge retrieval",
+      input: { knowledge: true, emptyTools: true },
     },
     {
       name: "installed canonical execution omits an absent entrypoint from bounded protocol data",
