@@ -82,6 +82,7 @@ const connectTransport = async ({ binding }) => {
 const rest = async (value, init) => {
  const request = new Request(value, init), url = new URL(request.url);
  assert(url.origin === new URL(apiUrl).origin, "Source/run request must use the configured API destination");
+ if (data.trailingApiBaseUrl) assertEquals(url.pathname.includes("//"), false);
  if (url.pathname.includes("/projects/")) {
   assertStringIncludes(url.pathname, "/projects/" + sourceId + "/releases/release-1/files");
   assertEquals(request.headers.get("authorization"), "Bearer source-read-token");
@@ -126,7 +127,7 @@ const transport = async (value, init) => {
  return new Response(chunks.map(chunk => "data: " + JSON.stringify(chunk) + "\\n\\n").join("") + "data: [DONE]\\n\\n", { headers: { "content-type": "text/event-stream" } });
 };
 await __runWithOutboundFetchTransportForTests({ fetch: transport, pinnedFetch: (url, _addresses, init) => transport(url, init), resolveHost: async () => ["93.184.216.34"] }, async () => {
- const service = createInstalledCanonicalAgentService({ source: { installations: [{ image, configuration: { projectId: sourceId, projectSlug: "private-source", environmentId, environmentName: "production", releaseId: "release-1", configurationId: "config-1", variables: { PRIVATE: "never-forward" } } }], expectedBrokerInstanceId: "broker-test", allocator, connectTransport }, ingress: { publicKeyPem: signed.publicKeyPem, audience: "private-source", projectId: sourceId, expectedSurface: "studio" }, auth, apiUrl, inferenceApiBaseUrl, apiMcpUrl: apiUrl + "/mcp", modelLimits: { maxCalls: 10, maxConcurrentCalls: 1, maxOutputTokens: 4096, maxSteps: 10 }, toolLimits: { maxCalls: 20, maxConcurrent: 2 }, maxActive: 1, fetch: rest, resolveProvider: () => "openai", createRemoteToolSource: () => { throw new Error("Tool-free execution must not construct MCP sources"); }, onExecutionError: error => console.error("COMPOSITION_ERROR", error) });
+ const service = createInstalledCanonicalAgentService({ source: { installations: [{ image, configuration: { projectId: sourceId, projectSlug: "private-source", environmentId, environmentName: "production", releaseId: "release-1", configurationId: "config-1", variables: { PRIVATE: "never-forward" } } }], expectedBrokerInstanceId: "broker-test", allocator, connectTransport }, ingress: { publicKeyPem: signed.publicKeyPem, audience: "private-source", projectId: sourceId, expectedSurface: "studio" }, auth, apiUrl: data.trailingApiBaseUrl ? apiUrl + "/" : apiUrl, inferenceApiBaseUrl, apiMcpUrl: apiUrl + "/mcp", modelLimits: { maxCalls: 10, maxConcurrentCalls: 1, maxOutputTokens: 4096, maxSteps: 10 }, toolLimits: { maxCalls: 20, maxConcurrent: 2 }, maxActive: 1, fetch: rest, resolveProvider: () => "openai", createRemoteToolSource: () => { throw new Error("Tool-free execution must not construct MCP sources"); }, onExecutionError: error => console.error("COMPOSITION_ERROR", error) });
  completeApiTool = async () => {
   apiResumes++;
   const request = sealIngressCredentials(new Request("https://broker.test/api/control-plane/runs/run-1/resume", { method: "POST", headers: { authorization: "Bearer control-token", "content-type": "application/json" }, body: JSON.stringify({ type: "tool_result", toolCallId: "api-call", result: "api-approved", isError: false }) }));
@@ -152,6 +153,10 @@ console.log("installed-canonical-execution-qualified");
 
 for (
   const scenario of [
+    {
+      name: "trailing API slashes normalize across source, run and pause control",
+      input: { trailingApiBaseUrl: true, pauseControl: true },
+    },
     {
       name: "pause control uses the configured API and private transport",
       input: { destinations: true, pauseControl: true },

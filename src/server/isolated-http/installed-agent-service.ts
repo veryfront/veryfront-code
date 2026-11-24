@@ -33,6 +33,15 @@ type Authorization = NonNullable<
 >;
 type ServiceOptions = Parameters<typeof createCanonicalManagedBrokerService<Authorization>>[0];
 
+function normalizeFixedApiBaseUrl(endpoint: string): string {
+  requireSecureInferenceApiBaseUrl(endpoint);
+  const url = new URL(endpoint);
+  if (url.href.includes("?") || url.href.includes("#")) {
+    throw new TypeError("Fixed API base URL cannot contain a query or fragment");
+  }
+  return url.origin + url.pathname.replace(/\/+$/, "");
+}
+
 function validateFixedMcpEndpoint(endpoint: string): string {
   const normalized = validateRemoteMcpEndpoint(endpoint);
   // Fixed host destinations carry private authority and use the host egress policy.
@@ -95,8 +104,7 @@ export function createInstalledCanonicalAgentService(options: {
     toolLimits.maxConcurrent > toolLimits.maxCalls
   ) throw new TypeError("Invalid installed agent execution limits");
   const ingressOptions = Object.freeze({ ...options.ingress });
-  const apiUrl = options.apiUrl;
-  requireSecureInferenceApiBaseUrl(apiUrl);
+  const apiUrl = normalizeFixedApiBaseUrl(options.apiUrl);
   const inferenceApiBaseUrl = options.inferenceApiBaseUrl;
   requireSecureInferenceApiBaseUrl(inferenceApiBaseUrl);
   const apiMcpUrl = validateFixedMcpEndpoint(options.apiMcpUrl);

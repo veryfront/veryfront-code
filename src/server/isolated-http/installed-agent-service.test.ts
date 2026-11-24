@@ -191,6 +191,10 @@ Deno.test("installed service validates fixed API, inference and MCP destinations
   for (
     const [field, value] of [
       ["apiUrl", "not-a-url"],
+      ["apiUrl", "https://api.example.test/api?tenant=x"],
+      ["apiUrl", "https://api.example.test/api#fragment"],
+      ["apiUrl", "https://api.example.test/api?"],
+      ["apiUrl", "https://api.example.test/api#"],
       ["apiUrl", "http://public.example.test/api"],
       ["apiUrl", "https://synthetic:credential@api.example.test/api"],
       ["inferenceApiBaseUrl", "not-a-url"],
