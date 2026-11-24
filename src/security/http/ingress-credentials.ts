@@ -1,8 +1,8 @@
 /**
  * Run credentials taken off an inbound request before framework code reads it.
  *
- * The proxy's `x-token` and the control plane's inference, run-event and stop-acknowledgement
- * tokens arrive as request headers. Project code shares the isolate with the request pipeline
+ * The proxy's `x-token` and the control plane's inference, source, run-event and
+ * stop-acknowledgement tokens arrive as request headers. Project code shares the isolate with the request pipeline
  * and can replace `Headers.prototype` methods, so any framework header read on
  * a request that still carries them (`get("origin")` in a CORS builder, say)
  * would hand the whole header list to that replacement. The runtime handler
@@ -55,6 +55,8 @@ const FunctionHasInstance = Function.prototype[Symbol.hasInstance];
 export const INGRESS_API_TOKEN_HEADER = "x-token";
 /** The control plane's gateway-only inference credential. */
 export const INGRESS_INFERENCE_TOKEN_HEADER = "x-veryfront-inference-token";
+/** The control plane's release-scoped source read credential for a run. */
+export const INGRESS_SOURCE_TOKEN_HEADER = "x-veryfront-source-token";
 /** The control plane's exact-run durable event append credential. */
 export const INGRESS_RUN_EVENT_TOKEN_HEADER = "x-veryfront-run-event-token";
 /** The control plane's exact-run cancellation acknowledgement credential. */
@@ -77,6 +79,7 @@ export const INGRESS_RUN_ROUTE_PREFIX = "/api/control-plane/runs/";
 export type IngressCredentialHeader =
   | typeof INGRESS_API_TOKEN_HEADER
   | typeof INGRESS_INFERENCE_TOKEN_HEADER
+  | typeof INGRESS_SOURCE_TOKEN_HEADER
   | typeof INGRESS_RUN_EVENT_TOKEN_HEADER
   | typeof INGRESS_RUN_STOP_TOKEN_HEADER
   | typeof INGRESS_RUN_TERMINAL_TOKEN_HEADER
@@ -167,7 +170,8 @@ function toHeaderRecordWithoutCredentials(
     const name = step.value[0];
     if (
       name === INGRESS_API_TOKEN_HEADER || name === INGRESS_INFERENCE_TOKEN_HEADER ||
-      name === INGRESS_RUN_EVENT_TOKEN_HEADER || name === INGRESS_RUN_STOP_TOKEN_HEADER ||
+      name === INGRESS_SOURCE_TOKEN_HEADER || name === INGRESS_RUN_EVENT_TOKEN_HEADER ||
+      name === INGRESS_RUN_STOP_TOKEN_HEADER ||
       name === INGRESS_RUN_TERMINAL_TOKEN_HEADER ||
       (withoutAuthorization && name === INGRESS_AUTHORIZATION_HEADER)
     ) continue;
@@ -211,6 +215,7 @@ function readCredentialHeaders(request: Request): IngressCredentials {
       : null,
     [INGRESS_API_TOKEN_HEADER]: readNativeHeader(request, INGRESS_API_TOKEN_HEADER),
     [INGRESS_INFERENCE_TOKEN_HEADER]: readNativeHeader(request, INGRESS_INFERENCE_TOKEN_HEADER),
+    [INGRESS_SOURCE_TOKEN_HEADER]: readNativeHeader(request, INGRESS_SOURCE_TOKEN_HEADER),
     [INGRESS_RUN_EVENT_TOKEN_HEADER]: readNativeHeader(request, INGRESS_RUN_EVENT_TOKEN_HEADER),
     [INGRESS_RUN_STOP_TOKEN_HEADER]: readNativeHeader(request, INGRESS_RUN_STOP_TOKEN_HEADER),
     [INGRESS_RUN_TERMINAL_TOKEN_HEADER]: readNativeHeader(
@@ -223,6 +228,7 @@ function readCredentialHeaders(request: Request): IngressCredentials {
 function hasAnyCredential(credentials: IngressCredentials): boolean {
   return credentials[INGRESS_API_TOKEN_HEADER] !== null ||
     credentials[INGRESS_INFERENCE_TOKEN_HEADER] !== null ||
+    credentials[INGRESS_SOURCE_TOKEN_HEADER] !== null ||
     credentials[INGRESS_RUN_EVENT_TOKEN_HEADER] !== null ||
     credentials[INGRESS_RUN_STOP_TOKEN_HEADER] !== null ||
     credentials[INGRESS_RUN_TERMINAL_TOKEN_HEADER] !== null ||
@@ -232,6 +238,7 @@ function hasAnyCredential(credentials: IngressCredentials): boolean {
 function deleteCredentialHeaders(headers: Headers, withoutAuthorization: boolean): void {
   IntrinsicReflectApply(HeadersDelete, headers, [INGRESS_API_TOKEN_HEADER]);
   IntrinsicReflectApply(HeadersDelete, headers, [INGRESS_INFERENCE_TOKEN_HEADER]);
+  IntrinsicReflectApply(HeadersDelete, headers, [INGRESS_SOURCE_TOKEN_HEADER]);
   IntrinsicReflectApply(HeadersDelete, headers, [INGRESS_RUN_EVENT_TOKEN_HEADER]);
   IntrinsicReflectApply(HeadersDelete, headers, [INGRESS_RUN_STOP_TOKEN_HEADER]);
   IntrinsicReflectApply(HeadersDelete, headers, [INGRESS_RUN_TERMINAL_TOKEN_HEADER]);
@@ -356,6 +363,8 @@ export function sealInterceptedRequest(source: Request, intercepted: Request): R
         before[INGRESS_API_TOKEN_HEADER],
       [INGRESS_INFERENCE_TOKEN_HEADER]: after[INGRESS_INFERENCE_TOKEN_HEADER] ??
         before[INGRESS_INFERENCE_TOKEN_HEADER],
+      [INGRESS_SOURCE_TOKEN_HEADER]: after[INGRESS_SOURCE_TOKEN_HEADER] ??
+        before[INGRESS_SOURCE_TOKEN_HEADER],
       [INGRESS_RUN_EVENT_TOKEN_HEADER]: after[INGRESS_RUN_EVENT_TOKEN_HEADER] ??
         before[INGRESS_RUN_EVENT_TOKEN_HEADER],
       [INGRESS_RUN_STOP_TOKEN_HEADER]: after[INGRESS_RUN_STOP_TOKEN_HEADER] ??
@@ -388,6 +397,22 @@ export function readIngressCredential(
     return readNativeHeader(request, name);
   }
   return credentials[name];
+}
+
+/**
+ * The inference and source credentials a runtime invocation carries as
+ * ingress headers, each null when absent. A present but empty value stays an
+ * empty string, so validation rejects it rather than treating it as absent.
+ */
+export function readInvocationIngressCredentials(request: Request): {
+  readonly inferenceAuthToken: string | null;
+  readonly sourceAuthToken: string | null;
+} {
+  return ObjectFreeze({
+    __proto__: null,
+    inferenceAuthToken: readIngressCredential(request, INGRESS_INFERENCE_TOKEN_HEADER),
+    sourceAuthToken: readIngressCredential(request, INGRESS_SOURCE_TOKEN_HEADER),
+  } as { inferenceAuthToken: string | null; sourceAuthToken: string | null });
 }
 
 /**

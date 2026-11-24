@@ -1180,21 +1180,83 @@ const TrustedDenyAllRuntimeAgentRunInvocationSafeParse =
  */
 export function parseRuntimeAgentRunInvocationValue(
   value: unknown,
+  ingressCredentials?: RuntimeAgentIngressCredentials,
 ): InferSchema<ReturnType<typeof getRuntimeAgentRunInvocationSchema>> {
-  return parseInvocationOwnData(value, (input) => {
-    const normalized = normalizeDenyAllRuntimeAgentInvocationValue(input);
-    return normalized.denyAll
-      ? IntrinsicReflectApply(
-        TrustedDenyAllRuntimeAgentRunInvocationParse,
-        trustedDenyAllRuntimeAgentRunInvocationSchema,
-        [normalized.value],
-      )
-      : IntrinsicReflectApply(
-        TrustedRuntimeAgentRunInvocationParse,
-        trustedRuntimeAgentRunInvocationSchema,
-        [normalized.value],
-      );
-  });
+  const input = copyInvocationInput(value);
+  const conflict = ingressCredentials === undefined
+    ? undefined
+    : mergeIngressCredentials(input, ingressCredentials);
+  if (conflict !== undefined) throw new RuntimeAgentIngressCredentialConflictError(conflict);
+  const credentialValues = replaceCredentialValuesWithPlaceholders(input);
+  const normalized = normalizeDenyAllRuntimeAgentInvocationValue(input);
+  const parsed = normalized.denyAll
+    ? IntrinsicReflectApply(
+      TrustedDenyAllRuntimeAgentRunInvocationParse,
+      trustedDenyAllRuntimeAgentRunInvocationSchema,
+      [normalized.value],
+    )
+    : IntrinsicReflectApply(
+      TrustedRuntimeAgentRunInvocationParse,
+      trustedRuntimeAgentRunInvocationSchema,
+      [normalized.value],
+    );
+  return ownDataInvocation(parsed, credentialValues) as InferSchema<
+    ReturnType<typeof getRuntimeAgentRunInvocationSchema>
+  >;
+}
+
+/**
+ * Host credentials the runtime took off sealed ingress headers, null when the
+ * request did not carry the header.
+ */
+export interface RuntimeAgentIngressCredentials {
+  readonly inferenceAuthToken: string | null;
+  readonly sourceAuthToken: string | null;
+}
+
+/** Fields of `credentials` that may also arrive as ingress headers. */
+const INGRESS_CREDENTIAL_FIELDS = ["inferenceAuthToken", "sourceAuthToken"] as const;
+
+/**
+ * An invocation whose body credential differs from the same credential sent
+ * as an ingress header. The message names the field only, never a value.
+ */
+export class RuntimeAgentIngressCredentialConflictError extends Error {
+  constructor(readonly field: IngressCredentialField) {
+    super(`credentials.${field} does not match its ingress header`);
+    this.name = "RuntimeAgentIngressCredentialConflictError";
+  }
+}
+
+type IngressCredentialField = (typeof INGRESS_CREDENTIAL_FIELDS)[number];
+
+/**
+ * Put the ingress header credentials into the copied invocation, where the
+ * schema validates them like body credentials. A header is used when the body
+ * leaves the field out or carries the same value; a body field that differs
+ * from its header is returned as a conflict, and nothing is merged for it. An
+ * invocation without a `credentials` record is left as it is: the header
+ * credentials only accompany the body's `authToken`.
+ */
+function mergeIngressCredentials(
+  input: unknown,
+  ingressCredentials: RuntimeAgentIngressCredentials,
+): IngressCredentialField | undefined {
+  if (!isPlainRecord(input)) return undefined;
+  const source = readOwn(input, "credentials");
+  if (!isPlainRecord(source)) return undefined;
+  // A new record, so a value that was kept rather than copied is never changed.
+  const credentials = copyOwnDataRecord(source);
+  defineOwnData(input, "credentials", credentials);
+  for (let index = 0; index < INGRESS_CREDENTIAL_FIELDS.length; index++) {
+    const field = INGRESS_CREDENTIAL_FIELDS[index]!;
+    const header = ingressCredentials[field];
+    if (header === null) continue;
+    const body = readOwn(credentials, field);
+    if (body !== undefined && body !== header) return field;
+    defineOwnData(credentials, field, header);
+  }
+  return undefined;
 }
 
 /**
@@ -1211,11 +1273,42 @@ export function parseInvocationOwnData<T>(value: unknown, parse: (input: unknown
   return ownDataInvocation(parse(input), credentialValues) as T;
 }
 
+/** A failed parse whose body credential differs from its ingress header. */
+export interface RuntimeAgentIngressCredentialConflict {
+  readonly success: false;
+  readonly error: RuntimeAgentIngressCredentialConflictError;
+}
+
 /** Non-throwing form of `parseRuntimeAgentRunInvocationValue`, with the same own-data reads. */
 export function safeParseRuntimeAgentRunInvocationValue(
   value: unknown,
-): ReturnType<typeof trustedRuntimeAgentRunInvocationSchema.safeParse> {
+): ReturnType<typeof trustedRuntimeAgentRunInvocationSchema.safeParse>;
+/** As above, with the credentials taken off ingress headers merged into the validated copy. */
+export function safeParseRuntimeAgentRunInvocationValue(
+  value: unknown,
+  ingressCredentials: RuntimeAgentIngressCredentials,
+):
+  | ReturnType<typeof trustedRuntimeAgentRunInvocationSchema.safeParse>
+  | RuntimeAgentIngressCredentialConflict;
+export function safeParseRuntimeAgentRunInvocationValue(
+  value: unknown,
+  ingressCredentials?: RuntimeAgentIngressCredentials,
+):
+  | ReturnType<typeof trustedRuntimeAgentRunInvocationSchema.safeParse>
+  | RuntimeAgentIngressCredentialConflict {
   const input = copyInvocationInput(value);
+  const conflict = ingressCredentials === undefined
+    ? undefined
+    : mergeIngressCredentials(input, ingressCredentials);
+  if (conflict !== undefined) {
+    const failure = ObjectCreate(null) as {
+      success: false;
+      error: RuntimeAgentIngressCredentialConflictError;
+    };
+    failure.success = false;
+    failure.error = new RuntimeAgentIngressCredentialConflictError(conflict);
+    return failure;
+  }
   const credentialValues = replaceCredentialValuesWithPlaceholders(input);
   const normalized = normalizeDenyAllRuntimeAgentInvocationValue(input);
   const parsed = normalized.denyAll

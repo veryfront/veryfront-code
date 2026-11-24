@@ -120,6 +120,8 @@ import {
   buildRuntimeAgentControlPlaneStreamRequestFromInvocation,
   parseInvocationOwnData,
   parseRuntimeAgentRunInvocationValue,
+  RuntimeAgentIngressCredentialConflictError,
+  type RuntimeAgentIngressCredentials,
 } from "#veryfront/agent/runtime/agent-invocation-contract.ts";
 import {
   getInternalAgentStreamRequestSchema,
@@ -187,6 +189,7 @@ import {
   INGRESS_RUN_STOP_TOKEN_HEADER,
   INGRESS_RUN_TERMINAL_TOKEN_HEADER,
   readIngressCredential,
+  readInvocationIngressCredentials,
 } from "#veryfront/security/http/ingress-credentials.ts";
 import { FSAdapterWrapper } from "#veryfront/platform/adapters/fs/wrapper.ts";
 import { MultiProjectFSAdapter } from "#veryfront/platform/adapters/fs/veryfront/multi-project-adapter.ts";
@@ -1129,7 +1132,10 @@ function knownAgentStreamFailureResponse(
     return builder.json({ error: error.message }, 409);
   }
 
-  if (error instanceof Error && error.name === "ZodError") {
+  if (
+    (error instanceof Error && error.name === "ZodError") ||
+    error instanceof RuntimeAgentIngressCredentialConflictError
+  ) {
     return builder.json({ error: "Invalid internal agent stream request" }, 400);
   }
 
@@ -1482,8 +1488,13 @@ function setResponseHeaders(
   return result;
 }
 
-function parseAgentStreamPayload(rawPayload: unknown): InternalAgentStreamRequest {
-  const invocation = parseRuntimeAgentRunInvocationValue(rawPayload);
+function parseAgentStreamPayload(
+  rawPayload: unknown,
+  ingressCredentials: RuntimeAgentIngressCredentials,
+): InternalAgentStreamRequest {
+  // A header credential takes the place of its body field, so every later
+  // reader of `payload.credentials` sees the resolved value.
+  const invocation = parseRuntimeAgentRunInvocationValue(rawPayload, ingressCredentials);
   // The stream request carries the invocation fields, so it is read the same way.
   return parseInvocationOwnData(
     buildRuntimeAgentControlPlaneStreamRequestFromInvocation(invocation),
@@ -1659,11 +1670,15 @@ export class AgentStreamHandler extends BaseHandler {
 
     try {
       const pathRunId = getPathRunId(new URL(req.url).pathname);
+      const ingressCredentials = readInvocationIngressCredentials(req);
       const rawBody = await readInternalAgentRequestBody(
         req,
         INTERNAL_AGENT_STREAM_MAX_BODY_BYTES,
       );
-      const payload = parseAgentStreamPayload(IntrinsicReflectApply(JsonParse, JSON, [rawBody]));
+      const payload = parseAgentStreamPayload(
+        IntrinsicReflectApply(JsonParse, JSON, [rawBody]),
+        ingressCredentials,
+      );
       if (!pathRunId || pathRunId !== payload.runId) {
         return this.respond(builder.json({ error: "CONTROL_PLANE_RUN_ID_MISMATCH" }, 400));
       }

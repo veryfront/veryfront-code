@@ -195,6 +195,51 @@ describe("server/handlers/request/agent-stream.handler", () => {
     assertEquals(discoveryCalls, 0);
   });
 
+  it("rejects a source credential header that differs from the body before discovery", async () => {
+    const sourceId = "20000000-1000-4000-8000-100000000005";
+    let discoveryCalls = 0;
+    const handler = createTestAgentStreamHandler({
+      ensureProjectDiscovery: async () => {
+        discoveryCalls += 1;
+        return createEmptyDiscoveryResult();
+      },
+      getAgent: () => undefined,
+      getAllAgentIds: () => [],
+      sessionManager: new AgentRunSessionManager(),
+    });
+    const body = createAgentStreamRequestBody({
+      project: { runtimeTargetBranchName: "trunk" },
+      sourceProject: {
+        projectId: sourceId,
+        projectSlug: "source-project",
+        runtimeTargetKind: "main_branch",
+      },
+      agentSource: { type: "release", releaseId: "release-1" },
+      credentials: { authToken: "execution-token", sourceAuthToken: "body-source-token" },
+    });
+    const { jws, publicKeyPem } = await createControlPlaneSignature(body, {
+      requestId: "run_1",
+      projectId: sourceId,
+      audience: "source-project",
+    });
+    const result = await handler.handle(
+      new Request("https://example.com/api/control-plane/runs/run_1/stream", {
+        method: "POST",
+        headers: {
+          "x-veryfront-control-plane-jws": jws,
+          "x-veryfront-source-token": "header-source-token",
+        },
+        body,
+      }),
+      { ...createCtx(publicKeyPem), projectId: sourceId, projectSlug: "source-project" },
+    );
+    assertExists(result.response);
+    assertEquals(result.response.status, 400);
+    const text = await result.response.text();
+    assertEquals(text.includes("source-token"), false);
+    assertEquals(discoveryCalls, 0);
+  });
+
   for (
     const executionTarget of [
       {
@@ -213,8 +258,14 @@ describe("server/handlers/request/agent-stream.handler", () => {
       },
     ]
   ) {
-    for (const exactEntrypoint of [false, true]) {
-      it(`executes ${exactEntrypoint ? "exact" : "discovered"} shared source with consuming ${executionTarget.runtimeTargetKind} identity and no source secrets`, async () => {
+    for (
+      const [exactEntrypoint, sourceCredentialVia] of [
+        [false, "body"],
+        [true, "body"],
+        [false, "header"],
+      ] as const
+    ) {
+      it(`executes ${exactEntrypoint ? "exact" : "discovered"} shared source with consuming ${executionTarget.runtimeTargetKind} identity and no source secrets (source credential in ${sourceCredentialVia})`, async () => {
         const sourceId = "20000000-1000-4000-8000-100000000005";
         const executionId = "10000000-1000-4000-8000-100000000005";
         let discoverySelection: unknown;
@@ -291,7 +342,9 @@ describe("server/handlers/request/agent-stream.handler", () => {
             runtimeTargetEnvironmentId: "20000000-1000-4000-8000-100000000007",
           },
           agentSource: { type: "environment", environmentName: "staging", releaseId: "release-1" },
-          credentials: { authToken: "execution-token", sourceAuthToken: "source-read-token" },
+          credentials: sourceCredentialVia === "body"
+            ? { authToken: "execution-token", sourceAuthToken: "source-read-token" }
+            : { authToken: "execution-token" },
         });
         const { jws, publicKeyPem } = await createControlPlaneSignature(body, {
           requestId: "run_1",
@@ -311,6 +364,9 @@ describe("server/handlers/request/agent-stream.handler", () => {
               "x-environment-name": "staging",
               "x-environment-id": "20000000-1000-4000-8000-100000000007",
               "x-token": "execution-token",
+              ...(sourceCredentialVia === "header"
+                ? { "x-veryfront-source-token": "source-read-token" }
+                : {}),
             },
             body,
           },

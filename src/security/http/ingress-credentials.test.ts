@@ -26,6 +26,7 @@ import {
   INGRESS_RUN_ROUTE_PREFIX,
   INGRESS_RUN_STOP_TOKEN_HEADER,
   INGRESS_RUN_TERMINAL_TOKEN_HEADER,
+  INGRESS_SOURCE_TOKEN_HEADER,
   inheritIngressCredentials,
   isControlPlaneRunRoute,
   readIngressCredential,
@@ -83,6 +84,7 @@ describe("security/http/ingress-credentials", () => {
     const name of [
       INGRESS_API_TOKEN_HEADER,
       INGRESS_INFERENCE_TOKEN_HEADER,
+      INGRESS_SOURCE_TOKEN_HEADER,
       INGRESS_RUN_EVENT_TOKEN_HEADER,
       INGRESS_RUN_STOP_TOKEN_HEADER,
       INGRESS_RUN_TERMINAL_TOKEN_HEADER,

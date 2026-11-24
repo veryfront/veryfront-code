@@ -58,6 +58,54 @@ describe("internal-agents/control-plane-auth", () => {
     }
   });
 
+  for (
+    const [bodySourceToken, expected] of [
+      [undefined, "header-source-token"],
+      ["header-source-token", "header-source-token"],
+      ["different-source-token", null],
+    ] as const
+  ) {
+    it(
+      `binds shared source cache reads to the source header (body ${
+        bodySourceToken ?? "without it"
+      })`,
+      async () => {
+        const rawBody = JSON.stringify({
+          sourceProject: { projectId: "proj-1", projectSlug: "demo-project" },
+          credentials: {
+            authToken: "execution-token",
+            ...(bodySourceToken ? { sourceAuthToken: bodySourceToken } : {}),
+          },
+        });
+        const { jws, publicKeyPem } = await createControlPlaneSignature(rawBody);
+        const previous = Deno.env.get(envKey);
+        Deno.env.set(envKey, publicKeyPem);
+        try {
+          const claims = await verifyControlPlaneRequest(
+            new Request("https://veryfront.test/api/control-plane/runs/run-1/stream", {
+              method: "POST",
+              headers: {
+                "x-veryfront-control-plane-jws": jws,
+                "x-veryfront-source-token": "header-source-token",
+              },
+            }),
+            createVerificationCtx(publicKeyPem),
+            rawBody,
+          );
+          assertEquals(
+            consumeVerifiedControlPlaneCacheCredential(claims),
+            expected === null
+              ? null
+              : { token: expected, projectId: "proj-1", projectSlug: "demo-project" },
+          );
+        } finally {
+          if (previous === undefined) Deno.env.delete(envKey);
+          else Deno.env.set(envKey, previous);
+        }
+      },
+    );
+  }
+
   it("prefers adapter-provided verification keys", () => {
     const originalValue = Deno.env.get(envKey);
     Deno.env.set(envKey, "host-key");

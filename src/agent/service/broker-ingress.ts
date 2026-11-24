@@ -11,6 +11,7 @@ import {
   INGRESS_RUN_STOP_TOKEN_HEADER,
   INGRESS_RUN_TERMINAL_TOKEN_HEADER,
   readIngressCredential,
+  readInvocationIngressCredentials,
 } from "#veryfront/security/http/ingress-credentials.ts";
 import { MAX_ROOT_RUN_EVENT_WRITER_TOKEN_BYTES } from "../conversation/run-event-limits.ts";
 import { parseBrokerSignedRunPath } from "./broker-run-route.ts";
@@ -184,6 +185,9 @@ export async function parseBrokerRuntimeAgentIngress<TAuthorization>(
   const runEventToken = readIngressCredential(request, RUN_EVENT_APPEND_TOKEN_HEADER);
   const stopToken = readIngressCredential(request, INGRESS_RUN_STOP_TOKEN_HEADER);
   const terminalAuthToken = readIngressCredential(request, INGRESS_RUN_TERMINAL_TOKEN_HEADER);
+  // A header credential takes the place of its body field; a differing body
+  // field fails validation below.
+  const ingressCredentials = readInvocationIngressCredentials(request);
   if (
     (stopToken && stopToken.length > 16 * 1024) ||
     (terminalAuthToken && terminalAuthToken.length > 16 * 1024)
@@ -253,7 +257,10 @@ export async function parseBrokerRuntimeAgentIngress<TAuthorization>(
   } catch {
     throw new BrokerIngressError(400, "BROKER_INGRESS_INVALID_BODY");
   }
-  const invocationResult = safeParseRuntimeAgentRunInvocationValue(bodyValue);
+  const invocationResult = safeParseRuntimeAgentRunInvocationValue(
+    bodyValue,
+    ingressCredentials,
+  );
   if (!invocationResult.success) {
     throw new BrokerIngressError(400, "BROKER_INGRESS_INVALID_BODY");
   }

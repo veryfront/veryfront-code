@@ -10,6 +10,10 @@ import {
 import { getHostBootEnv, getHostEnv } from "#veryfront/platform/compat/process/env.ts";
 import { createPrivateWeakStore } from "#veryfront/security/private-weak-store.ts";
 import {
+  INGRESS_SOURCE_TOKEN_HEADER,
+  readIngressCredential,
+} from "#veryfront/security/http/ingress-credentials.ts";
+import {
   readPlatformToolDependencies,
   type VerifiedPlatformToolDependencies,
 } from "#veryfront/agent/service/platform-tool-dependency-claims.ts";
@@ -114,9 +118,25 @@ const verifiedCacheCredentials = new WeakMap<
   VerifiedControlPlaneCacheCredentialGrant
 >();
 
+/**
+ * The shared-source read credential from the signed body, or from its ingress
+ * header when the body leaves it out. A body value that differs from the
+ * header grants nothing; the invocation parse rejects that request.
+ */
+function sourceCacheToken(
+  credentials: Record<string, unknown>,
+  headerSourceToken: string | null,
+): unknown {
+  const bodyToken = credentials.sourceAuthToken;
+  if (headerSourceToken === null) return bodyToken;
+  if (bodyToken !== undefined && bodyToken !== headerSourceToken) return undefined;
+  return headerSourceToken;
+}
+
 function extractVerifiedCacheCredential(
   rawBody: string,
   claims: ControlPlaneClaims,
+  headerSourceToken: string | null,
 ): VerifiedControlPlaneCacheCredential | null {
   try {
     const body = IntrinsicReflectApply(JsonParse, JSON, [rawBody]) as Record<string, unknown>;
@@ -126,7 +146,7 @@ function extractVerifiedCacheCredential(
     }
 
     const token = body.sourceProject
-      ? (credentials as Record<string, unknown>).sourceAuthToken
+      ? sourceCacheToken(credentials as Record<string, unknown>, headerSourceToken)
       : (credentials as Record<string, unknown>).authToken;
     if (typeof token !== "string" || token.length === 0) return null;
 
@@ -293,6 +313,7 @@ export async function verifyControlPlaneRequest(
   }
 
   const { projectSlug, controlPlaneJws } = readControlPlaneRequestContext(req, ctx);
+  const headerSourceToken = readIngressCredential(req, INGRESS_SOURCE_TOKEN_HEADER);
 
   try {
     const requestMethod = req.method;
@@ -372,7 +393,9 @@ export async function verifyControlPlaneRequest(
     verifiedCacheCredentials.set(
       verifiedClaims,
       Object.freeze({
-        credential: hostVerified ? extractVerifiedCacheCredential(rawBody, claims) : null,
+        credential: hostVerified
+          ? extractVerifiedCacheCredential(rawBody, claims, headerSourceToken)
+          : null,
         expiresAt: claims.exp,
       }),
     );
