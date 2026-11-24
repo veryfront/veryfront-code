@@ -631,7 +631,7 @@ export function createVeryfrontHandler(
   projectDir: string,
   adapter: RuntimeAdapter,
   opts: RuntimeHandlerOptions = { projectDir },
-): ((req: Request) => Promise<Response>) & { ready?: Promise<void> } {
+): ((req: Request) => Promise<Response>) & { ready?: Promise<void>; close(): Promise<void> } {
   const installedProject = opts.installedProject === undefined
     ? undefined
     : snapshotInstalledProjectHttpBinding(opts.installedProject);
@@ -773,6 +773,16 @@ export function createVeryfrontHandler(
       try {
         await readyPromise;
         if (!isProxyMode) await securityLoader.ensureLoaded();
+
+        if (url.pathname === "/readyz" && managedAgents && req.method !== "OPTIONS") {
+          let ready = false;
+          try {
+            ready = await managedAgents.readiness();
+          } catch (error) {
+            logger.warn("Managed broker readiness failed", { error: getErrorMessage(error) });
+          }
+          if (!ready) return new Response("not-ready", { status: 503 });
+        }
 
         // Monitoring endpoints are always framework-owned; their browser
         // preflights stay public without project or application auth.
@@ -1288,6 +1298,7 @@ export function createVeryfrontHandler(
   };
 
   handler.ready = readyPromise;
+  handler.close = () => managedAgents?.close() ?? Promise.resolve();
 
   return handler;
 }

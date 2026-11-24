@@ -89,7 +89,10 @@ export function createCanonicalManagedBrokerHandler<T>(
         fetch: transport,
       });
       signal.throwIfAborted();
-      if (!["pending", "running", "waiting_for_tool"].includes(lifecycle.status)) {
+      if (
+        !["pending", "running", "waiting_for_tool"].includes(lifecycle.status) ||
+        (lifecycle.status === "waiting_for_tool" && !ingress.executor.input.resumeToolCall)
+      ) {
         throw new BrokerIngressError(409, "BROKER_RUN_NOT_ACTIVE");
       }
       const snapshot: ManagedBrokerRunSnapshot = {

@@ -1281,6 +1281,7 @@ async function handler(
         start: managedStart({ agentId: "builder" }),
         messages: [],
         executionSignal: executionController.signal,
+        cancelExecution: () => executionController.abort(),
         ...(options.negotiatedWriter ? { eventPersistence: "runtime-owned-v1" as const } : {}),
         output: options.missingOutput ? undefined : {
           async write(chunk: { type: string; errorText?: string }) {
@@ -1558,6 +1559,34 @@ describe("managed broker handler", () => {
       await f.managed.close();
     }
   });
+
+  for (const abortSource of ["session", "request"] as const) {
+    it(`refuses SSE success when ${abortSource} cancellation arrives during final persistence`, async () => {
+      const controller = new AbortController();
+      const f = await handler("sse", {
+        waitForOutput: true,
+        ...(abortSource === "request" ? { signal: controller.signal } : {}),
+      });
+      if (abortSource === "session") {
+        Object.defineProperty(f.fixture.runtime, "signal", { value: controller.signal });
+      }
+      try {
+        const response = await f.managed.handle(f.first.request);
+        const body = response.text();
+        f.fixture.release();
+        await f.outputEntered;
+        controller.abort(new Error("synthetic late cancellation"));
+        f.releaseOutput();
+        const wire = await body;
+        assertEquals(wire.includes("event: RunFinished"), false);
+        assertEquals(f.fixture.closeReasons, ["canceled"]);
+      } finally {
+        f.releaseOutput();
+        f.fixture.release();
+        await f.managed.close();
+      }
+    });
+  }
 
   it("finalizes SSE executor errors as failures instead of completed runs", async () => {
     const f = await handler("sse", { terminalChunk: "coded-error" });

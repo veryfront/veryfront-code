@@ -333,6 +333,7 @@ export function startProductionServerWithDependencies(
         ? undefined
         : installUnhandledRejectionGuard();
 
+      let closeRuntimeHandler: (() => Promise<void>) | undefined;
       try {
         // Use pre-computed bootstrap result if provided, otherwise bootstrap here
         const bootstrap = suppliedBootstrap ??
@@ -457,6 +458,7 @@ export function startProductionServerWithDependencies(
         });
 
         const coreHandler = baseHandler;
+        closeRuntimeHandler = coreHandler.close.bind(coreHandler);
 
         // Wrap handler with interceptor if provided (for combined mode)
         // WebSocket upgrade requests MUST NOT be intercepted because the interceptor
@@ -512,22 +514,45 @@ export function startProductionServerWithDependencies(
           },
         });
 
-        const stop = async (): Promise<void> => {
-          setServerInitialized(false);
-          if (ownsMemoryMonitoring) stopMemoryMonitoring();
-          eventLoopStallDetector.stop();
-          rejectionGuard?.dispose();
-
-          try {
-            await server.stop();
-          } catch (error) {
-            logger.debug("Server stop failed", { error });
-          }
-          await disposeOwnedBootstrap();
-        };
+        let stopping: Promise<void> | undefined;
+        const stop = (): Promise<void> =>
+          stopping ??= (async () => {
+            setServerInitialized(false);
+            if (ownsMemoryMonitoring) stopMemoryMonitoring();
+            eventLoopStallDetector.stop();
+            rejectionGuard?.dispose();
+            // Stop managed admission and join detached work as well as HTTP requests.
+            const results = await Promise.allSettled([
+              Promise.resolve().then(() => server.stop()),
+              coreHandler.close(),
+            ]);
+            const errors = results.flatMap((result) =>
+              result.status === "rejected" ? [result.reason] : []
+            );
+            try {
+              await disposeOwnedBootstrap();
+            } catch (error) {
+              errors.push(error);
+            }
+            if (errors.length === 1) throw errors[0];
+            if (errors.length > 1) {
+              throw new AggregateError(errors, "Production server retirement failed");
+            }
+          })();
 
         return { ready, stop };
       } catch (error) {
+        try {
+          await awaitBeforeDeadline(
+            closeRuntimeHandler?.() ?? Promise.resolve(),
+            Date.now() +
+              parseShutdownCleanupTimeoutMs(baseAdapter.env.get("SHUTDOWN_CLEANUP_TIMEOUT_MS")),
+          );
+        } catch (closeError) {
+          logger.warn("Failed to retire managed handlers after startup error", {
+            error: closeError,
+          });
+        }
         if (ownsMemoryMonitoring) stopMemoryMonitoring();
         eventLoopStallDetector.stop();
         rejectionGuard?.dispose();

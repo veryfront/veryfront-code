@@ -737,6 +737,9 @@ async function createSseResponse(input: {
     }),
   );
   const finish = (reason: "completed" | "canceled") => {
+    // Cancelling host work can abort the combined request/execution signal.
+    // Retain a failure already observed before that cleanup side effect.
+    const failedBeforeCleanup = failure !== undefined && !input.requestSignal.aborted;
     if (reason === "canceled") {
       cancelPendingWork();
       invalidateHostedAgentPauseSettlement(input.runtime, new Error("SSE execution canceled"));
@@ -758,15 +761,17 @@ async function createSseResponse(input: {
                 !input.requestSignal.aborted && !sessionStopped,
               ...(paused ? { paused: true as const } : {}),
               ...(!paused && terminalOutput !== undefined ? { output: terminalOutput } : {}),
-              ...(paused || terminalFailure === undefined || input.requestSignal.aborted
+              ...(paused || terminalFailure === undefined ||
+                  (input.requestSignal.aborted && !failedBeforeCleanup)
                 ? {}
                 : { error: terminalFailure }),
               ...(terminalMetadata ? { metadata: terminalMetadata } : {}),
             });
           }
-          if (sessionStopped && !paused && !input.requestSignal.aborted) {
-            throw terminalFailure;
-          }
+          // Persistence can outlive the lease or request. Recheck after its
+          // acknowledgment before emitting success or retiring as completed.
+          input.requestSignal.throwIfAborted();
+          input.runtime.signal.throwIfAborted();
         } catch (error) {
           reportFailure(error);
           finalizationFailed = true;

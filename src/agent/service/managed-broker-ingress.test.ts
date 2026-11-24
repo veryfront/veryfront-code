@@ -148,4 +148,45 @@ describe("managed agent production ingress", () => {
       "Invalid managed agent response",
     );
   });
+  it("retains every distinct cleanup and refuses admission after close failure", async () => {
+    const failure = new Error("synthetic managed cleanup failure");
+    let firstClosed = 0;
+    let secondClosed = 0;
+    let handled = 0;
+    const first = {
+      handle: () => {
+        handled++;
+        return new Response("accepted");
+      },
+      close() {
+        firstClosed++;
+        return Promise.reject(failure);
+      },
+    };
+    const second = {
+      handle: first.handle,
+      close() {
+        secondClosed++;
+      },
+    };
+    const ingress = createManagedAgentBrokerIngress({
+      handlers: {
+        signedStream: first,
+        durableStart: first,
+        agUi: second,
+        cancel: second,
+        resume: second,
+      },
+      readiness: () => true,
+    });
+    const closing = ingress.close();
+    const response = await ingress(new Request("https://broker.test/api/runs", { method: "POST" }));
+    assertEquals(response?.status, 503);
+    assertEquals(await ingress.readiness(), false);
+    const error = await assertRejects(() => closing, AggregateError);
+    if (!(error instanceof AggregateError)) throw error;
+    assertEquals(error.errors, [failure]);
+    assertEquals(ingress.close() === closing, true);
+    assertEquals([firstClosed, secondClosed, handled], [1, 1, 0]);
+  });
 });

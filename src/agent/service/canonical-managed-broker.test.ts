@@ -406,6 +406,32 @@ describe("canonical managed broker preparation", () => {
     });
   }
 
+  it("refuses a waiting run without its signed resume decision before preparation", async () => {
+    const result = await fixture({ status: "waiting" });
+    try {
+      assertEquals(result.response.status, 409);
+      assertEquals(result.prepared, 0);
+      assertEquals(result.started, undefined);
+    } finally {
+      await result.close();
+    }
+  });
+
+  it("admits a waiting run with its signed resume decision", async () => {
+    const result = await fixture({
+      status: "waiting",
+      resume: true,
+      stream: true,
+      projectWriter: "valid",
+    });
+    try {
+      assertEquals(result.response.status, 200);
+      await result.response.text();
+    } finally {
+      await result.close();
+    }
+  });
+
   for (const status of ["completed", "cancelled", "failed"]) {
     it(`refuses a ${status} run before executor preparation`, async () => {
       const result = await fixture({ status });
