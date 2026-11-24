@@ -1,8 +1,8 @@
+import { isHostedDelegationToolAllowed } from "#veryfront/agent/runtime/delegation-tool-policy.ts";
 import { requireSecureInferenceApiBaseUrl } from "#veryfront/provider/veryfront-cloud/shared.ts";
 import { validateRemoteMcpEndpoint } from "#veryfront/tool/remote-mcp.ts";
 import { createCanonicalCapabilitiesHandler } from "#veryfront/agent/service/canonical-capabilities.ts";
 import {
-  isHostedDelegationToolAllowed,
   isHostedToolSelectionClosed,
   resolveHostedRuntimeRequestConfig,
 } from "#veryfront/agent/hosted/runtime-request-config.ts";

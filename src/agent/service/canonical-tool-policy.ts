@@ -1,6 +1,6 @@
+import { isHostedDelegationToolAllowed } from "../runtime/delegation-tool-policy.ts";
 import {
   getForwardedHostedRuntimeOverrides,
-  isHostedDelegationToolAllowed,
   isHostedToolSelectionClosed,
 } from "../hosted/runtime-request-config.ts";
 import { isKnowledgeEnabled } from "../runtime/knowledge-tools.ts";

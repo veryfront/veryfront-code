@@ -1,4 +1,4 @@
-import { isHostedDelegationToolAllowed } from "../hosted/runtime-request-config.ts";
+import { isHostedDelegationToolAllowed } from "../runtime/delegation-tool-policy.ts";
 import { getServerResolvedProjectToolNames } from "../runtime/server-resolved-project-tools.ts";
 import { AGENT_ERROR } from "#veryfront/errors";
 import type { RemoteToolSource, ToolExecutionContext } from "#veryfront/tool/types.ts";
