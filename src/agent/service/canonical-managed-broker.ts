@@ -64,6 +64,7 @@ export function createCanonicalManagedBrokerHandler<T>(
   const onExecutionError = options.onExecutionError?.bind(options);
   const toolCallAdmissions = options.toolCallAdmissions === true;
   const runtimeObservations = options.runtimeObservations === true;
+  const resolveIngressOptions = options.resolveIngressOptions;
   return createManagedBrokerHandler({
     broker: options.broker,
     responseMode: options.responseMode,
@@ -71,7 +72,11 @@ export function createCanonicalManagedBrokerHandler<T>(
     signal: options.signal,
     inferenceApiBaseUrl: options.inferenceApiBaseUrl,
     knowledgeApiBaseUrl: apiUrl,
-    resolveIngressOptions: options.resolveIngressOptions,
+    resolveIngressOptions: (input) => ({
+      ...resolveIngressOptions(input),
+      pauseApiBaseUrl: apiUrl,
+      pauseFetch: transport,
+    }),
     onExecutionError,
     async prepare({ ingress, signal }) {
       const run = ingress.executor.run;

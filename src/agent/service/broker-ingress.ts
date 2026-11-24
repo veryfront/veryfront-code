@@ -158,6 +158,9 @@ export interface BrokerRuntimeAgentIngressOptions<TAuthorization> {
   ): TAuthorization | undefined | Promise<TAuthorization | undefined>;
   signal?: AbortSignal;
   readTimeoutMs?: number;
+  /** Trusted host destination and transport for private run pause control. Never read from the invocation. */
+  pauseApiBaseUrl?: string;
+  pauseFetch?: typeof fetch;
 }
 
 /** Separate private authority and executor-safe invocation data. */
@@ -383,7 +386,8 @@ export async function parseBrokerRuntimeAgentIngress<TAuthorization>(
       ingress,
       (signal, settlementSignal) =>
         createRunBoundAgentManualPause({
-          apiUrl: resolveHostOwnedSourceApiBaseUrl(),
+          apiUrl: options.pauseApiBaseUrl ?? resolveHostOwnedSourceApiBaseUrl(),
+          fetch: options.pauseFetch,
           runId: expectedRunId,
           token: stopToken,
           signal,

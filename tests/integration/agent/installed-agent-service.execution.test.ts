@@ -54,13 +54,14 @@ const parsedInternal = internal.getInternalAgentControlPlaneStreamRequestSchema(
 if (!parsedInternal.success) throw new Error("Synthetic internal schema: " + JSON.stringify(parsedInternal.error.issues?.map(issue => ({ path: issue.path, message: issue.message }))));
 const signed = await signedRequest(body, { projectId: sourceId, audience: "private-source" });
 signed.request.headers.set("x-veryfront-run-event-token", data.token);
+if (data.pauseControl) signed.request.headers.set("x-veryfront-run-stop-token", "private-stop-token");
 signed.request.headers.set("x-veryfront-run-terminal-token", terminal);
 const realAuth = createHostedServiceAuth({ getConfig: () => ({ OAUTH_PUBLIC_KEY: data.publicKeyPem, SERVICE_ACCOUNT_VERYFRONT_SERVER_ID: data.serverId, NODE_ENV: "production", VERYFRONT_API_URL: apiUrl }) });
 const auth = { ...realAuth,
  authenticateRequest: async request => readIngressCredential(request, "authorization") === "Bearer control-token" ? { userId: "controller", authToken: "control-token" } : new Response(null, { status: 401 }),
  verifyRunResumeToken: async input => input.token === "control-token" && input.runId === "run-1",
  verifyJwt: async () => ({ success: true, userId, email: "synthetic@example.test", token: "broker-token" }), verifyRunTerminalToken: async value => value.token === terminal && value.projectId === projectId && value.runId === "run-1" };
-let knowledgeReads = 0, apiResumes = 0;
+let knowledgeReads = 0, apiResumes = 0, pauseReads = 0;
 let completeApiTool;
 let allocations = 0, executions = 0, modelCalls = 0, cursor = 0, wire = "";
 const events = [];
@@ -89,6 +90,10 @@ const rest = async (value, init) => {
   }
   return url.pathname.endsWith("/AGENTS.md") ? Response.json({ path: "AGENTS.md", content: "Captured source context" }) : Response.json({ data: [], page_info: { next: null } });
  }
+ if (url.pathname.includes("/pause-")) {
+  assertEquals(request.headers.get("authorization"), "Bearer private-stop-token");
+  pauseReads++; return Response.json(url.pathname.endsWith("pause-ack") ? { stop: false } : { stop: false, checkpoint: null });
+ }
  assertStringIncludes(url.pathname, "/runs/" + canonicalId);
  if (url.pathname.endsWith("/runtime/admission")) return Response.json({ version: 1, accepted: true, identity: { project_id: projectId, canonical_run_id: canonicalId, public_run_id: "run-1" }, generation: { worker_id: "worker", dispatch_nonce: "33333333-3333-4333-8333-333333333333", transport_recovery_attempt: 0 }, lease_remaining_ms: 5000, acknowledged_event_id: 0, acknowledged_external_sequence: 0 });
  if (request.method === "GET") return Response.json({ id: canonicalId, status: "running" });
@@ -99,6 +104,7 @@ const rest = async (value, init) => {
 };
 const transport = async (value, init) => {
  const request = new Request(value, init), url = new URL(request.url);
+ if (url.pathname.includes("/pause-")) return new Response(null, { status: 401 });
  if (data.knowledge && url.pathname.includes("/projects/")) { knowledgeReads++; return rest(request); }
  assert(url.origin === new URL(inferenceApiBaseUrl).origin, "Inference must use its configured destination");
  assertEquals(request.headers.get("authorization"), "Bearer inference-token");
@@ -137,7 +143,8 @@ await __runWithOutboundFetchTransportForTests({ fetch: transport, pinnedFetch: (
   assertEquals(knowledgeReads, data.knowledge && !data.emptyTools && !data.disableTools ? 1 : 0);
   assertEquals(modelCalls, data.emptyTools || data.disableTools ? 1 : 2);
   assert(events.length > 0);
-  for (const secret of ["api-auth-token", "source-read-token", "inference-token", "never-forward", data.token]) assertEquals(wire.includes(secret), false);
+  if (data.pauseControl) assertEquals(pauseReads > 0, true);
+  for (const secret of ["private-stop-token", "api-auth-token", "source-read-token", "inference-token", "never-forward", data.token]) assertEquals(wire.includes(secret), false);
  } finally { await service.close(); await service.settled; await peerCleanup; }
 }, { allowedResolvedAddresses: ["93.184.216.34", "93.184.216.35", "93.184.216.36"] });
 console.log("installed-canonical-execution-qualified");
@@ -145,6 +152,10 @@ console.log("installed-canonical-execution-qualified");
 
 for (
   const scenario of [
+    {
+      name: "pause control uses the configured API and private transport",
+      input: { destinations: true, pauseControl: true },
+    },
     {
       name:
         "installed canonical service executes the selected code agent and native tool with one source allocation",
