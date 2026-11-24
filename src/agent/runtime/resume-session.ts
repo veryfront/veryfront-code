@@ -250,8 +250,9 @@ export class RunResumeSessionManager<T> {
 
   private scheduleWaitingTimeout(session: RunSession<T>, waitKey: string): void {
     this.clearWaitingTimeout(session, waitKey);
+    const waiting = session.waitingStates.get(waitKey);
     const handle = this.setTimeoutFn(() => {
-      if (session.waitingStates.has(waitKey)) {
+      if (waiting !== undefined && session.waitingStates.get(waitKey) === waiting) {
         this.cancelRun(session.runId, session.abortController.signal);
       }
     }, this.waitingTtlMs);

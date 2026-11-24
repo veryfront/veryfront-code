@@ -974,3 +974,27 @@ Deno.test("duplicate keyed subscriptions cancel independently and retire the fin
   assertEquals(manager.getRunStatus("abandoned"), "running");
   manager.completeRun("abandoned");
 });
+
+Deno.test("abandoned wait timeouts cannot cancel a replacement key or unrelated calls", async () => {
+  const timers = createManualTimers();
+  const manager = new RunResumeSessionManager<number>({ maxPendingWaitsPerRun: 2, ...timers });
+  const signal = manager.startRun({ runId: "replacement", threadId: "thread" });
+  const abandoned = new AbortController();
+  const first = manager.waitForSignal("replacement", "shared", abandoned.signal);
+  const rejected = assertRejects(() => first);
+  abandoned.abort();
+  await rejected;
+  const replacement = manager.waitForSignal("replacement", "shared");
+  const unrelated = manager.waitForSignal("replacement", "other");
+  const outcomes = Promise.allSettled([replacement, unrelated]);
+  timers.callbacks[0]!();
+  const prematurelyCancelled = signal.aborted;
+  if (!prematurelyCancelled) {
+    manager.submitSignal("replacement", { waitKey: "shared", value: 1 });
+    manager.submitSignal("replacement", { waitKey: "other", value: 2 });
+  }
+  const results = await outcomes;
+  manager.completeRun("replacement", signal);
+  assertEquals(prematurelyCancelled, false);
+  assertEquals(results, [{ status: "fulfilled", value: 1 }, { status: "fulfilled", value: 2 }]);
+});
