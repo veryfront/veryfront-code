@@ -124,7 +124,9 @@ export async function prepareCanonicalBrokerModel<T>(input: {
     provider: row.provider,
     providerToolNames: providerTools.map((tool) => tool.name),
     maxSteps,
-    maxOutputTokens: config.requestedMaxOutputTokens,
+    maxOutputTokens: config.requestedMaxOutputTokens === undefined
+      ? undefined
+      : Math.min(config.requestedMaxOutputTokens, output),
     thinking: config.requestedThinking,
     cleanup: () => guard.dispose(),
   };

@@ -236,6 +236,32 @@ Deno.test("canonical output overrides do not consume the model reasoning allowan
   });
 });
 
+Deno.test("canonical output overrides are capped to the granted catalog limit", async () => {
+  const base = await ingress();
+  const input = {
+    ...base,
+    executor: {
+      ...base.executor,
+      input: {
+        ...base.executor.input,
+        forwardedProps: { runtimeOverrides: { maxOutputTokens: 4096 } },
+      },
+    },
+  };
+  await withCatalog(async () => {
+    const policy = await prepareCanonicalBrokerModel({
+      ingress: input,
+      sourceDefinition: input.executor.agentConfig!,
+      apiBaseUrl: "https://93.184.216.34/api",
+      signal: new AbortController().signal,
+      limits,
+    });
+    assertEquals(policy.maxOutputTokens, 2048);
+    assertEquals(policy.model.grant.models.get(policy.modelId)?.maxOutputTokens, 2048);
+    policy.cleanup();
+  });
+});
+
 Deno.test("canonical inference retains consuming scope despite a different ambient project", async () => {
   const input = await ingress();
   await withCatalog(async (requests) => {
