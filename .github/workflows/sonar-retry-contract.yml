@@ -71,6 +71,9 @@ jobs:
               '12:27:25.740 INFO  EXECUTION FAILURE',
           ])
           upload_500 = upload_503.replace(']: 503', ']: 500')
+          # The pinned action exits 1 and reports the scanner's exit status.
+          def action_failed(log, scanner_status):
+              return log + f"\n::error::Action failed: The process '/opt/hostedtoolcache/sonar-scanner-cli/8.1.0-build.6389/linux-x64/bin/sonar-scanner' failed with exit code {scanner_status}"
           gate_failed = 'QUALITY GATE STATUS: FAILED - coverage 0.0% < 80%'
           oom = 'java.lang.OutOfMemoryError: Java heap space\n\tat org.sonar.scanner.report.ReportPublisher.upload(ReportPublisher.java:208)\nEXECUTION FAILURE'
           cases = [
@@ -92,6 +95,13 @@ jobs:
               ('upload timeout other exit', [(upload_timeout, 1)], 1, 1),
               ('upload 503 then success', [(upload_503, 3), ('analysis complete', 0)], 0, 2),
               ('upload 500', [(upload_500, 3)], 3, 1),
+              ('upload timeout via action then success', [(action_failed(upload_timeout, 3), 1), ('analysis complete', 0)], 0, 2),
+              ('upload timeout via action twice', [(action_failed(upload_timeout, 3), 1), (action_failed(upload_timeout, 3), 1)], 1, 2),
+              ('upload 503 via action then success', [(action_failed(upload_503, 3), 1), ('analysis complete', 0)], 0, 2),
+              ('quality gate via action', [(action_failed(upload_timeout + '\n' + gate_failed, 3), 1)], 1, 1),
+              ('out of memory via action', [(action_failed(oom, 3), 1)], 1, 1),
+              ('upload timeout via action other exit', [(action_failed(upload_timeout, 30), 1)], 1, 1),
+              ('upload timeout via action exit 1', [(action_failed(upload_timeout, 1), 1)], 1, 1),
           ]
           for label, results, expected_status, expected_attempts in cases:
               with tempfile.TemporaryDirectory() as directory:

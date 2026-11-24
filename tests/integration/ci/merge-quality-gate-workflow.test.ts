@@ -688,9 +688,10 @@ if [ "$SONAR_EVENT_NAME" = "merge_group" ]; then
   export INPUT_ARGS="-Dsonar.pullrequest.key=\${BASH_REMATCH[1]} -Dsonar.pullrequest.branch=$SONAR_REF_NAME -Dsonar.pullrequest.base=main"
 fi
 # Preserve the official action and its signature verification. Only a
-# failed Compute Engine task or a report upload that timed out (or got
-# a 502/503/504 from api/ce/submit) before any quality gate result may
-# retry; a red quality gate, crash, OOM or other exit never does.
+# failed Compute Engine task or a scanner exit 3 from a report upload
+# that timed out (or got a 502/503/504 from api/ce/submit) before any
+# quality gate result may retry; a red quality gate, crash, OOM or
+# other exit never does.
 write_sonar_summary() {
   [ -n "\${GITHUB_STEP_SUMMARY:-}" ] || return 0
   {
@@ -719,7 +720,9 @@ for attempt in 1 2; do
     echo "::warning::Retrying Sonar once after CE Task finished abnormally"
     continue
   fi
-  if [ "$status" -eq 3 ] && grep -Fq 'ReportPublisher.upload' "$log" \\
+  # The action exits 1 and reports the scanner's own exit 3 in its log.
+  if { [ "$status" -eq 3 ] || grep -Eq "sonar-scanner' failed with exit code 3([^0-9]|$)" "$log"; } \\
+    && grep -Fq 'ReportPublisher.upload' "$log" \\
     && { grep -Fq 'HttpTimeoutException' "$log" || grep -Eq '(api/ce/submit[]:[:space:]]+(HTTP[[:space:]]+)?50[234]([^0-9]|$))|((Error|HTTP|status)[[:space:]:]+50[234][^0-9].*api/ce/submit)' "$log"; } \\
     && ! grep -Fq 'QUALITY GATE STATUS' "$log"; then
     echo "::warning::Retrying Sonar once after report upload timeout"
