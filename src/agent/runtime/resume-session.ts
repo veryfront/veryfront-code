@@ -60,6 +60,7 @@ type SubmittedValue<T> = {
 };
 
 type WaitingState<T> = {
+  subscribers: number;
   promise: Promise<T>;
   resolve: (value: SubmittedValue<T>) => void;
   reject: (reason?: unknown) => void;
@@ -404,7 +405,7 @@ export class RunResumeSessionManager<T> {
       return existingValue.value;
     }
     const existingWait = session.waitingStates.get(waitKey);
-    if (existingWait) return await existingWait.promise;
+    if (existingWait) return await this.subscribeToWait(session, waitKey, existingWait, signal);
     if (session.waitingStates.size >= this.maxPendingWaitsPerRun) {
       throw new WaitNotPendingError(runId, waitKey);
     }
@@ -416,7 +417,8 @@ export class RunResumeSessionManager<T> {
         session.status = session.waitingStates.size ? "waiting" : "running";
       }
     };
-    session.waitingStates.set(waitKey, {
+    const waiting: WaitingState<T> = {
+      subscribers: 0,
       promise: result.promise,
       resolve: (value) => {
         remove();
@@ -433,14 +435,8 @@ export class RunResumeSessionManager<T> {
         remove();
         result.reject(reason);
       },
-    });
-    const ownedWait = session.waitingStates.get(waitKey);
-    const abortWait = () => {
-      if (session.waitingStates.get(waitKey) !== ownedWait) return;
-      session.preparedWaitKeys.delete(waitKey);
-      session.waitingStates.get(waitKey)?.reject(signal?.reason ?? new RunCancelledError());
     };
-    signal?.addEventListener("abort", abortWait, { once: true });
+    session.waitingStates.set(waitKey, waiting);
     session.status = "waiting";
     try {
       this.scheduleWaitingTimeout(session, waitKey);
@@ -449,12 +445,40 @@ export class RunResumeSessionManager<T> {
       session.waitingStates.get(waitKey)?.reject(error);
       this.cancelRun(session.runId, session.abortController.signal);
     }
-    try {
-      if (signal?.aborted) abortWait();
-      return await result.promise;
-    } finally {
-      signal?.removeEventListener("abort", abortWait);
-    }
+    return await this.subscribeToWait(session, waitKey, waiting, signal);
+  }
+
+  private subscribeToWait(
+    session: RunSession<T>,
+    waitKey: string,
+    waiting: WaitingState<T>,
+    signal?: AbortSignal,
+  ): Promise<T> {
+    waiting.subscribers++;
+    const result = Promise.withResolvers<T>();
+    let active = true;
+    const finish = (settle: () => void) => {
+      if (!active) return;
+      active = false;
+      signal?.removeEventListener("abort", abort);
+      waiting.subscribers--;
+      settle();
+    };
+    const abort = () => {
+      const reason = signal?.reason ?? new RunCancelledError();
+      finish(() => result.reject(reason));
+      if (waiting.subscribers === 0 && session.waitingStates.get(waitKey) === waiting) {
+        session.preparedWaitKeys.delete(waitKey);
+        waiting.reject(reason);
+      }
+    };
+    void waiting.promise.then(
+      (value) => finish(() => result.resolve(value)),
+      (error) => finish(() => result.reject(error)),
+    );
+    signal?.addEventListener("abort", abort, { once: true });
+    if (signal?.aborted) abort();
+    return result.promise;
   }
 
   submitSignal(

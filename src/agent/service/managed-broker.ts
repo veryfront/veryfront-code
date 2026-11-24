@@ -1,3 +1,4 @@
+export { prepareCanonicalBrokerTools } from "./canonical-tool-policy.ts";
 export { prepareCanonicalBrokerModel } from "./canonical-model-policy.ts";
 export { createCanonicalManagedBrokerService } from "./canonical-managed-service.ts";
 export { createCanonicalBrokerAuthorizer } from "./canonical-broker-authorization.ts";

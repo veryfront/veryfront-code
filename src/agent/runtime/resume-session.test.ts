@@ -936,3 +936,41 @@ Deno.test("operation cancellation retires only its keyed waiter", async () => {
   manager.completeRun("operation-cancel");
   manager.reset();
 });
+
+Deno.test("duplicate keyed subscriptions cancel independently and retire the final abandoned key", async () => {
+  for (const cancelledIndex of [0, 1]) {
+    const manager = new RunResumeSessionManager<number>();
+    const owner = manager.startRun({ runId: "subscriptions", threadId: "thread" });
+    const controllers = [new AbortController(), new AbortController()];
+    const waits = controllers.map((controller) =>
+      manager.waitForSignal("subscriptions", "shared", controller.signal)
+    );
+    const cancelled = assertRejects(
+      () => waits[cancelledIndex]!,
+      DOMException,
+      "subscriber stopped",
+    );
+    controllers[cancelledIndex]!.abort(new DOMException("subscriber stopped", "AbortError"));
+    await cancelled;
+    assertEquals(owner.aborted, false);
+    assertEquals(manager.getRunStatus("subscriptions"), "waiting");
+    manager.submitSignal("subscriptions", { waitKey: "shared", value: 42 });
+    assertEquals(await waits[1 - cancelledIndex], 42);
+    manager.completeRun("subscriptions");
+  }
+  const manager = new RunResumeSessionManager<number>();
+  manager.startRun({ runId: "abandoned", threadId: "thread" });
+  const controllers = [new AbortController(), new AbortController()];
+  const waits = controllers.map((controller) =>
+    manager.waitForSignal("abandoned", "shared", controller.signal)
+  );
+  const outcomes = Promise.allSettled(waits);
+  controllers.forEach((controller) => controller.abort());
+  assertEquals((await outcomes).map((outcome) => outcome.status), ["rejected", "rejected"]);
+  assertThrows(
+    () => manager.submitSignal("abandoned", { waitKey: "shared", value: 42 }),
+    WaitNotPendingError,
+  );
+  assertEquals(manager.getRunStatus("abandoned"), "running");
+  manager.completeRun("abandoned");
+});
