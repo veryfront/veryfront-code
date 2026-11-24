@@ -688,7 +688,19 @@ if [ "$SONAR_EVENT_NAME" = "merge_group" ]; then
   export INPUT_ARGS="-Dsonar.pullrequest.key=\${BASH_REMATCH[1]} -Dsonar.pullrequest.branch=$SONAR_REF_NAME -Dsonar.pullrequest.base=main"
 fi
 # Preserve the official action and its signature verification. Only a
-# failed Compute Engine task may retry; a red quality gate never does.
+# failed Compute Engine task or a report upload that timed out (or got
+# a 502/503/504 from api/ce/submit) before any quality gate result may
+# retry; a red quality gate, crash, OOM or other exit never does.
+write_sonar_summary() {
+  [ -n "\${GITHUB_STEP_SUMMARY:-}" ] || return 0
+  {
+    echo '### Sonar scanner output (last 200 non-DEBUG lines)'
+    echo '\`\`\`text'
+    cat "$RUNNER_TEMP"/sonar-attempt-*.log 2>/dev/null | grep -Ev '(^|[[:space:]])DEBUG[[:space:]]' | tail -n 200 || true
+    echo '\`\`\`'
+  } >> "$GITHUB_STEP_SUMMARY" || true
+}
+trap write_sonar_summary EXIT
 for attempt in 1 2; do
   log="$RUNNER_TEMP/sonar-attempt-$attempt.log"
   echo "Sonar scan attempt $attempt of 2"
@@ -703,10 +715,17 @@ for attempt in 1 2; do
   if [ "$status" -eq 0 ] || [ "$attempt" -eq 2 ]; then
     exit "$status"
   fi
-  if ! grep -Fq 'CE Task finished abnormally' "$log" || grep -Fq 'QUALITY GATE STATUS: FAILED' "$log"; then
-    exit "$status"
+  if grep -Fq 'CE Task finished abnormally' "$log" && ! grep -Fq 'QUALITY GATE STATUS: FAILED' "$log"; then
+    echo "::warning::Retrying Sonar once after CE Task finished abnormally"
+    continue
   fi
-  echo "::warning::Retrying Sonar once after CE Task finished abnormally"
+  if [ "$status" -eq 3 ] && grep -Fq 'ReportPublisher.upload' "$log" \\
+    && { grep -Fq 'HttpTimeoutException' "$log" || grep -Eq '(api/ce/submit[]:[:space:]]+(HTTP[[:space:]]+)?50[234]([^0-9]|$))|((Error|HTTP|status)[[:space:]:]+50[234][^0-9].*api/ce/submit)' "$log"; } \\
+    && ! grep -Fq 'QUALITY GATE STATUS' "$log"; then
+    echo "::warning::Retrying Sonar once after report upload timeout"
+    continue
+  fi
+  exit "$status"
 done
 `,
       "the secret-bearing shell may execute only the pinned upstream scanner and bounded classifier",
