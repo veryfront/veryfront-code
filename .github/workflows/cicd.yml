@@ -2833,7 +2833,7 @@ jobs:
       queue: max
     name: Publish current release record
     needs: [quality-gate-registry, prerelease]
-    if: ${{ always() && github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && needs.quality-gate-registry.result == 'success' && needs.quality-gate-registry.outputs.current_release != '' }}
+    if: ${{ always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && needs.quality-gate-registry.result == 'success' && needs.quality-gate-registry.outputs.current_release != '' }}
     runs-on: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.ubuntu26 == true && 'ubuntu-26.04' || 'ubuntu-latest' }}
     timeout-minutes: 15
     permissions:
