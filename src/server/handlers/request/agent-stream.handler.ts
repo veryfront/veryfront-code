@@ -118,6 +118,7 @@ import {
 } from "#veryfront/internal-agents/session-manager.ts";
 import {
   buildRuntimeAgentControlPlaneStreamRequestFromInvocation,
+  parseInvocationOwnData,
   parseRuntimeAgentRunInvocationValue,
 } from "#veryfront/agent/runtime/agent-invocation-contract.ts";
 import {
@@ -1483,10 +1484,15 @@ function setResponseHeaders(
 
 function parseAgentStreamPayload(rawPayload: unknown): InternalAgentStreamRequest {
   const invocation = parseRuntimeAgentRunInvocationValue(rawPayload);
-  return IntrinsicReflectApply(
-    TrustedInternalAgentStreamRequestParse,
-    TrustedInternalAgentStreamRequestSchema,
-    [buildRuntimeAgentControlPlaneStreamRequestFromInvocation(invocation)],
+  // The stream request carries the invocation fields, so it is read the same way.
+  return parseInvocationOwnData(
+    buildRuntimeAgentControlPlaneStreamRequestFromInvocation(invocation),
+    (input) =>
+      IntrinsicReflectApply(
+        TrustedInternalAgentStreamRequestParse,
+        TrustedInternalAgentStreamRequestSchema,
+        [input],
+      ) as InternalAgentStreamRequest,
   );
 }
 

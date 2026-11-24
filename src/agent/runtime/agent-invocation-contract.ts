@@ -224,9 +224,11 @@ export function validateRuntimeAgentTargetSelection(
   input: RuntimeAgentTargetSelectionInput,
   ctx: RefinementCtx,
 ) {
-  const kind = input.runtimeTargetKind;
+  const kind = ownField(input, "runtimeTargetKind");
+  const environmentId = ownField(input, "runtimeTargetEnvironmentId");
+  const branchId = ownField(input, "runtimeTargetBranchId");
   if (!kind || kind === "main_branch") {
-    if (input.runtimeTargetEnvironmentId || input.runtimeTargetBranchId) {
+    if (environmentId || branchId) {
       ctx.addIssue({
         code: "custom",
         message: "main_branch target does not accept environment or branch identifiers",
@@ -237,7 +239,7 @@ export function validateRuntimeAgentTargetSelection(
   }
 
   if (kind === "environment") {
-    if (!input.runtimeTargetEnvironmentId || input.runtimeTargetBranchId) {
+    if (!environmentId || branchId) {
       ctx.addIssue({
         code: "custom",
         message:
@@ -248,7 +250,7 @@ export function validateRuntimeAgentTargetSelection(
     return;
   }
 
-  if (!input.runtimeTargetBranchId || input.runtimeTargetEnvironmentId) {
+  if (!branchId || environmentId) {
     ctx.addIssue({
       code: "custom",
       message:
@@ -263,9 +265,11 @@ export function validateRuntimeAgentSourceTargetBinding(
   input: RuntimeAgentTargetSelectionInput & { agentSource: RuntimeAgentSourceContext },
   ctx: RefinementCtx,
 ) {
+  const kind = ownField(input, "runtimeTargetKind");
+  const sourceEnvironmentId = ownField(input, "sourceTargetEnvironmentId");
   if (
-    input.agentSource.type === "branch" && input.runtimeTargetKind === "environment" &&
-    input.sourceTargetBranchId === undefined
+    input.agentSource.type === "branch" && kind === "environment" &&
+    ownField(input, "sourceTargetBranchId") === undefined
   ) {
     ctx.addIssue({
       code: "custom",
@@ -275,10 +279,9 @@ export function validateRuntimeAgentSourceTargetBinding(
     });
   }
   if (input.agentSource.type === "environment") {
-    const environmentId =
-      input.sourceTargetEnvironmentId === undefined && input.runtimeTargetKind === "environment"
-        ? input.runtimeTargetEnvironmentId
-        : input.sourceTargetEnvironmentId;
+    const environmentId = sourceEnvironmentId === undefined && kind === "environment"
+      ? ownField(input, "runtimeTargetEnvironmentId")
+      : sourceEnvironmentId;
     if (!environmentId) {
       ctx.addIssue({
         code: "custom",
@@ -346,7 +349,11 @@ export const getRuntimeAgentRunContextSchema = defineSchema((v) =>
     spawnedFromToolCallId: getRuntimeAgentToolCallIdSchema().nullable().optional(),
     validatedClaims: getRuntimeAgentValidatedClaimsSchema().optional(),
   }).superRefine((input, ctx) => {
-    if (input.parentRunId && input.parentRunId === input.runId) {
+    const parentRunId = ownField(input, "parentRunId");
+    const validatedClaims = ownField(input, "validatedClaims");
+    const claimedProjectId = validatedClaims && ownField(validatedClaims, "projectId");
+    const claimedProjectSlug = validatedClaims && ownField(validatedClaims, "projectSlug");
+    if (parentRunId && parentRunId === input.runId) {
       ctx.addIssue({
         code: "custom",
         message: "parentRunId cannot match runId",
@@ -354,7 +361,7 @@ export const getRuntimeAgentRunContextSchema = defineSchema((v) =>
       });
     }
 
-    if (!input.parentRunId && input.spawnedFromMessageId) {
+    if (!parentRunId && ownField(input, "spawnedFromMessageId")) {
       ctx.addIssue({
         code: "custom",
         message: "spawnedFromMessageId requires parentRunId",
@@ -362,7 +369,7 @@ export const getRuntimeAgentRunContextSchema = defineSchema((v) =>
       });
     }
 
-    if (!input.parentRunId && input.spawnedFromToolCallId) {
+    if (!parentRunId && ownField(input, "spawnedFromToolCallId")) {
       ctx.addIssue({
         code: "custom",
         message: "spawnedFromToolCallId requires parentRunId",
@@ -370,10 +377,7 @@ export const getRuntimeAgentRunContextSchema = defineSchema((v) =>
       });
     }
 
-    if (
-      input.validatedClaims?.projectId &&
-      input.validatedClaims.projectId !== input.project.projectId
-    ) {
+    if (claimedProjectId && claimedProjectId !== input.project.projectId) {
       ctx.addIssue({
         code: "custom",
         message: "validatedClaims.projectId must match project.projectId",
@@ -381,10 +385,7 @@ export const getRuntimeAgentRunContextSchema = defineSchema((v) =>
       });
     }
 
-    if (
-      input.validatedClaims?.projectSlug &&
-      input.validatedClaims.projectSlug !== input.project.projectSlug
-    ) {
+    if (claimedProjectSlug && claimedProjectSlug !== input.project.projectSlug) {
       ctx.addIssue({
         code: "custom",
         message: "validatedClaims.projectSlug must match project.projectSlug",
@@ -481,13 +482,19 @@ export const getRuntimeAgentRunInvocationSchema = defineSchema((v) =>
     serverResolvedTrustedHostedHistoryMessageIds: v.array(v.string()).optional(),
     resumeToolCall: getRuntimeAgentResumeToolCallSchema().optional(),
   }).superRefine((input, ctx) => {
-    if (input.sourceProject) {
+    // Optional fields are read as own properties: one the invocation leaves
+    // out is undefined here too.
+    const sourceProject = ownField(input, "sourceProject");
+    const agentConfig = ownField(input, "agentConfig");
+    const credentials = ownField(input, "credentials");
+    if (sourceProject) {
       const executionTarget = input.run.project;
+      const executionTargetKind = ownField(executionTarget, "runtimeTargetKind");
       if (
-        (executionTarget.runtimeTargetKind === "environment" &&
-          !executionTarget.runtimeTargetEnvironmentName) ||
-        (executionTarget.runtimeTargetKind !== "environment" &&
-          !executionTarget.runtimeTargetBranchName)
+        (executionTargetKind === "environment" &&
+          !ownField(executionTarget, "runtimeTargetEnvironmentName")) ||
+        (executionTargetKind !== "environment" &&
+          !ownField(executionTarget, "runtimeTargetBranchName"))
       ) {
         ctx.addIssue({
           code: "custom",
@@ -502,7 +509,7 @@ export const getRuntimeAgentRunInvocationSchema = defineSchema((v) =>
           path: ["agentSource"],
         });
       }
-      if (!input.credentials?.sourceAuthToken) {
+      if (!credentials || !ownField(credentials, "sourceAuthToken")) {
         ctx.addIssue({
           code: "custom",
           message: "Shared agent source requires a source credential",
@@ -510,7 +517,7 @@ export const getRuntimeAgentRunInvocationSchema = defineSchema((v) =>
         });
       }
     }
-    if (input.agentConfig && input.agentConfig.id !== input.run.agentId) {
+    if (agentConfig && agentConfig.id !== input.run.agentId) {
       ctx.addIssue({
         code: "custom",
         message: "agentConfig.id must match run.agentId",
@@ -521,7 +528,7 @@ export const getRuntimeAgentRunInvocationSchema = defineSchema((v) =>
     // invocation must carry it in the normalized deny-all wire shape produced
     // by parseRuntimeAgentRunInvocationValue (tools: [] plus generated
     // allowlists). A raw `tools: false` would skip those safeguards.
-    if (input.agentConfig?.tools === false) {
+    if (agentConfig && ownField(agentConfig, "tools") === false) {
       ctx.addIssue({
         code: "custom",
         message: "agentConfig.tools: false must be parsed with parseRuntimeAgentRunInvocationValue",
@@ -531,7 +538,7 @@ export const getRuntimeAgentRunInvocationSchema = defineSchema((v) =>
 
     validateRuntimeAgentSourceTargetBinding(
       {
-        ...(input.sourceProject ?? input.run.project),
+        ...(sourceProject ?? input.run.project),
         agentSource: input.agentSource,
       },
       ctx,
@@ -550,11 +557,16 @@ const ObjectKeys = Object.keys;
 const ObjectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
 const ObjectDefineProperty = Object.defineProperty;
 const ObjectCreate = Object.create;
+const ObjectGetPrototypeOf = Object.getPrototypeOf;
+const ObjectPrototype = Object.prototype;
 const ArrayIsArray = Array.isArray;
 const StringPrototypeStartsWith = String.prototype.startsWith;
 const IntrinsicSet = Set;
 const SetPrototypeHas = Set.prototype.has;
 const SetPrototypeAdd = Set.prototype.add;
+const IntrinsicMap = Map;
+const MapPrototypeGet = Map.prototype.get;
+const MapPrototypeSet = Map.prototype.set;
 const MALFORMED = Symbol("malformed");
 
 /**
@@ -617,7 +629,18 @@ function isPlainRecord(value: unknown): value is Record<string, unknown> {
 function readOwn(source: OwnDataContainer, key: string | number): unknown {
   if (!ObjectHasOwn(source, key)) return undefined;
   const descriptor = ObjectGetOwnPropertyDescriptor(source, key);
-  return descriptor && "value" in descriptor ? descriptor.value : undefined;
+  return descriptor && ObjectHasOwn(descriptor, "value") ? descriptor.value : undefined;
+}
+
+/**
+ * Read a schema field as an own data property. A field the value leaves out
+ * reads as undefined, whatever its prototypes define under that name.
+ */
+function ownField<T extends object, K extends keyof T & string>(
+  source: T,
+  key: K,
+): T[K] | undefined {
+  return readOwn(source as Record<string, unknown>, key) as T[K] | undefined;
 }
 
 /**
@@ -663,9 +686,156 @@ function copyOwnDataRecord(
     }
     if (omitted) continue;
     const descriptor = ObjectGetOwnPropertyDescriptor(source, key);
-    if (descriptor && "value" in descriptor) defineOwnData(copy, key, descriptor.value);
+    if (descriptor && ObjectHasOwn(descriptor, "value")) {
+      defineOwnData(copy, key, descriptor.value);
+    }
   }
   return copy;
+}
+
+/** Arrays and plain records; a copy rebuilds these and keeps every other value. */
+function isOwnDataContainer(value: unknown): value is OwnDataContainer {
+  if (value === null || typeof value !== "object") return false;
+  if (ArrayIsArray(value)) return true;
+  const prototype = ObjectGetPrototypeOf(value);
+  return prototype === ObjectPrototype || prototype === null;
+}
+
+/** A container whose entries still have to be copied. */
+interface PendingOwnDataCopy {
+  source: OwnDataContainer;
+  copy: OwnDataContainer;
+  next: PendingOwnDataCopy | undefined;
+}
+
+/**
+ * Copy a value into arrays and null-prototype records that hold own data
+ * properties only. A field the source leaves out is absent from the copy, so
+ * reading it never continues to `Object.prototype`.
+ *
+ * Accessors are dropped without being read. Shared and cyclic references keep
+ * their shape, and nesting depth is not limited: the copy walks a work list
+ * instead of recursing. Values that are neither arrays nor plain records are
+ * kept as they are; JSON does not produce them.
+ *
+ * With `keepNullPrototypeRecords`, a record that already has no prototype is
+ * kept without being copied again.
+ */
+function copyOwnDataValue(root: unknown, keepNullPrototypeRecords = false): unknown {
+  if (!isOwnDataContainer(root)) return root;
+  const copies = new IntrinsicMap<OwnDataContainer, OwnDataContainer>();
+  let pending: PendingOwnDataCopy | undefined;
+
+  function copyOf(value: unknown): unknown {
+    if (!isOwnDataContainer(value)) return value;
+    const array = ArrayIsArray(value);
+    if (keepNullPrototypeRecords && !array && ObjectGetPrototypeOf(value) === null) return value;
+    const existing = IntrinsicReflectApply(MapPrototypeGet, copies, [value]) as
+      | OwnDataContainer
+      | undefined;
+    if (existing !== undefined) return existing;
+    const copy: OwnDataContainer = array ? [] : createNullPrototypeRecord();
+    IntrinsicReflectApply(MapPrototypeSet, copies, [value, copy]);
+    const entry = ObjectCreate(null) as PendingOwnDataCopy;
+    entry.source = value;
+    entry.copy = copy;
+    entry.next = pending;
+    pending = entry;
+    return copy;
+  }
+
+  const result = copyOf(root);
+  while (pending !== undefined) {
+    const { source, copy }: PendingOwnDataCopy = pending;
+    pending = pending.next;
+    if (ArrayIsArray(source)) {
+      // Every index becomes an own element, so a hole cannot read as inherited.
+      for (let index = 0; index < source.length; index++) {
+        defineOwnData(copy, index, copyOf(readOwn(source, index)));
+      }
+      continue;
+    }
+    const keys = ObjectKeys(source);
+    for (let index = 0; index < keys.length; index++) {
+      const key = keys[index]!;
+      const descriptor = ObjectGetOwnPropertyDescriptor(source, key);
+      if (descriptor && ObjectHasOwn(descriptor, "value")) {
+        // The record has no prototype, so assignment defines an own property.
+        (copy as Record<string, unknown>)[key] = copyOf(descriptor.value);
+      }
+    }
+  }
+  return result;
+}
+
+/**
+ * A string with the length, UTF-8 size and visible-ASCII outcome of `value`,
+ * so the credential checks reach the same result for both.
+ */
+function credentialPlaceholder(value: string): string {
+  let placeholder = "";
+  for (let index = 0; index < value.length; index++) {
+    const unit = value[index]!;
+    placeholder += unit >= "!" && unit <= "~" ? "x" : unit;
+  }
+  return placeholder;
+}
+
+/**
+ * Replace each credential string of a copied invocation with a placeholder and
+ * return the replaced values by field name. The schema then validates the
+ * placeholders, and no step of validation holds a credential value.
+ */
+function replaceCredentialValuesWithPlaceholders(
+  input: unknown,
+): Record<string, unknown> | undefined {
+  if (!isPlainRecord(input)) return undefined;
+  const source = readOwn(input, "credentials");
+  if (!isPlainRecord(source)) return undefined;
+  // A new record, so a value that was kept rather than copied is never changed.
+  const credentials = copyOwnDataRecord(source);
+  defineOwnData(input, "credentials", credentials);
+  const values = createNullPrototypeRecord();
+  const keys = ObjectKeys(credentials);
+  for (let index = 0; index < keys.length; index++) {
+    const key = keys[index]!;
+    const value = readOwn(credentials, key);
+    if (typeof value !== "string") continue;
+    defineOwnData(values, key, value);
+    defineOwnData(credentials, key, credentialPlaceholder(value));
+  }
+  return values;
+}
+
+/**
+ * Copy a value for validation. An object that is not a plain record is read
+ * through its own data properties as well, so the result is always a new value.
+ */
+function copyInvocationInput(value: unknown): unknown {
+  const copy = copyOwnDataValue(value);
+  return copy === value && isPlainRecord(value) ? copyOwnDataRecord(value) : copy;
+}
+
+/**
+ * Return a parsed invocation in null-prototype records, with the credential
+ * values the schema validated as placeholders put back.
+ */
+function ownDataInvocation(
+  parsed: unknown,
+  credentialValues: Record<string, unknown> | undefined,
+): unknown {
+  const invocation = copyOwnDataValue(parsed, true);
+  if (credentialValues === undefined || !isPlainRecord(invocation)) return invocation;
+  const credentials = readOwn(invocation, "credentials");
+  if (!isPlainRecord(credentials)) return invocation;
+  const keys = ObjectKeys(credentials);
+  for (let index = 0; index < keys.length; index++) {
+    const key = keys[index]!;
+    if (ObjectHasOwn(credentialValues, key)) {
+      defineOwnData(credentials, key, readOwn(credentialValues, key));
+    }
+  }
+  return invocation;
 }
 
 function copyStringArray(entries: readonly string[]): string[] {
@@ -940,14 +1110,16 @@ const getDenyAllRuntimeAgentRunInvocationSchema = defineSchema(() =>
     // Normalization leaves the authored selector in place when the raw config
     // fails validation. The Markdown schema also accepts false, so reject it
     // explicitly here instead of allowing an invalid config through.
-    if (input.agentConfig?.tools === false) {
+    const agentConfig = ownField(input, "agentConfig");
+    if (agentConfig && ownField(agentConfig, "tools") === false) {
       ctx.addIssue({
         code: "custom",
         message: "tools: false requires a valid bounded agentConfig",
         path: ["agentConfig", "tools"],
       });
     }
-    const runtimeOverrides = input.forwardedProps?.runtimeOverrides;
+    const forwardedProps = ownField(input, "forwardedProps");
+    const runtimeOverrides = forwardedProps && readOwn(forwardedProps, "runtimeOverrides");
     // Captured parser: replacing the live schema method after module load
     // cannot approve an invalid generated override.
     const parsed = IntrinsicReflectApply(
@@ -959,7 +1131,7 @@ const getDenyAllRuntimeAgentRunInvocationSchema = defineSchema(() =>
       ? readOwnStrictStringArray(runtimeOverrides, "toolAllowlist")
       : MALFORMED;
     if (
-      !parsed.success || parsed.data.allowedTools === undefined ||
+      !parsed.success || ownField(parsed.data, "allowedTools") === undefined ||
       toolAllowlist === undefined || toolAllowlist === MALFORMED
     ) {
       ctx.addIssue({
@@ -981,29 +1153,52 @@ const TrustedDenyAllRuntimeAgentRunInvocationSafeParse =
  * Trusted ingress parse. Unlike `getRuntimeAgentRunInvocationSchema()`, which
  * rejects `agentConfig.tools: false`, this accepts an authored deny-all and
  * maps it to the runtime wire shape (see the deny-all normalizer above).
+ *
+ * The value is validated as a copy made of null-prototype records, and the
+ * parsed invocation is returned in null-prototype records too. Validation and
+ * every later reader therefore see a field the value leaves out as undefined.
  */
 export function parseRuntimeAgentRunInvocationValue(
   value: unknown,
 ): InferSchema<ReturnType<typeof getRuntimeAgentRunInvocationSchema>> {
-  const normalized = normalizeDenyAllRuntimeAgentInvocationValue(value);
-  return normalized.denyAll
-    ? IntrinsicReflectApply(
-      TrustedDenyAllRuntimeAgentRunInvocationParse,
-      trustedDenyAllRuntimeAgentRunInvocationSchema,
-      [normalized.value],
-    )
-    : IntrinsicReflectApply(
-      TrustedRuntimeAgentRunInvocationParse,
-      trustedRuntimeAgentRunInvocationSchema,
-      [normalized.value],
-    );
+  return parseInvocationOwnData(value, (input) => {
+    const normalized = normalizeDenyAllRuntimeAgentInvocationValue(input);
+    return normalized.denyAll
+      ? IntrinsicReflectApply(
+        TrustedDenyAllRuntimeAgentRunInvocationParse,
+        trustedDenyAllRuntimeAgentRunInvocationSchema,
+        [normalized.value],
+      )
+      : IntrinsicReflectApply(
+        TrustedRuntimeAgentRunInvocationParse,
+        trustedRuntimeAgentRunInvocationSchema,
+        [normalized.value],
+      );
+  });
 }
 
+/**
+ * Parse a value that carries invocation fields with own-data reads: `parse`
+ * receives a copy made of null-prototype records whose credential strings are
+ * placeholders, and its result is returned in null-prototype records with the
+ * credential values put back. `parse` must throw when the copy is invalid.
+ *
+ * @internal
+ */
+export function parseInvocationOwnData<T>(value: unknown, parse: (input: unknown) => T): T {
+  const input = copyInvocationInput(value);
+  const credentialValues = replaceCredentialValuesWithPlaceholders(input);
+  return ownDataInvocation(parse(input), credentialValues) as T;
+}
+
+/** Non-throwing form of `parseRuntimeAgentRunInvocationValue`, with the same own-data reads. */
 export function safeParseRuntimeAgentRunInvocationValue(
   value: unknown,
 ): ReturnType<typeof trustedRuntimeAgentRunInvocationSchema.safeParse> {
-  const normalized = normalizeDenyAllRuntimeAgentInvocationValue(value);
-  return normalized.denyAll
+  const input = copyInvocationInput(value);
+  const credentialValues = replaceCredentialValuesWithPlaceholders(input);
+  const normalized = normalizeDenyAllRuntimeAgentInvocationValue(input);
+  const parsed = normalized.denyAll
     ? IntrinsicReflectApply(
       TrustedDenyAllRuntimeAgentRunInvocationSafeParse,
       trustedDenyAllRuntimeAgentRunInvocationSchema,
@@ -1014,6 +1209,12 @@ export function safeParseRuntimeAgentRunInvocationValue(
       trustedRuntimeAgentRunInvocationSchema,
       [normalized.value],
     );
+  // The result record always carries its own `success`, and `data` on success.
+  if (!parsed.success) return parsed;
+  const result = ObjectCreate(null) as Extract<typeof parsed, { success: true }>;
+  result.success = true;
+  result.data = ownDataInvocation(parsed.data, credentialValues) as typeof parsed.data;
+  return result;
 }
 
 /** Schema for runtime agent run invocation.

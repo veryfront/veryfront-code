@@ -2,6 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import {
   assertEquals,
   assertInstanceOf,
+  assertStrictEquals,
   assertStringIncludes,
   assertThrows,
 } from "#veryfront/testing/assert.ts";
@@ -350,6 +351,50 @@ describe("agent/runtime-agent-invocation-contract", () => {
         },
       }))
     );
+  });
+
+  it("reaches the schema result for each credential and returns the given values", () => {
+    const credentials = {
+      authToken: "é".repeat(8_193),
+      inferenceAuthToken: "run-scoped-inference-token",
+      sourceAuthToken: "source-scoped-token",
+    };
+    const parsed = parseRuntimeAgentRunInvocationValue(createInvocation({ credentials }));
+    assertEquals(parsed.credentials, credentials);
+
+    for (const inferenceAuthToken of ["é", "has space", "", "x".repeat(16_385), 7]) {
+      const invocation = createInvocation({
+        credentials: { authToken: "request-scoped-user-token", inferenceAuthToken },
+      });
+      const expected = RuntimeAgentRunInvocationSchema.safeParse(invocation);
+      const actual = safeParseRuntimeAgentRunInvocationValue(invocation);
+
+      assertEquals(expected.success, false);
+      assertEquals(actual.success, false);
+      if (expected.success || actual.success) continue;
+      assertEquals(actual.issues, expected.issues);
+    }
+  });
+
+  it("parses a copy and leaves the given value unchanged", () => {
+    const shared = { role: "user", content: "shared" };
+    const cyclic: Record<string, unknown> = { role: "user" };
+    cyclic.self = cyclic;
+    const invocation = createInvocation({
+      credentials: { authToken: "request-scoped-user-token" },
+      messages: [shared, shared, cyclic],
+    });
+    const givenCredentials = invocation.credentials;
+
+    const parsed = parseRuntimeAgentRunInvocationValue(invocation);
+    const messages = parsed.messages as Record<string, unknown>[];
+
+    assertStrictEquals(invocation.credentials, givenCredentials);
+    assertEquals(invocation.credentials, { authToken: "request-scoped-user-token" });
+    assertEquals(messages[0], shared);
+    assertEquals(messages[0] === shared, false);
+    assertStrictEquals(messages[0], messages[1]);
+    assertStrictEquals(messages[2]?.self, messages[2]);
   });
 
   it("preserves explicit delegation denial across the control-plane transform", () => {
