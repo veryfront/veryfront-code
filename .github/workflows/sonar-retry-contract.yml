@@ -51,6 +51,31 @@ jobs:
           wrapper = textwrap.dedent(step.split('        run: |\n', 1)[1])
           assert 'continue-on-error:' not in step, 'The wrapper must propagate failures'
 
+          # Stock SonarScanner output when SonarCloud stalls the report upload:
+          # exit 3, no report-task.txt and no CE task or quality gate result.
+          upload_timeout = '\n'.join([
+              '12:27:24.900 DEBUG POST https://sonarcloud.io/api/ce/submit',
+              '12:27:25.075 ERROR Error during SonarScanner Engine execution',
+              'java.lang.IllegalStateException: Failed to request POST https://sonarcloud.io/api/ce/submit',
+              '\tat org.sonar.scanner.http.transport.JdkHttpClient.execute(JdkHttpClient.java:151)',
+              '\tat org.sonar.scanner.report.ReportPublisher.upload(ReportPublisher.java:208)',
+              '\tat org.sonar.scanner.report.ReportPublisher.execute(ReportPublisher.java:146)',
+              'Caused by: java.net.http.HttpTimeoutException: request timed out',
+              '\tat java.net.http/jdk.internal.net.http.HttpClientImpl.send(Unknown Source)',
+              '12:27:25.740 INFO  EXECUTION FAILURE',
+          ])
+          upload_503 = '\n'.join([
+              '12:27:25.075 ERROR Error during SonarScanner Engine execution',
+              'java.lang.IllegalStateException: Error status returned by url [https://sonarcloud.io/api/ce/submit]: 503',
+              '\tat org.sonar.scanner.report.ReportPublisher.upload(ReportPublisher.java:208)',
+              '12:27:25.740 INFO  EXECUTION FAILURE',
+          ])
+          upload_500 = upload_503.replace(']: 503', ']: 500')
+          # The pinned action exits 1 and reports the scanner's exit status.
+          def action_failed(log, scanner_status):
+              return log + f"\n::error::Action failed: The process '/opt/hostedtoolcache/sonar-scanner-cli/8.1.0-build.6389/linux-x64/bin/sonar-scanner' failed with exit code {scanner_status}"
+          gate_failed = 'QUALITY GATE STATUS: FAILED - coverage 0.0% < 80%'
+          oom = 'java.lang.OutOfMemoryError: Java heap space\n\tat org.sonar.scanner.report.ReportPublisher.upload(ReportPublisher.java:208)\nEXECUTION FAILURE'
           cases = [
               ('success', [('analysis complete', 0)], 0, 1),
               ('server error then success', [('CE Task finished abnormally', 3), ('analysis complete', 0)], 0, 2),
@@ -60,6 +85,23 @@ jobs:
               ('other failure', [('Not authorized', 4)], 4, 1),
               ('similar message', [('CE Task timeout', 6)], 6, 1),
               ('mixed gate and server text', [('CE Task finished abnormally; QUALITY GATE STATUS: FAILED', 2)], 2, 1),
+              ('upload timeout then success', [(upload_timeout, 3), ('analysis complete', 0)], 0, 2),
+              ('upload timeout twice', [(upload_timeout, 3), (upload_timeout, 3)], 3, 2),
+              ('upload timeout then quality gate', [(upload_timeout, 3), (gate_failed, 2)], 2, 2),
+              ('quality gate exit 3', [(upload_timeout + '\n' + gate_failed, 3)], 3, 1),
+              ('quality gate status with upload text', [(upload_timeout + '\nQUALITY GATE STATUS: ERROR', 3)], 3, 1),
+              ('out of memory exit 3', [(oom, 3)], 3, 1),
+              ('other exit 3', [('ERROR Error during SonarScanner Engine execution\nEXECUTION FAILURE', 3)], 3, 1),
+              ('upload timeout other exit', [(upload_timeout, 1)], 1, 1),
+              ('upload 503 then success', [(upload_503, 3), ('analysis complete', 0)], 0, 2),
+              ('upload 500', [(upload_500, 3)], 3, 1),
+              ('upload timeout via action then success', [(action_failed(upload_timeout, 3), 1), ('analysis complete', 0)], 0, 2),
+              ('upload timeout via action twice', [(action_failed(upload_timeout, 3), 1), (action_failed(upload_timeout, 3), 1)], 1, 2),
+              ('upload 503 via action then success', [(action_failed(upload_503, 3), 1), ('analysis complete', 0)], 0, 2),
+              ('quality gate via action', [(action_failed(upload_timeout + '\n' + gate_failed, 3), 1)], 1, 1),
+              ('out of memory via action', [(action_failed(oom, 3), 1)], 1, 1),
+              ('upload timeout via action other exit', [(action_failed(upload_timeout, 30), 1)], 1, 1),
+              ('upload timeout via action exit 1', [(action_failed(upload_timeout, 1), 1)], 1, 1),
           ]
           for label, results, expected_status, expected_attempts in cases:
               with tempfile.TemporaryDirectory() as directory:
@@ -81,12 +123,19 @@ jobs:
                   node.chmod(0o755)
                   env = {**os.environ, 'PATH': str(tmp) + os.pathsep + os.environ['PATH'],
                          'SONAR_EVENT_NAME': 'push', 'RUNNER_TEMP': str(tmp), 'FIXTURE_ROOT': str(tmp),
-                         'FIXTURE_RESULTS': json.dumps(results), 'INPUT_SKIPSIGNATUREVERIFICATION': 'false'}
+                         'FIXTURE_RESULTS': json.dumps(results), 'INPUT_SKIPSIGNATUREVERIFICATION': 'false',
+                         'GITHUB_STEP_SUMMARY': str(tmp / 'summary.md')}
                   started = time.monotonic()
                   run = subprocess.run(['bash', '-e', '-o', 'pipefail', '-c', wrapper], env=env,
                                        text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
                   attempts = int((tmp / 'attempts').read_text())
                   assert (run.returncode, attempts) == (expected_status, expected_attempts), (label, run.returncode, attempts, run.stdout)
+                  upload_retry = 'Retrying Sonar once after report upload timeout' in run.stdout
+                  assert upload_retry == (label.startswith('upload') and expected_attempts == 2), (label, run.stdout)
+                  summary = (tmp / 'summary.md').read_text()
+                  for message, _ in results:
+                      for line in message.splitlines():
+                          assert (line in summary) == (' DEBUG ' not in line), (label, line, summary)
                   print(f'PASS {label}: attempts={attempts}, exit={run.returncode}, seconds={time.monotonic() - started:.3f}')
                   print(run.stdout, end='')
           # A failed log write must never trigger a retry, even if the CE signature was read.
