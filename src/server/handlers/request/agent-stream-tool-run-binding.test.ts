@@ -7,6 +7,7 @@ import {
 } from "#veryfront/security/http/ingress-credentials.ts";
 import { assertEquals, assertExists } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import type { ToolApprovalGate } from "#veryfront/tool/approval.ts";
 import { AgentStreamHandler, bindsAuthoredToolRun } from "./agent-stream.handler.ts";
 import { createAgent, createControlPlaneSignature } from "./internal-agent-run.test-helpers.ts";
 import {
@@ -29,7 +30,7 @@ type Verification = "valid" | "rejected" | "throws";
 
 async function streamedToolContext(
   verification: Verification,
-  options: { token?: string | null; body?: string } = {},
+  options: { token?: string | null; body?: string; proxyToken?: string } = {},
 ): Promise<Record<string, unknown>> {
   const contexts: Array<Record<string, unknown> | undefined> = [];
   const handler = new AgentStreamHandler({
@@ -65,7 +66,11 @@ async function streamedToolContext(
         body,
       }),
     ),
-    { ...createCtx(publicKeyPem), projectId },
+    {
+      ...createCtx(publicKeyPem),
+      projectId,
+      ...(options.proxyToken ? { proxyToken: options.proxyToken } : {}),
+    },
   );
   assertExists(result.response);
   assertEquals(result.response.status, 200, await result.response.clone().text());
@@ -103,6 +108,52 @@ describe("agent stream authored tool run binding", () => {
       }),
     });
     assertEquals(Object.hasOwn(context, "runIdBindsToolAuthorization"), false);
+  });
+
+  it("gives a bound run an approval gate on its input requests with the runtime token", async () => {
+    const asks: Array<{ method: string; path: string; authorization: string | null }> = [];
+    const server = Deno.serve({ hostname: "127.0.0.1", port: 0, onListen: () => {} }, (req) => {
+      asks.push({
+        method: req.method,
+        path: new URL(req.url).pathname,
+        authorization: req.headers.get("authorization"),
+      });
+      return Response.json({
+        input_request_id: "ir-1",
+        status: "submitted",
+        response: { values: { decision: "approve" }, actor: { type: "user", id: "checker" } },
+      }, { status: 201 });
+    });
+    const originalApiBaseUrl = Deno.env.get("VERYFRONT_API_BASE_URL");
+    Deno.env.set("VERYFRONT_API_BASE_URL", `http://127.0.0.1:${server.addr.port}`);
+    try {
+      const context = await streamedToolContext("valid", { proxyToken: "runtime-token" });
+      const gate = context.requestToolApproval as ToolApprovalGate;
+      assertEquals(typeof gate, "function");
+      const decision = await gate({
+        toolName: "transfer-payment",
+        toolCallId: "call-1",
+        input: { amount: 1 },
+        policy: { expiresInSeconds: 60 },
+      });
+      assertEquals(decision.approved, true);
+      assertEquals(asks, [{
+        method: "POST",
+        path: `/runs/${runId}/input-requests`,
+        authorization: "Bearer runtime-token",
+      }]);
+    } finally {
+      if (originalApiBaseUrl === undefined) Deno.env.delete("VERYFRONT_API_BASE_URL");
+      else Deno.env.set("VERYFRONT_API_BASE_URL", originalApiBaseUrl);
+      await server.shutdown();
+    }
+  });
+
+  it("gives no approval gate to an unbound run or a run without a runtime token", async () => {
+    const unbound = await streamedToolContext("rejected", { proxyToken: "runtime-token" });
+    assertEquals(Object.hasOwn(unbound, "requestToolApproval"), false);
+    const tokenless = await streamedToolContext("valid");
+    assertEquals(Object.hasOwn(tokenless, "requestToolApproval"), false);
   });
 
   it("requires the verified project to be the sandbox project", () => {
