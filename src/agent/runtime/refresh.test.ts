@@ -1406,6 +1406,100 @@ describe("agent runtime refresh hooks", () => {
     assertEquals(finishedResponse.toolCalls[0]?.result, authenticationRequired);
   });
 
+  it("fails a local tool call whose result is a provider error payload", async () => {
+    let callCount = 0;
+    let finishedResponse: AgentResponse | undefined;
+    const model: ModelRuntime = {
+      provider: "anthropic",
+      modelId: "claude-sonnet-4-6",
+      async doGenerate() {
+        return {
+          content: [{ type: "text", text: "unused" }],
+          finishReason: "stop",
+          usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+        };
+      },
+      async doStream() {
+        callCount++;
+        if (callCount === 1) {
+          return {
+            stream: runtimeStream([
+              {
+                type: "tool-call",
+                toolCallId: "docs-fetch-1",
+                toolName: "docs__fetch_page",
+                input: {},
+              },
+              {
+                type: "finish",
+                finishReason: "tool-calls",
+                totalUsage: { inputTokens: 1, outputTokens: 1 },
+              },
+            ]),
+          };
+        }
+
+        return {
+          stream: runtimeStream([
+            { type: "text-delta", text: "The page could not be fetched." },
+            {
+              type: "finish",
+              finishReason: "stop",
+              totalUsage: { inputTokens: 1, outputTokens: 1 },
+            },
+          ]),
+        };
+      },
+    };
+    const providerError = {
+      type: "web_fetch_tool_result_error",
+      error_code: "url_not_in_prior_context",
+    };
+    const docsSource: RemoteToolSource = {
+      id: "docs",
+      listTools: () =>
+        Promise.resolve([{
+          name: "docs__fetch_page",
+          description: "Fetch a documentation page",
+          parameters: { type: "object", properties: {} },
+        }]),
+      executeTool: () => Promise.resolve(providerError),
+    };
+    const assistant = eagerAgent(
+      {
+        model: "anthropic/claude-sonnet-4-6",
+        system: "Fetch documentation when requested.",
+        tools: { docs__fetch_page: true },
+        __vfRemoteToolSources: [docsSource],
+        __vfAllowedRemoteTools: ["docs__fetch_page"],
+        maxSteps: 2,
+        resolveModelTransport: async () => ({ model }),
+      } as AgentConfig & RuntimeRemoteToolConfig,
+    );
+
+    const response = (await assistant.stream({
+      input: "Read the docs page",
+      onFinish: (result) => {
+        finishedResponse = result;
+      },
+    })).toDataStreamResponse();
+    const streamBody = await response.text();
+
+    assertEquals(callCount, 2);
+    assertEquals(
+      streamBody.includes(
+        '"type":"tool-output-error","toolCallId":"docs-fetch-1","errorText":"url_not_in_prior_context"',
+      ),
+      true,
+      streamBody,
+    );
+    assertEquals(streamBody.includes('"type":"tool-output-available"'), false);
+    assertExists(finishedResponse);
+    assertEquals(finishedResponse.toolCalls[0]?.status, "error");
+    assertEquals(finishedResponse.toolCalls[0]?.error, "url_not_in_prior_context");
+    assertEquals(finishedResponse.toolCalls[0]?.result, providerError);
+  });
+
   it("keeps skill file tools hidden after a failed load_skill attempt", async () => {
     const toolNamesByStep: string[][] = [];
     let callCount = 0;
