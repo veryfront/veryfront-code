@@ -3,7 +3,11 @@ import type { Tool } from "#veryfront/tool/types.ts";
 import { createPrivateWeakStore } from "#veryfront/security/private-weak-store.ts";
 import { isProxyWithoutHooks } from "#veryfront/platform/compat/error-introspection.ts";
 
-type LoaderProvenance = { shape: "flat" | "operation"; execute: Tool["execute"] };
+type LoaderProvenance = {
+  shape: "flat" | "operation";
+  execute: Tool["execute"];
+  refreshAuthority?: () => void;
+};
 const startup = createPrivateAsyncLocalStorage<LoaderProvenance>();
 const loaders = createPrivateWeakStore<object, LoaderProvenance>();
 const descriptor = Object.getOwnPropertyDescriptor;
@@ -12,9 +16,28 @@ const descriptor = Object.getOwnPropertyDescriptor;
 export function markFrameworkSkillLoader<T extends Tool>(
   tool: T,
   shape: "flat" | "operation",
+  options: { refreshAuthority?: () => void } = {},
 ): T {
-  loaders.set(tool.execute, { shape, execute: tool.execute });
+  loaders.set(tool.execute, {
+    shape,
+    execute: tool.execute,
+    ...(options.refreshAuthority ? { refreshAuthority: options.refreshAuthority } : {}),
+  });
   return tool;
+}
+
+/**
+ * Refresh a framework skill loader's private authority scope for a new model step.
+ *
+ * Resolved through the executor's provenance, which every framework wrapper
+ * inherits, so the refresh survives wrappers that copy the advertised schema
+ * as plain data.
+ */
+export function refreshFrameworkSkillLoaderAuthority(value: unknown): void {
+  if (value === null || typeof value !== "object" || isProxyWithoutHooks(value)) return;
+  const execute = descriptor(value, "execute");
+  if (!execute || !("value" in execute) || typeof execute.value !== "function") return;
+  loaders.get(execute.value)?.refreshAuthority?.();
 }
 
 /** Build startup input from factory provenance rather than guessing a schema. */

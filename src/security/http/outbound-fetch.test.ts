@@ -23,6 +23,7 @@ import {
   createVeryfrontApiOriginBoundOutboundFetch,
   guardedOutboundFetch,
   HOST_ALLOWED_INTERNAL_PROVIDER_ORIGINS_ENV,
+  HOST_INTERNAL_EGRESS_OVERRIDE_ENV,
   loadTrustedCaCertificates,
   OutboundRequestBlockedError,
   trustOperatorConfiguredVeryfrontApiOrigins,
@@ -573,6 +574,75 @@ describe("guardedOutboundFetch", () => {
           );
         },
       );
+    });
+
+    assertEquals(calls, 0);
+  });
+
+  it("ignores an internal provider origin allowlist copied from a project .env file", async () => {
+    let calls = 0;
+    const fetchImpl: typeof fetch = () => {
+      calls++;
+      return Promise.resolve(Response.json({ ok: true }));
+    };
+
+    await withEnv(
+      { [HOST_ALLOWED_INTERNAL_PROVIDER_ORIGINS_ENV]: "http://localhost:11434" },
+      async () => {
+        markEnvFileValue(HOST_ALLOWED_INTERNAL_PROVIDER_ORIGINS_ENV);
+        try {
+          const providerFetch = createTestBoundary(fetchImpl).createOriginBoundFetch(
+            "http://localhost:11434/v1",
+          );
+          await assertRejects(
+            () => providerFetch("http://localhost:11434/v1/chat/completions"),
+            OutboundRequestBlockedError,
+            "internal host",
+          );
+        } finally {
+          clearEnvFileValueSource(HOST_ALLOWED_INTERNAL_PROVIDER_ORIGINS_ENV);
+        }
+      },
+    );
+
+    assertEquals(calls, 0);
+  });
+
+  it("honors the internal egress override from the host process environment", async () => {
+    let calls = 0;
+    const fetchImpl: typeof fetch = () => {
+      calls++;
+      return Promise.resolve(Response.json({ ok: true }));
+    };
+
+    await withEnv({ [HOST_INTERNAL_EGRESS_OVERRIDE_ENV]: "1" }, async () => {
+      const response = await createTestBoundary(fetchImpl).guardedFetch(
+        "http://127.0.0.1/private",
+      );
+      assertEquals(response.status, 200);
+    });
+
+    assertEquals(calls, 1);
+  });
+
+  it("ignores an internal egress override copied from a project .env file", async () => {
+    let calls = 0;
+    const fetchImpl: typeof fetch = () => {
+      calls++;
+      return Promise.resolve(Response.json({ ok: true }));
+    };
+
+    await withEnv({ [HOST_INTERNAL_EGRESS_OVERRIDE_ENV]: "1" }, async () => {
+      markEnvFileValue(HOST_INTERNAL_EGRESS_OVERRIDE_ENV);
+      try {
+        await assertRejects(
+          () => createTestBoundary(fetchImpl).guardedFetch("http://127.0.0.1/private"),
+          OutboundRequestBlockedError,
+          "internal host",
+        );
+      } finally {
+        clearEnvFileValueSource(HOST_INTERNAL_EGRESS_OVERRIDE_ENV);
+      }
     });
 
     assertEquals(calls, 0);

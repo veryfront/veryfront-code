@@ -16,9 +16,13 @@ import {
   GLOBAL_BOOLEAN_FLAGS,
   parseArgsOrThrow,
   parseCliArgs,
+  type SafeParseResult,
 } from "./args.ts";
 import { COMMANDS } from "../help/command-definitions.ts";
 import type { ParsedArgs } from "./types.ts";
+import { parseDeployArgs } from "../commands/deploy/command.ts";
+import { parsePushArgs } from "../commands/push/command.ts";
+import { parseEnvironmentTokenArgs } from "../commands/env/command.ts";
 
 if (!tryResolve<SchemaValidator>("SchemaValidator")) {
   register<SchemaValidator>("SchemaValidator", createZodAdapter());
@@ -190,6 +194,66 @@ describe("cli/shared/args", () => {
       const result = parse(args);
 
       assertEquals(result.success, false);
+    });
+  });
+
+  describe("string options without a value", () => {
+    const commands: {
+      name: string;
+      argv: string[];
+      parser: (args: ParsedArgs) => SafeParseResult<unknown>;
+    }[] = [
+      { name: "deploy", argv: ["deploy"], parser: parseDeployArgs },
+      { name: "push", argv: ["push"], parser: parsePushArgs },
+      { name: "env token", argv: ["env", "token"], parser: parseEnvironmentTokenArgs },
+    ];
+    // A blank value may instead fail the command's own schema rule first;
+    // either way it is a usage error, so only the valueless cases pin the text.
+    const cases: { label: string; flags: string[]; message?: string }[] = [
+      {
+        label: "--project at the end",
+        flags: ["--project"],
+        message: "--project requires a value",
+      },
+      {
+        label: "--project before another flag",
+        flags: ["--project", "--quiet"],
+        message: "--project requires a value",
+      },
+      {
+        label: "-p before another flag",
+        flags: ["-p", "--quiet"],
+        message: "-p requires a value",
+      },
+      { label: "an empty --project value", flags: ["--project="] },
+      { label: "a blank --project value", flags: ["--project", " "] },
+    ];
+
+    for (const command of commands) {
+      for (const testCase of cases) {
+        it(`rejects ${testCase.label} on ${command.name} as a usage error`, () => {
+          const args = parseCliArgs([...command.argv, ...testCase.flags]);
+          const error = assertThrows(
+            () => parseArgsOrThrow(command.parser, command.name, args),
+            VeryfrontError,
+          ) as VeryfrontError;
+          assertEquals(error.slug, "invalid-argument");
+          assertEquals(error.exitCode, 2);
+          if (testCase.message) {
+            assertEquals(error.message.includes(testCase.message), true, error.message);
+          }
+        });
+      }
+    }
+
+    it("keeps string option values, including numeric ones", () => {
+      const schema = defineSchema((v) => v.object({ name: v.string().optional() }))();
+      const parse = createArgParser(schema, { name: { keys: ["name"], type: "string" } });
+
+      const named = parse(makeParsedArgs({ name: "my-app" }));
+      assertEquals(named.success && named.data.name, "my-app");
+      const numeric = parse(makeParsedArgs({ name: 42 }));
+      assertEquals(numeric.success && numeric.data.name, "42");
     });
   });
 

@@ -13,7 +13,7 @@ import { type EnvironmentConfig, getApiTokenEnv, getEnvironmentConfig } from "ve
 import { getEnvSource, veryfrontApiCredentialEnvName } from "veryfront/utils/env-loader";
 import { INVALID_ARGUMENT } from "veryfront/errors";
 import { cliLogger, VERSION } from "#cli/utils";
-import { readToken } from "../auth/token-store.ts";
+import { isTokenSavedForOtherApi, readToken } from "../auth/token-store.ts";
 import { ensureAuthenticated } from "../auth/login.ts";
 import {
   API_URL_ENV_KEYS,
@@ -515,8 +515,14 @@ async function resolveApiCredentialCandidates(
 
   const shellEnvToken = envToken && envSource.source !== "env-file" &&
     envSource.source !== "config-file";
+  // A stored login recorded for a different API is no better a guess for this
+  // one than the project's own token. Rejection keeps it for the API it
+  // belongs to, so preferring it here would let authentication succeed with
+  // the project token while every later resolution still picks the login
+  // this API turned down.
   const projectEnvTokenAfterStored = interactive && envToken && envSource.source === "env-file" &&
-    storedToken;
+    storedToken &&
+    !(await isTokenSavedForOtherApi(storedToken, resolveCliApiUrl(validationEnv), env));
 
   if (shellEnvToken) {
     candidates.push({
