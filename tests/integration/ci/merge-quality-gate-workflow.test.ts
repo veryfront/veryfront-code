@@ -1076,7 +1076,12 @@ done
     const codecovUpload = (codecov.steps as unknown[]).map((step) => asRecord(step, "codecov step"))
       .find((step) => step.name === "Upload coverage to Codecov");
     assert(codecovUpload, "Codecov must consume all coverage shards");
-    const paths = String(asRecord(codecovUpload.with, "codecov inputs").files).split(",");
+    const uploadInputs = asRecord(codecovUpload.with, "codecov inputs");
+    const filesTemplate = String(uploadInputs.files);
+    const optionalPrefix = "${{ steps.canonical-coverage.outputs.prefix }}";
+    assert(filesTemplate.startsWith(optionalPrefix));
+    assertEquals(uploadInputs.disable_search, true);
+    const paths = filesTemplate.slice(optionalPrefix.length).split(",");
     assertEquals(paths, [
       "coverage-profiles/coverage-shard-1/lcov.info",
       "coverage-profiles/coverage-shard-1/history/lcov.info",
@@ -1085,6 +1090,39 @@ done
         `coverage-profiles/coverage-shard-${shard}/lcov.info`
       ),
     ]);
+    const selector = (codecov.steps as unknown[]).map((step) => asRecord(step, "codecov step"))
+      .find((step) => step.id === "canonical-coverage");
+    assert(selector, "Codecov must select the optional report without omitting required shards");
+    for (const present of [false, true]) {
+      const directory = await makeTempDir();
+      try {
+        const report = "coverage-profiles/coverage-shard-1/canonical/lcov.info";
+        if (present) {
+          await Deno.mkdir(`${directory}/coverage-profiles/coverage-shard-1/canonical`, {
+            recursive: true,
+          });
+          await Deno.writeTextFile(`${directory}/${report}`, "");
+        }
+        const outputFile = `${directory}/outputs`;
+        const result = await new Deno.Command("bash", {
+          args: ["-e", "-c", String(selector.run)],
+          cwd: directory,
+          env: { GITHUB_OUTPUT: outputFile },
+          stdout: "piped",
+          stderr: "piped",
+          signal: AbortSignal.timeout(10_000),
+        }).output();
+        assertEquals(result.code, 0, new TextDecoder().decode(result.stderr));
+        const prefix = present ? `${report},` : "";
+        assertEquals(await Deno.readTextFile(outputFile), `prefix=${prefix}\n`);
+        assertEquals(
+          filesTemplate.replace(optionalPrefix, prefix).split(","),
+          present ? [report, ...paths] : paths,
+        );
+      } finally {
+        await Deno.remove(directory, { recursive: true });
+      }
+    }
     const testedRun = asRecord(jobs["tested-run"], "tested-run job");
     const decide = (testedRun.steps as unknown[])
       .map((step) => asRecord(step, "tested-run step"))
