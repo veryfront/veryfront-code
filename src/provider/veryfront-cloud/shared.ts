@@ -309,11 +309,19 @@ export function assertVeryfrontCloudModelListed(provider: string, upstreamModelI
 export function requireVeryfrontCloudBootstrap(
   apiTokenOverride?: string,
   inferenceApiBaseUrlOverride?: string,
+  projectSlugOverride?: string,
 ): {
   apiBaseUrl: string;
   apiToken: string;
   projectSlug?: string;
 } {
+  if (
+    projectSlugOverride !== undefined &&
+    (typeof projectSlugOverride !== "string" || projectSlugOverride.length > 256 ||
+      !/^[\x21-\x7e]*$/.test(projectSlugOverride))
+  ) {
+    throw new TypeError("Invalid inference project scope");
+  }
   const bootstrap = getVeryfrontCloudBootstrap();
   const normalizedInferenceApiBaseUrlOverride = inferenceApiBaseUrlOverride === undefined
     ? undefined
@@ -343,7 +351,7 @@ export function requireVeryfrontCloudBootstrap(
   return {
     apiBaseUrl,
     apiToken,
-    projectSlug: bootstrap.projectSlug,
+    projectSlug: projectSlugOverride ?? bootstrap.projectSlug,
   };
 }
 

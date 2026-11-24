@@ -98,6 +98,7 @@ export async function prepareCanonicalBrokerModel<T>(input: {
   ) throw new TypeError("Invalid canonical model budget");
   const resolver = createVeryfrontCloudInferenceModelResolver(credential, {
     apiBaseUrl: input.apiBaseUrl,
+    projectSlug: scope.projectSlug,
     assertParentActive: () => input.signal.throwIfAborted(),
   });
   const guard = createModelRuntimeResolverAbortGuard(resolver, input.signal);

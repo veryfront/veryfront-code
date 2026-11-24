@@ -100,6 +100,7 @@ export function createManagedBrokerHandler<TAuthorization>(options: {
       return credential
         ? createVeryfrontCloudInferenceModelResolver(credential, {
           apiBaseUrl: resolveVeryfrontInferenceApiBaseUrlFromHostEnv(),
+          projectSlug: ingress.executor.run.project.projectSlug,
         })
         : undefined;
     },

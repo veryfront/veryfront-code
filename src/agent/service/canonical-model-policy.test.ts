@@ -1,3 +1,6 @@
+import { runWithVeryfrontCloudContextAsync } from "#veryfront/provider/veryfront-cloud/context.ts";
+import { readVeryfrontCloudModelFacts } from "#veryfront/provider/veryfront-cloud/model-catalog.ts";
+import { veryfrontCloudCatalogScopeKey } from "#veryfront/provider/veryfront-cloud/catalog-client.ts";
 import "#veryfront/schemas/_test-setup.ts";
 import {
   assertEquals,
@@ -48,6 +51,19 @@ async function withCatalog<T>(
   const requests: Request[] = [];
   const stub = (value: string | URL | Request, init?: RequestInit) => {
     requests.push(new Request(value, init));
+    if (!requests[requests.length - 1]!.url.endsWith("/ai/models")) {
+      return Promise.resolve(
+        Response.json({
+          id: "message-test",
+          type: "message",
+          role: "assistant",
+          model: "claude-sonnet-test",
+          content: [{ type: "text", text: "ok" }],
+          stop_reason: "end_turn",
+          usage: { input_tokens: 1, output_tokens: 1 },
+        }),
+      );
+    }
     return Promise.resolve(
       Response.json({
         models: typeof rows === "function" ? rows(requests[requests.length - 1]!) : rows,
@@ -208,5 +224,53 @@ Deno.test("canonical output overrides do not consume the model reasoning allowan
     assertEquals(policy.maxOutputTokens, 512);
     assertEquals(policy.model.grant.models.get(policy.modelId)?.maxOutputTokens, 2048);
     policy.cleanup();
+  });
+});
+
+Deno.test("canonical inference retains consuming scope despite a different ambient project", async () => {
+  const input = await ingress();
+  await withCatalog(async (requests) => {
+    const policy = await prepareCanonicalBrokerModel({
+      ingress: input,
+      apiBaseUrl: "https://93.184.216.34/api",
+      signal: new AbortController().signal,
+      limits,
+    });
+    try {
+      await runWithVeryfrontCloudContextAsync({
+        apiBaseUrl: "https://ambient.invalid",
+        apiToken: "ambient-token",
+        projectSlug: "ambient-other",
+      }, async () => {
+        const runtime = policy.model.resolver(policy.modelId);
+        assertExists(runtime);
+        assertEquals(
+          readVeryfrontCloudModelFacts(runtime)?.catalogScopeKey,
+          veryfrontCloudCatalogScopeKey({
+            apiBaseUrl: "https://93.184.216.34/api",
+            apiToken: "consumer-inference",
+            projectSlug: input.executor.run.project.projectSlug,
+          }),
+        );
+        await runtime.doGenerate({
+          prompt: [{ role: "user", content: [{ type: "text", text: "hi" }] }],
+        });
+      });
+      assertEquals(requests.some((request) => !request.url.endsWith("/ai/models")), true);
+      assertEquals(
+        requests.every((request) =>
+          request.headers.get("x-veryfront-project-slug") === input.executor.run.project.projectSlug
+        ),
+        true,
+      );
+      assertEquals(
+        requests.every((request) =>
+          request.headers.get("authorization") === "Bearer consumer-inference"
+        ),
+        true,
+      );
+    } finally {
+      policy.cleanup();
+    }
   });
 });
