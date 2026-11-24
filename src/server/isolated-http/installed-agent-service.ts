@@ -106,6 +106,7 @@ export function createInstalledCanonicalAgentService(options: {
     auth: options.auth,
     broker,
     apiUrl,
+    inferenceApiBaseUrl,
     fetch: options.fetch,
     signal,
     maxActiveRuns: options.maxActive,

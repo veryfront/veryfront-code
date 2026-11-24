@@ -26,7 +26,8 @@ const canonicalId = "30000000-3000-4000-8000-300000000001";
 const image = "ghcr.io/veryfront/source@sha256:" + "a".repeat(64);
 const source = { type: "release", releaseId: "release-1" };
 const owner = { scopeKind: "project", projectId: sourceId };
-const apiUrl = "https://93.184.216.34/api";
+const apiUrl = data.destinations ? "https://93.184.216.35/api" : "https://93.184.216.34/api";
+const inferenceApiBaseUrl = data.destinations ? "https://93.184.216.36/api" : apiUrl;
 const terminal = "header." + btoa(JSON.stringify({ runId: "run-1", canonicalRunId: canonicalId, tokenUse: "run_event_writer", writerPurpose: "current_run_terminal", dispatchNonce: "33333333-3333-4333-8333-333333333333" })) + ".signature";
 const base = invocation();
 const body = invocation({
@@ -71,6 +72,7 @@ const connectTransport = async ({ binding }) => {
 };
 const rest = async (value, init) => {
  const request = new Request(value, init), url = new URL(request.url);
+ assert(url.origin === new URL(apiUrl).origin, "Source/run request must use the configured API destination");
  if (url.pathname.includes("/projects/")) {
   assertStringIncludes(url.pathname, "/projects/" + sourceId + "/releases/release-1/files");
   assertEquals(request.headers.get("authorization"), "Bearer source-read-token");
@@ -88,6 +90,7 @@ const rest = async (value, init) => {
 const transport = async (value, init) => {
  const request = new Request(value, init), url = new URL(request.url);
  if (data.knowledge && url.pathname.includes("/projects/")) { knowledgeReads++; return rest(request); }
+ assert(url.origin === new URL(inferenceApiBaseUrl).origin, "Inference must use its configured destination");
  assertEquals(request.headers.get("authorization"), "Bearer inference-token");
  assertEquals(request.headers.get("x-veryfront-project-slug"), "demo-project");
  if (url.pathname.endsWith("/ai/models")) return Response.json({ models: [{ id: "synthetic", modelId: "openai/synthetic", provider: "openai", aliases: [], surface: "openai", operations: ["chat-completions"], transport: "chat-completions", supportedProviderTools: [], capabilities: { limit: { output: 4096 } } }] });
@@ -102,7 +105,7 @@ const transport = async (value, init) => {
  return new Response(chunks.map(chunk => "data: " + JSON.stringify(chunk) + "\\n\\n").join("") + "data: [DONE]\\n\\n", { headers: { "content-type": "text/event-stream" } });
 };
 await __runWithOutboundFetchTransportForTests({ fetch: transport, pinnedFetch: (url, _addresses, init) => transport(url, init), resolveHost: async () => ["93.184.216.34"] }, async () => {
- const service = createInstalledCanonicalAgentService({ source: { installations: [{ image, configuration: { projectId: sourceId, projectSlug: "private-source", environmentId, environmentName: "production", releaseId: "release-1", configurationId: "config-1", variables: { PRIVATE: "never-forward" } } }], expectedBrokerInstanceId: "broker-test", allocator, connectTransport }, ingress: { publicKeyPem: signed.publicKeyPem, audience: "private-source", projectId: sourceId, expectedSurface: "studio" }, auth, apiUrl, inferenceApiBaseUrl: apiUrl, apiMcpUrl: apiUrl + "/mcp", modelLimits: { maxCalls: 10, maxConcurrentCalls: 1, maxOutputTokens: 4096, maxSteps: 10 }, toolLimits: { maxCalls: 20, maxConcurrent: 2 }, maxActive: 1, fetch: rest, resolveProvider: () => "openai", createRemoteToolSource: () => { throw new Error("Tool-free execution must not construct MCP sources"); }, onExecutionError: error => console.error("COMPOSITION_ERROR", error) });
+ const service = createInstalledCanonicalAgentService({ source: { installations: [{ image, configuration: { projectId: sourceId, projectSlug: "private-source", environmentId, environmentName: "production", releaseId: "release-1", configurationId: "config-1", variables: { PRIVATE: "never-forward" } } }], expectedBrokerInstanceId: "broker-test", allocator, connectTransport }, ingress: { publicKeyPem: signed.publicKeyPem, audience: "private-source", projectId: sourceId, expectedSurface: "studio" }, auth, apiUrl, inferenceApiBaseUrl, apiMcpUrl: apiUrl + "/mcp", modelLimits: { maxCalls: 10, maxConcurrentCalls: 1, maxOutputTokens: 4096, maxSteps: 10 }, toolLimits: { maxCalls: 20, maxConcurrent: 2 }, maxActive: 1, fetch: rest, resolveProvider: () => "openai", createRemoteToolSource: () => { throw new Error("Tool-free execution must not construct MCP sources"); }, onExecutionError: error => console.error("COMPOSITION_ERROR", error) });
  try {
   const response = await service.handle(signed.request);
   const text = await response.text();
@@ -115,7 +118,7 @@ await __runWithOutboundFetchTransportForTests({ fetch: transport, pinnedFetch: (
   assert(events.length > 0);
   for (const secret of ["api-auth-token", "source-read-token", "inference-token", "never-forward", data.token]) assertEquals(wire.includes(secret), false);
  } finally { await service.close(); await service.settled; await peerCleanup; }
-}, { allowedResolvedAddresses: ["93.184.216.34"] });
+}, { allowedResolvedAddresses: ["93.184.216.34", "93.184.216.35", "93.184.216.36"] });
 console.log("installed-canonical-execution-qualified");
 `;
 
@@ -125,6 +128,14 @@ for (
       name:
         "installed canonical service executes the selected code agent and native tool with one source allocation",
       input: {},
+    },
+    {
+      name: "installed canonical inference uses its configured destination instead of the boot environment",
+      input: { destinations: true },
+    },
+    {
+      name: "installed canonical source knowledge uses its configured API instead of the boot environment",
+      input: { destinations: true, knowledge: true },
     },
     {
       name: "installed canonical execution preserves signed Studio context across tool steps",

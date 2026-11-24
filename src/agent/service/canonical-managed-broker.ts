@@ -69,6 +69,8 @@ export function createCanonicalManagedBrokerHandler<T>(
     responseMode: options.responseMode,
     maxActiveRuns: options.maxActiveRuns,
     signal: options.signal,
+    inferenceApiBaseUrl: options.inferenceApiBaseUrl,
+    knowledgeApiBaseUrl: apiUrl,
     resolveIngressOptions: options.resolveIngressOptions,
     onExecutionError,
     async prepare({ ingress, signal }) {
