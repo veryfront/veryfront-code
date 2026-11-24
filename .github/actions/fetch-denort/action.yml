@@ -1,0 +1,113 @@
+name: Fetch pinned denort
+description: >
+  Download and verify the `denort` base binary that `deno compile` embeds, and
+  export it as DENORT_BIN so the compile step never fetches it itself. Without
+  this, `deno compile` downloads the base binary from dl.deno.land with no
+  retry, and one dropped connection ("Setting up base binary ... error reading
+  a body from connection") fails the whole build leg. A composite step cannot
+  bound itself: callers must set `timeout-minutes` on the step that uses this
+  action.
+
+inputs:
+  target:
+    description: The `deno compile --target` triple whose denort to fetch.
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Fetch pinned denort
+      shell: bash
+      env:
+        DENORT_TARGET: ${{ inputs.target }}
+      run: |
+        set -euo pipefail
+
+        # Must match the Deno that setup-deno installs: `deno compile` embeds
+        # the program into this exact runtime build.
+        version="2.9.7"
+        target="${DENORT_TARGET}"
+
+        # Same stdin-only hashing as setup-deno, for the same Windows reason.
+        compute_sha256() {
+          if command -v sha256sum >/dev/null 2>&1; then
+            sha256sum < "$1" | awk '{print $1}'
+          elif command -v shasum >/dev/null 2>&1; then
+            shasum -a 256 < "$1" | awk '{print $1}'
+          elif command -v openssl >/dev/null 2>&1; then
+            openssl dgst -sha256 < "$1" | awk '{print $NF}'
+          elif command -v node >/dev/null 2>&1; then
+            node -e "const fs = require('fs'); const crypto = require('crypto'); process.stdout.write(crypto.createHash('sha256').update(fs.readFileSync(0)).digest('hex'))" < "$1"
+          else
+            echo "No checksum utility available (sha256sum/shasum/openssl/node)" >&2
+            return 1
+          fi
+        }
+
+        # Pinned in the repository, like the Deno archive digests in
+        # setup-deno, so the download origin never vouches for its own bytes.
+        # Bumping ${version} means re-pinning every digest from the new
+        # release's denort-<target>.zip assets.
+        case "${target}" in
+          x86_64-unknown-linux-gnu)
+            denort_sha256="ab416b7470f3f7c6d7b4363be475e5d8cf3d8469d866b3b8459a332a5874cd0d" ;;
+          aarch64-unknown-linux-gnu)
+            denort_sha256="00ba0ae21abc65cf15edfeda6ad74646faecdad5b148289f3b4112100812bedb" ;;
+          x86_64-apple-darwin)
+            denort_sha256="4f909123297d4921d72f70effea23b65d7ef8b9f40de6d3351d28eef7b9e884c" ;;
+          aarch64-apple-darwin)
+            denort_sha256="b0a08debcba347f9bf2391ac0e12f99f27c7a375ad561baeccb35f01369acda4" ;;
+          x86_64-pc-windows-msvc)
+            denort_sha256="1ed45440e881cbadbfa754c8dd25c70635bf3b16a5ad663f65ec3c5cc4a975fd" ;;
+          aarch64-pc-windows-msvc)
+            denort_sha256="c4eaa273fc9257fd5dcb591239020ca356fbc30aba5f160e209e9bc4e4b58425" ;;
+          *)
+            echo "No pinned denort checksum for ${target} (Deno v${version})" >&2
+            exit 1
+            ;;
+        esac
+
+        denort_exe="denort"
+        case "${target}" in
+          *-pc-windows-msvc) denort_exe="denort.exe" ;;
+        esac
+
+        archive="denort-${target}.zip"
+        denort_dir="${RUNNER_TEMP}/denort-${version}-${target}"
+        zip_path="${denort_dir}/${archive}"
+        mkdir -p "${denort_dir}"
+
+        # The same retry budget as the setup-deno archive download, and for
+        # the same reasons: --retry-all-errors is what retries a dead
+        # connection, the 150s window rides out a minutes-long outage, and the
+        # worst case (150s + one 120s attempt) fails inside the caller's step
+        # timeout with a clear message.
+        if ! curl --fail --location --proto "=https" --proto-redir "=https" \
+          --show-error --retry 20 --retry-delay 8 \
+          --retry-all-errors \
+          --retry-max-time 150 \
+          --remove-on-error \
+          --connect-timeout 20 --max-time 120 \
+          "https://dl.deno.land/release/v${version}/${archive}" \
+          --output "${zip_path}"; then
+          echo "Failed to download ${archive} (Deno v${version})" >&2
+          exit 1
+        fi
+
+        actual_sha256="$(compute_sha256 "${zip_path}")"
+        if [ "${actual_sha256}" != "${denort_sha256}" ]; then
+          echo "denort checksum mismatch for ${archive}" >&2
+          echo "Expected: ${denort_sha256}" >&2
+          echo "Actual:   ${actual_sha256}" >&2
+          exit 1
+        fi
+        echo "${archive} matches pinned SHA-256 ${denort_sha256}"
+
+        unzip -oq "${zip_path}" -d "${denort_dir}"
+        if [ ! -f "${denort_dir}/${denort_exe}" ]; then
+          echo "${archive} does not contain ${denort_exe}" >&2
+          exit 1
+        fi
+
+        # deno compile reads DENORT_BIN instead of downloading the base binary.
+        echo "DENORT_BIN=${denort_dir}/${denort_exe}" >> "${GITHUB_ENV}"

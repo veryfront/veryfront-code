@@ -1458,6 +1458,11 @@ jobs:
         run: |
           deno task build:proxy-lock
           git diff --exit-code -- scripts/build/proxy-deno.lock
+      # deno compile fetches its base binary with no retry; pre-fetch it.
+      - uses: ./.github/actions/fetch-denort
+        timeout-minutes: 5
+        with:
+          target: x86_64-unknown-linux-gnu
       - name: Compile proxy binary
         run: |
           deno run -A scripts/build/compile-binary.ts \
@@ -1542,6 +1547,14 @@ jobs:
         run: |
           deno task build:proxy-lock
           git diff --exit-code -- scripts/build/proxy-deno.lock
+
+      # deno compile downloads its denort base binary with no retry, so one
+      # dropped connection fails the leg. Fetch and verify it here instead;
+      # the action exports DENORT_BIN, which deno compile reads in its place.
+      - uses: ./.github/actions/fetch-denort
+        timeout-minutes: 5
+        with:
+          target: ${{ matrix.target }}
 
       - name: Compile binary
         shell: bash
