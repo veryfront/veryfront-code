@@ -186,10 +186,13 @@ Deno.test("composed capabilities authenticate exact source namespace and do no A
   }
 });
 
-Deno.test("installed service validates fixed inference and MCP destinations before accepting runs", async () => {
+Deno.test("installed service validates fixed API, inference and MCP destinations before accepting runs", async () => {
   const signed = await signedRequest(invocation());
   for (
     const [field, value] of [
+      ["apiUrl", "not-a-url"],
+      ["apiUrl", "http://public.example.test/api"],
+      ["apiUrl", "https://synthetic:credential@api.example.test/api"],
       ["inferenceApiBaseUrl", "not-a-url"],
       ["inferenceApiBaseUrl", "http://public.example.test/api"],
       ["apiMcpUrl", "not-a-url"],

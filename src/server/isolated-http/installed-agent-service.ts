@@ -7,10 +7,9 @@ import {
 } from "#veryfront/agent/hosted/runtime-request-config.ts";
 import { extractLatestUserText } from "#veryfront/agent/artifacts/default-research-artifact-support.ts";
 import {
-  convertAgentRuntimeMessagesToProviderMessages,
   convertProviderMessagesToAgentRuntimeMessages,
 } from "#veryfront/agent/runtime/message-adapter.ts";
-import { withProviderModelMessageSourceId } from "#veryfront/chat/conversation.ts";
+import { convertRuntimeMessagesToProviderMessagesWithSource } from "#veryfront/agent/runtime/provider-history-source.ts";
 import {
   createInstalledProjectAgentSessionResolver,
   type InstalledProjectAgentSessionOptions,
@@ -97,6 +96,7 @@ export function createInstalledCanonicalAgentService(options: {
   ) throw new TypeError("Invalid installed agent execution limits");
   const ingressOptions = Object.freeze({ ...options.ingress });
   const apiUrl = options.apiUrl;
+  requireSecureInferenceApiBaseUrl(apiUrl);
   const inferenceApiBaseUrl = options.inferenceApiBaseUrl;
   requireSecureInferenceApiBaseUrl(inferenceApiBaseUrl);
   const apiMcpUrl = validateFixedMcpEndpoint(options.apiMcpUrl);
@@ -157,11 +157,7 @@ export function createInstalledCanonicalAgentService(options: {
         );
       const normalized = normalizeAgUiRuntimeMessages(ingress.executor.input.messages);
       const runtimeMessages = convertProviderMessagesToAgentRuntimeMessages(
-        normalized.flatMap((message) =>
-          convertAgentRuntimeMessagesToProviderMessages([message]).map((providerMessage) =>
-            withProviderModelMessageSourceId(providerMessage, message.id)
-          )
-        ),
+        convertRuntimeMessagesToProviderMessagesWithSource(normalized),
       );
       const messages = restoreTrustedHostedRuntimeHistory(
         runtimeMessages,

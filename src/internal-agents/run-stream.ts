@@ -40,9 +40,7 @@ import {
 } from "#veryfront/agent/hosted/manual-pause-settlement.ts";
 import type { RunStopSettlement } from "./run-stop-registry.ts";
 import { privateJsonStringify } from "#veryfront/security/private-json.ts";
-import { withProviderModelMessageSourceId } from "#veryfront/chat/conversation.ts";
-import { markToolResultSources } from "#veryfront/chat/tool-result-source.ts";
-import type { ProviderModelMessage } from "#veryfront/chat/types.ts";
+import { convertRuntimeMessagesToProviderMessagesWithSource } from "#veryfront/agent/runtime/provider-history-source.ts";
 import {
   appendPrivateArray,
   slicePrivateArray,
@@ -99,7 +97,6 @@ import {
   isFrameworkInvokeAgentTool,
 } from "#veryfront/agent/runtime/agent-delegation.ts";
 import {
-  convertAgentRuntimeMessagesToProviderMessages,
   convertProviderMessagesToAgentRuntimeMessages,
 } from "#veryfront/agent/runtime/message-adapter.ts";
 import type {
@@ -1150,29 +1147,6 @@ async function getDeclaredRemoteSourceToolNames(input: {
     }
   }
   return [...toolNames];
-}
-
-function convertRuntimeMessagesToProviderMessagesWithSource(
-  messages: readonly Message[],
-): ProviderModelMessage[] {
-  const converted: ProviderModelMessage[] = [];
-  for (let index = 0; index < messages.length; index++) {
-    if (!Object.hasOwn(messages, index)) continue;
-    const message = messages[index]!;
-    const providerMessages = convertAgentRuntimeMessagesToProviderMessages([message]);
-    for (let providerIndex = 0; providerIndex < providerMessages.length; providerIndex++) {
-      if (!Object.hasOwn(providerMessages, providerIndex)) continue;
-      const providerMessage = withProviderModelMessageSourceId(
-        providerMessages[providerIndex]!,
-        message.id,
-      );
-      if (providerMessage.role === "tool") {
-        markToolResultSources(providerMessage.content, message.id);
-      }
-      appendPrivateArray(converted, [providerMessage]);
-    }
-  }
-  return converted;
 }
 
 function compactRuntimeMessagesForStream(
