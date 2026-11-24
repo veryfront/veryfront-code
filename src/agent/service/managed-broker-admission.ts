@@ -41,16 +41,21 @@ export async function claimManagedBrokerAdmission(input: {
   latestEventId: number;
   latestExternalEventSequence: number;
   signal: AbortSignal;
+  /** Remaining signed-run budget; the transport also retains its five-second ceiling. */
+  timeoutMs?: number;
   fetch?: typeof globalThis.fetch;
 }): Promise<void> {
   const terminal = terminalRoute(input.terminalAuthToken, input.runId);
   if (terminal.id !== input.canonicalRunId) {
     throw new BrokerIngressError(403, "BROKER_INGRESS_SCOPE_DENIED");
   }
+  const timeoutMs = Math.min(input.timeoutMs ?? 5_000, 5_000);
+  if (!Number.isFinite(timeoutMs) || timeoutMs < 0) throw new TypeError("Invalid admission budget");
+  if (timeoutMs === 0) throw new BrokerIngressError(409, "BROKER_RUN_NOT_ACTIVE");
   const deadline = new AbortController();
   const timer = setTimeout(
     () => deadline.abort(new DOMException("Runtime admission timed out", "TimeoutError")),
-    5_000,
+    timeoutMs,
   );
   const signal = AbortSignal.any([input.signal, deadline.signal]);
   let response: Response | undefined;

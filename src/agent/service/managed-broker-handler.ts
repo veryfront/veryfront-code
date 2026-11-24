@@ -78,6 +78,10 @@ export interface ManagedExecutorStarter {
 /** Handles signed run invocations with configured detached or request-owned SSE responses. */
 export function createManagedBrokerHandler<TAuthorization>(options: {
   broker: ManagedExecutorStarter;
+  /** Trusted inference destination; omitted legacy callers retain host-environment routing. */
+  inferenceApiBaseUrl?: string;
+  /** Trusted source-knowledge destination; never selected by project code. */
+  knowledgeApiBaseUrl?: string;
   /** Trusted route configuration; never read from request data. */
   responseMode: "detached" | "sse";
   /** Includes canceled executions until executor and persistence cleanup settle. */
@@ -93,13 +97,15 @@ export function createManagedBrokerHandler<TAuthorization>(options: {
   }): Promise<ManagedBrokerPreparation>;
   onExecutionError?: (error: unknown, runId: string) => void;
 }) {
+  const inferenceApiBaseUrl = options.inferenceApiBaseUrl;
   return createManagedBrokerIngressHandler({
     ...options,
     createInferenceResolver(ingress) {
       const credential = ingress.privateAuthority.inferenceAuthToken;
       return credential
         ? createVeryfrontCloudInferenceModelResolver(credential, {
-          apiBaseUrl: resolveVeryfrontInferenceApiBaseUrlFromHostEnv(),
+          apiBaseUrl: inferenceApiBaseUrl ?? resolveVeryfrontInferenceApiBaseUrlFromHostEnv(),
+          projectSlug: ingress.executor.run.project.projectSlug,
         })
         : undefined;
     },
@@ -171,6 +177,7 @@ function brokerOwnedKnowledgeAuthToken(ingress: unknown): string | undefined {
 function bindBrokerOwnedHostedKnowledgeCredential(
   start: ManagedExecutorStartInput,
   ingress: unknown,
+  apiBaseUrl?: string,
 ): ManagedExecutorStartInput {
   const trustedRuntime = start.trustedRuntime;
   if (trustedRuntime === undefined) return start;
@@ -181,7 +188,7 @@ function bindBrokerOwnedHostedKnowledgeCredential(
     trustedRuntime: {
       ...trustedRuntime,
       hostedKnowledgeAuthToken,
-      hostedKnowledgeApiUrl: resolveHostOwnedSourceApiBaseUrl(),
+      hostedKnowledgeApiUrl: apiBaseUrl ?? resolveHostOwnedSourceApiBaseUrl(),
     },
   };
 }
@@ -355,6 +362,7 @@ function createManagedBrokerIngressHandler<TIngress>(options: {
   broker: ManagedExecutorStarter;
   responseMode: "detached" | "sse";
   maxActiveRuns?: number;
+  knowledgeApiBaseUrl?: string;
   signal?: AbortSignal;
   parse(request: Request, signal: AbortSignal): Promise<
     Response | {
@@ -368,6 +376,7 @@ function createManagedBrokerIngressHandler<TIngress>(options: {
   createInferenceResolver(ingress: TIngress): AgentModelRuntimeResolver | undefined;
   onExecutionError?: (error: unknown, runId: string) => void;
 }) {
+  const knowledgeApiBaseUrl = options.knowledgeApiBaseUrl;
   const maxActiveRuns = options.maxActiveRuns;
   if (
     maxActiveRuns !== undefined &&
@@ -459,13 +468,17 @@ function createManagedBrokerIngressHandler<TIngress>(options: {
           ingress as object,
           prepared.executionSignal,
         );
-        const start = bindBrokerOwnedHostedKnowledgeCredential({
-          ...inference.start,
-          session: {
-            ...prepared.start.session,
-            preparationSignal: AbortSignal.any([signal, prepared.executionSignal]),
+        const start = bindBrokerOwnedHostedKnowledgeCredential(
+          {
+            ...inference.start,
+            session: {
+              ...prepared.start.session,
+              preparationSignal: AbortSignal.any([signal, prepared.executionSignal]),
+            },
           },
-        }, ingress);
+          ingress,
+          knowledgeApiBaseUrl,
+        );
         inheritHostedAgentPauseCapability(start, prepared.start);
         const runtime = await options.broker.start(start, {
           onAdmitted(settled) {

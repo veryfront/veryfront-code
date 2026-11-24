@@ -1,3 +1,4 @@
+import { parseSourceIntegrationPolicyManifest } from "#veryfront/integrations/source-policy.ts";
 import { encodePrivateText } from "#veryfront/security/private-text.ts";
 import { privateByteLength } from "#veryfront/security/private-bytes.ts";
 import { privateJsonStringify } from "#veryfront/security/private-json.ts";
@@ -175,6 +176,21 @@ export const getExecutorDiscoveryResultSchema = defineSchema((v) =>
 export const getExecutorAgentDescribeResultSchema = defineSchema((v) =>
   v.discriminatedUnion("ok", [
     v.object({ ok: v.literal(true), value: getExecutorAgentDescriptionSchema() }).strict(),
+    getExecutorDiscoveryFailureSchema(),
+  ])
+);
+
+/** Source-owned restrictions are read separately so existing agent.describe consumers remain compatible. */
+export const executorSourcePolicyOperation = "project.source-policy";
+export const getExecutorSourcePolicyResultSchema = defineSchema((v) =>
+  v.discriminatedUnion("ok", [
+    v.object({
+      ok: v.literal(true),
+      value: v.object({
+        source: getExecutorDiscoverySourceSchema(),
+        policy: v.unknown().transform(parseSourceIntegrationPolicyManifest),
+      }).strict(),
+    }).strict(),
     getExecutorDiscoveryFailureSchema(),
   ])
 );

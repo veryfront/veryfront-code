@@ -1,3 +1,6 @@
+import { getStudioRuntimeEnvironmentContext } from "../hosted/chat-request.ts";
+import { executorNodeClock } from "../hosted/executor-node-deadline.ts";
+import type { HostedExecutorSessionClock } from "../hosted/executor-session.ts";
 import { claimManagedBrokerAdmission } from "./managed-broker-admission.ts";
 import { getCanonicalRunStatus } from "../conversation/durable.ts";
 import {
@@ -31,6 +34,8 @@ type HandlerOptions<T> = Parameters<typeof createManagedBrokerHandler<T>>[0];
 export function createCanonicalManagedBrokerHandler<T>(
   options: Omit<HandlerOptions<T>, "prepare"> & {
     apiUrl: string;
+    /** Host UTC clock used before consuming the signed dispatch. */
+    clock?: Pick<HostedExecutorSessionClock, "now">;
     resolveProvider(modelId: string): string;
     fetch?: typeof globalThis.fetch;
     toolCallAdmissions?: true;
@@ -44,6 +49,8 @@ export function createCanonicalManagedBrokerHandler<T>(
       executionSignal: AbortSignal;
       /** Synchronously cancel pending host work before waiting for executor retirement. */
       cancelExecution?: () => void;
+      /** Register an owned API result key before its input events can reach the control plane. */
+      beforeApiToolInput?(input: { toolCallId: string; toolName: string }): void;
       initialCheckpoints?: ExecutorInitialCheckpointState;
       latestConversationUserText?: (signal: AbortSignal) => Promise<string | null>;
       cleanup?: () => Promise<void>;
@@ -52,18 +59,35 @@ export function createCanonicalManagedBrokerHandler<T>(
 ) {
   // Capture host policy and transport before accepting requests.
   const { apiUrl, fetch: transport, prepareExecutor, resolveProvider } = options;
+  const clock = options.clock ?? executorNodeClock;
+  const now = clock.now.bind(clock);
   const onExecutionError = options.onExecutionError?.bind(options);
   const toolCallAdmissions = options.toolCallAdmissions === true;
   const runtimeObservations = options.runtimeObservations === true;
+  const resolveIngressOptions = options.resolveIngressOptions;
   return createManagedBrokerHandler({
     broker: options.broker,
     responseMode: options.responseMode,
     maxActiveRuns: options.maxActiveRuns,
     signal: options.signal,
-    resolveIngressOptions: options.resolveIngressOptions,
+    inferenceApiBaseUrl: options.inferenceApiBaseUrl,
+    knowledgeApiBaseUrl: apiUrl,
+    resolveIngressOptions: (input) => ({
+      ...resolveIngressOptions(input),
+      pauseApiBaseUrl: apiUrl,
+      pauseFetch: transport,
+    }),
     onExecutionError,
     async prepare({ ingress, signal }) {
       const run = ingress.executor.run;
+      const assertLiveDeadline = () => {
+        if (run.effectiveDeadlineAt === undefined) return;
+        const deadline = Date.parse(run.effectiveDeadlineAt);
+        if (!Number.isFinite(deadline) || deadline <= now()) {
+          throw new BrokerIngressError(409, "BROKER_RUN_NOT_ACTIVE");
+        }
+      };
+      assertLiveDeadline();
       const authority = ingress.privateAuthority;
       const negotiated = authority.projectEventPersistence;
       const cursor = negotiated ?? run.eventCursor;
@@ -99,6 +123,7 @@ export function createCanonicalManagedBrokerHandler<T>(
       if (!["pending", "running"].includes(lifecycle.status)) {
         throw new BrokerIngressError(409, "BROKER_RUN_NOT_ACTIVE");
       }
+      assertLiveDeadline();
       try {
         await claimManagedBrokerAdmission({
           apiUrl,
@@ -109,10 +134,15 @@ export function createCanonicalManagedBrokerHandler<T>(
           canonicalRunId: cursor.canonicalRunId,
           latestEventId: cursor.latestEventId,
           latestExternalEventSequence: cursor.latestExternalEventSequence,
+          timeoutMs: run.effectiveDeadlineAt === undefined
+            ? undefined
+            : Math.max(0, Date.parse(run.effectiveDeadlineAt) - now()),
           signal,
           fetch: transport,
         });
+        assertLiveDeadline();
       } catch (error) {
+        assertLiveDeadline();
         try {
           onExecutionError?.(error, run.runId);
         } catch { /* Diagnostics cannot own admission. */ }
@@ -191,6 +221,7 @@ export function createCanonicalManagedBrokerHandler<T>(
           agentId: run.agentId,
           fetch: transport,
           latestConversationUserText: prepared.latestConversationUserText,
+          environmentContext: getStudioRuntimeEnvironmentContext(ingress.executor.input),
         });
         const { serverResolvedResumeToolCall: _adapterResume, ...prepare } = start.prepare;
         const resume = ingress.executor.input.resumeToolCall;
@@ -221,7 +252,18 @@ export function createCanonicalManagedBrokerHandler<T>(
             model: { ...start.model, runEventSink: persistence.modelRunEventSink },
             tools: { ...start.tools, admitToolCall: persistence.admitToolCall },
           },
-          output: persistence.output,
+          output: {
+            write(chunk) {
+              if (chunk.type === "tool-input-start" || chunk.type === "tool-input-available") {
+                prepared.beforeApiToolInput?.({
+                  toolCallId: chunk.toolCallId,
+                  toolName: chunk.toolName,
+                });
+              }
+              return persistence!.output.write(chunk);
+            },
+            finish: persistence.output.finish.bind(persistence.output),
+          },
           ...(negotiated ? { eventPersistence: negotiated.mode } : {}),
           cleanup,
         };

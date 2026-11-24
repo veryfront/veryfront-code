@@ -1,3 +1,4 @@
+import { executorSourcePolicyOperation } from "./executor-discovery-schema.ts";
 import type { ExecutorOperation, ExecutorOperationContext } from "../executor/channel.ts";
 import { copyPrivateMap, createPrivateMap } from "#veryfront/security/private-map.ts";
 import { createPrivateSet } from "#veryfront/security/private-set.ts";
@@ -89,6 +90,10 @@ export function createExecutorRuntimeInstallation(options: InstallationOptions) 
     ? projectToolOperationModes
     : runtimeOperationModes;
   const operationEntries = Object.entries(operationModes);
+  const optionalEntries = options.mode === "http"
+    ? []
+    : [[executorSourcePolicyOperation, "unary"] as const];
+  const exposedEntries = [...operationEntries, ...optionalEntries];
   const prepareInstallation = (() => {
     if (options.mode === "http") {
       const install = options.install;
@@ -235,8 +240,8 @@ export function createExecutorRuntimeInstallation(options: InstallationOptions) 
       }
     },
   });
-  for (let index = 0; index < operationEntries.length; index++) {
-    const name = operationEntries[index]![0], mode = operationEntries[index]![1];
+  for (let index = 0; index < exposedEntries.length; index++) {
+    const name = exposedEntries[index]![0], mode = exposedEntries[index]![1];
     if (mode === "unary") {
       operations.set(name, {
         mode,

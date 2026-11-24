@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assert, assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
+import { assert, assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   readIngressCredential,
@@ -15,6 +15,8 @@ import {
   userId,
 } from "./broker-ingress.test-helpers.ts";
 import type { ManagedExecutorRuntime } from "../hosted/managed-executor-broker.ts";
+import type { ExecutorToolCapability } from "../hosted/executor-tool-bridge.ts";
+import type { HostedExecutorSessionClock } from "../hosted/executor-session.ts";
 import type { AgUiResumeValue } from "../ag-ui/tool-shared.ts";
 
 const canonicalId = "30000000-3000-4000-8000-300000000001";
@@ -23,15 +25,17 @@ const sourceId = "00000000-0000-4000-8000-000000000099";
 // Synthetic executor and API transports exercise the real canonical adapter,
 // persistence and run owner. Real executor-session behavior is tested separately.
 async function fixture(
-  mode: "cancel" | "resume" = "cancel",
+  mode: "cancel" | "resume" | "api-tools" | "api-tools-parallel" | "api-tools-early" = "cancel",
   holdCleanup = false,
   prepareFailure?: { value: unknown },
   negotiate = true,
+  deadline?: { at: string; clock: HostedExecutorSessionClock; preparation?: Promise<void> },
 ) {
   const base = invocation();
   const body = invocation({
     run: {
       ...base.run,
+      ...(deadline ? { effectiveDeadlineAt: deadline.at } : {}),
       eventCursor: {
         canonicalRunId: canonicalId,
         latestEventId: 0,
@@ -47,6 +51,9 @@ async function fixture(
       runtimeTargetEnvironmentName: "Production",
     },
     agentEntrypoint: { path: "agents/selected.ts" },
+    ...(mode.startsWith("api-tools")
+      ? { tools: [{ name: "review_claim", parameters: { type: "object" } }] }
+      : {}),
     credentials: {
       authToken: "api-auth-token",
       sourceAuthToken: "source-read-token",
@@ -80,14 +87,17 @@ async function fixture(
   const entered = Promise.withResolvers<void>(),
     cleanupEntered = Promise.withResolvers<void>(),
     cleanupRelease = Promise.withResolvers<void>();
+  const executeRelease = Promise.withResolvers<void>();
   const finalizations: string[] = [], resumed: AgUiResumeValue[] = [];
   const executionController = new AbortController();
   const runtimeController = new AbortController();
   let prepared = 0, started = 0, cleaned = 0, cursor = 0;
   let signal: AbortSignal | undefined;
+  let apiTools: ExecutorToolCapability | undefined;
   let wait: ((toolCallId: string) => Promise<AgUiResumeValue>) | undefined;
   const service = createCanonicalManagedBrokerService({
     responseMode: "sse",
+    ...(deadline ? { clock: deadline.clock } : {}),
     apiUrl: "https://api.example.test",
     resolveProvider: () => "openai",
     auth: {
@@ -156,6 +166,11 @@ async function fixture(
       prepared++;
       signal = input.signal;
       wait = input.waitForToolResult;
+      apiTools = input.apiTools;
+      if (deadline?.preparation) {
+        entered.resolve();
+        await deadline.preparation;
+      }
       if (prepareFailure) throw prepareFailure.value;
       const start = managedStart({ agentId: "builder" });
       start.trustedRuntime = {
@@ -188,6 +203,13 @@ async function fixture(
     broker: {
       async start(input) {
         started++;
+        if (mode.startsWith("api-tools")) {
+          assertEquals(
+            input.tools.sources.size,
+            0,
+            "Providing a capability must not grant tools automatically",
+          );
+        }
         input.bindSessionOwnedWork!((operation) => operation());
         const settled = Promise.withResolvers<void>();
         let sourceEnded = false, closeRequested = false;
@@ -216,8 +238,39 @@ async function fixture(
                   return (async function* () {
                     try {
                       yield { type: "start", messageId: base.run.messageId } as const;
-                      if (mode === "resume") {
-                        const result = wait!("tool_1");
+                      if (mode === "api-tools-early") {
+                        yield {
+                          type: "tool-input-start",
+                          toolCallId: "tool_1",
+                          toolName: "review_claim",
+                        } as const;
+                        yield {
+                          type: "tool-input-available",
+                          toolCallId: "tool_1",
+                          toolName: "review_claim",
+                          input: {},
+                        } as const;
+                        entered.resolve();
+                        await executeRelease.promise;
+                      }
+                      if (mode === "resume" || mode.startsWith("api-tools")) {
+                        const result = mode === "api-tools-parallel"
+                          ? Promise.all(
+                            ["tool_1", "tool_2"].map((toolCallId) =>
+                              apiTools!.source.executeTool("review_claim", {}, {
+                                ...apiTools!.context,
+                                toolCallId,
+                              })
+                            ),
+                          )
+                            .then((result) => ({ result, isError: false }))
+                          : mode.startsWith("api-tools")
+                          ? apiTools!.source.executeTool("review_claim", {}, {
+                            ...apiTools!.context,
+                            toolCallId: "tool_1",
+                          })
+                            .then((result) => ({ result, isError: false }))
+                          : wait!("tool_1");
                         entered.resolve();
                         resumed.push(await result);
                         yield { type: "text-start", id: "text" } as const;
@@ -266,6 +319,7 @@ async function fixture(
   }
   return {
     service,
+    allowExecution: () => executeRelease.resolve(),
     entered: entered.promise,
     cleanupEntered: cleanupEntered.promise,
     release: () => cleanupRelease.resolve(),
@@ -295,10 +349,96 @@ async function fixture(
       return cleaned;
     },
     lateWait: () => wait!("late_tool"),
+    get apiTools() {
+      return apiTools!;
+    },
   };
 }
 
 describe("canonical managed service ownership", () => {
+  it("routes two simultaneous API calls through authenticated out-of-order resumes", async () => {
+    const f = await fixture("api-tools-parallel");
+    let reading: Promise<string> | undefined;
+    try {
+      const response = await f.start();
+      reading = response.text();
+      assertEquals(response.status, 200);
+      await f.entered;
+      assertEquals(
+        (await f.control("resume", { type: "tool_result", toolCallId: "tool_2", result: "second" }))
+          .status,
+        200,
+      );
+      assertEquals(
+        (await f.control("resume", { type: "tool_result", toolCallId: "tool_1", result: "first" }))
+          .status,
+        200,
+      );
+      assert((await reading).includes("event: RunFinished"));
+      assertEquals(f.resumed, [{ result: ["first", "second"], isError: false }]);
+    } finally {
+      await f.service.close();
+      await reading;
+    }
+  });
+  it("cancels all simultaneous API result waits through the same run owner", async () => {
+    const f = await fixture("api-tools-parallel", true);
+    let reading: Promise<string> | undefined;
+    try {
+      const response = await f.start();
+      reading = response.text();
+      assertEquals(response.status, 200);
+      await f.entered;
+      assertEquals((await f.control("cancel", { confirmStopped: true })).status, 202);
+      await f.cleanupEntered;
+      f.release();
+      assertEquals((await reading).includes("event: RunFinished"), false);
+      assertEquals(f.resumed, []);
+      const stopped = await f.control("cancel", { confirmStopped: true });
+      assertEquals(stopped.status, 200);
+      assertEquals(await stopped.json(), { accepted: true, stopped: true });
+    } finally {
+      f.release();
+      await f.service.close();
+      await reading;
+    }
+  });
+
+  it("binds API-declared tools to the same authenticated resume owner and retires the capability", async () => {
+    const f = await fixture("api-tools", true);
+    let reading: Promise<string> | undefined;
+    try {
+      const response = await f.start();
+      assertEquals(response.status, 200);
+      reading = response.text();
+      await f.entered;
+      assertEquals(f.apiTools.context.projectId, projectId);
+      assertEquals([...f.apiTools.allowedToolNames], ["review_claim"]);
+      const result = { type: "tool_result", toolCallId: "tool_1", result: { approved: true } };
+      assertEquals((await f.control("resume", result, "run_foreign")).status, 403);
+      assertEquals((await f.control("resume", result)).status, 200);
+      await f.cleanupEntered;
+      f.release();
+      assert((await reading).includes("event: RunFinished"));
+      assertEquals(f.resumed, [{ result: { approved: true }, isError: false }]);
+      await assertRejects(
+        () => f.apiTools.source.listTools(f.apiTools.context),
+        Error,
+        "ownership has ended",
+      );
+      await assertRejects(() =>
+        f.apiTools.source.executeTool("review_claim", {}, {
+          ...f.apiTools.context,
+          toolCallId: "late",
+        })
+      );
+    } finally {
+      f.release();
+      await f.service.close();
+      await reading;
+    }
+  });
+
   for (const cancellation of ["request", "execution", "runtime", "body"] as const) {
     it(`retires a pending host-tool wait on ${cancellation} cancellation`, async () => {
       const f = await fixture("resume");
@@ -435,4 +575,153 @@ describe("canonical managed service ownership", () => {
       await reading;
     }
   });
+});
+
+function deadlineClock() {
+  let now = 5000;
+  const pending = new Map<object, { run: () => void; due: number; delay: number }>();
+  const clock: HostedExecutorSessionClock = {
+    now: () => now,
+    schedule(run, delay) {
+      const key = {};
+      pending.set(key, { run, due: now + delay, delay });
+      return key;
+    },
+    cancel(key) {
+      pending.delete(key as object);
+    },
+  };
+  return {
+    clock,
+    pending,
+    advance(to: number) {
+      now = to;
+      for (const [key, task] of [...pending]) {
+        if (task.due <= now) {
+          pending.delete(key);
+          task.run();
+        }
+      }
+    },
+  };
+}
+
+describe("canonical signed run deadlines", () => {
+  it("refuses an expired signed deadline before deployment preparation or allocation", async () => {
+    const timer = deadlineClock();
+    const f = await fixture("cancel", false, undefined, true, {
+      at: new Date(4999).toISOString(),
+      clock: timer.clock,
+    });
+    let reading: Promise<string> | undefined;
+    try {
+      const response = await f.start();
+      reading = response.text();
+      assertEquals(response.status, 409);
+      assertEquals(f.prepared, 0);
+      assertEquals(f.started, 0);
+      assertEquals(timer.pending.size, 0);
+    } finally {
+      await f.service.close();
+      await reading;
+    }
+  });
+  it("cancels active execution at its signed deadline and releases its timer", async () => {
+    const timer = deadlineClock();
+    const f = await fixture("cancel", false, undefined, true, {
+      at: new Date(6000).toISOString(),
+      clock: timer.clock,
+    });
+    let reading: Promise<string> | undefined;
+    try {
+      const response = await f.start();
+      reading = response.text();
+      assertEquals(response.status, 200);
+      await f.entered;
+      timer.advance(6000);
+      const wire = await reading;
+      assertEquals(f.signal?.aborted, true);
+      assertEquals(wire.includes("event: RunFinished"), false);
+      assertEquals(timer.pending.size, 0);
+    } finally {
+      await f.service.close();
+      await reading;
+    }
+  });
+  it("refuses allocation when policy preparation returns after the deadline", async () => {
+    const timer = deadlineClock(), policy = Promise.withResolvers<void>();
+    const f = await fixture("cancel", false, undefined, true, {
+      at: new Date(6000).toISOString(),
+      clock: timer.clock,
+      preparation: policy.promise,
+    });
+    try {
+      const response = f.start();
+      await f.entered;
+      timer.advance(6000);
+      policy.resolve();
+      const result = await response;
+      await result.text();
+      assertEquals(f.signal?.aborted, true);
+      assertEquals(f.started, 0);
+      assertEquals(f.cleaned, 1);
+      assertEquals(timer.pending.size, 0);
+    } finally {
+      policy.resolve();
+      await f.service.close();
+    }
+  });
+  it("bounds distant deadline timers and cancels them on preparation failure", async () => {
+    const timer = deadlineClock();
+    const policy = Promise.withResolvers<void>();
+    const f = await fixture("cancel", false, { value: new Error("policy failure") }, true, {
+      at: "2099-01-01T00:00:00Z",
+      clock: timer.clock,
+      preparation: policy.promise,
+    });
+    try {
+      const response = f.start();
+      await f.entered;
+      assertEquals([...timer.pending.values()][0]?.delay, 1000);
+      policy.resolve();
+      await (await response).text();
+      assertEquals(f.started, 0);
+      assertEquals(timer.pending.size, 0);
+    } finally {
+      policy.resolve();
+      await f.service.close();
+    }
+  });
+});
+
+Deno.test("canonical API results are accepted after publication and before tool execution starts", async () => {
+  const f = await fixture("api-tools-early");
+  let body: Promise<string> | undefined;
+  try {
+    const response = await f.start();
+    body = response.text();
+    await f.entered;
+    assertEquals(f.resumed.length, 0);
+    const unknown = await f.control("resume", {
+      type: "tool_result",
+      toolCallId: "unknown",
+      result: "foreign",
+      isError: false,
+    });
+    assertEquals(unknown.status, 409);
+    const early = await f.control("resume", {
+      type: "tool_result",
+      toolCallId: "tool_1",
+      result: "early-result",
+      isError: false,
+    });
+    assertEquals(early.status, 200);
+    f.allowExecution();
+    await body;
+    assertEquals(f.resumed, [{ result: "early-result", isError: false }]);
+  } finally {
+    f.allowExecution();
+    await f.service.close();
+    await body?.catch(() => {});
+  }
 });

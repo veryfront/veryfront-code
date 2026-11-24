@@ -206,7 +206,11 @@ describe("executor discovery operations", () => {
     const f = fixture();
     try {
       assertEquals(f.loads, 0);
-      assertEquals([...f.owner.operations.keys()], ["discovery.describe", "agent.describe"]);
+      assertEquals([...f.owner.operations.keys()], [
+        "discovery.describe",
+        "project.source-policy",
+        "agent.describe",
+      ]);
       assertThrows(() => f.owner.getRuntime(), ExecutorDiscoveryError);
       const result = await call(f.owner, "discovery.describe");
       assert(getExecutorDiscoveryResultSchema().parse(result).ok);

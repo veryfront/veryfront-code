@@ -52,7 +52,7 @@ export function registerHostedInferenceCredential(
 /** @internal Create a model resolver without exposing verified inference authority. */
 export function createVeryfrontCloudInferenceModelResolver(
   credential: string | (() => string),
-  options: { apiBaseUrl?: string; assertParentActive?: () => void } = {},
+  options: { apiBaseUrl?: string; projectSlug?: string; assertParentActive?: () => void } = {},
 ): AgentModelRuntimeResolver {
   let active = true;
   const resolver: AgentModelRuntimeResolver = (modelId) => {
@@ -65,6 +65,7 @@ export function createVeryfrontCloudInferenceModelResolver(
       credential,
       {
         ...(options.apiBaseUrl ? { apiBaseUrl: options.apiBaseUrl } : {}),
+        ...(options.projectSlug === undefined ? {} : { projectSlug: options.projectSlug }),
         assertInferenceCredentialActive() {
           options.assertParentActive?.();
           if (!active) {
@@ -87,7 +88,10 @@ export function createHostedInferenceModelResolver(
 ): AgentModelRuntimeResolver | undefined {
   const storedCredential = inferenceCredentials.get(request);
   return typeof storedCredential === "string"
-    ? createVeryfrontCloudInferenceModelResolver(storedCredential, options)
+    ? createVeryfrontCloudInferenceModelResolver(storedCredential, {
+      ...options,
+      projectSlug: request.projectSlug ?? "",
+    })
     : undefined;
 }
 
@@ -106,6 +110,7 @@ export function bindHostedChildInferenceAuthority(
   if (!credential) return () => {};
   const signal = options.signal;
   const apiBaseUrl = options.apiBaseUrl;
+  const projectSlug = request.projectSlug ?? "";
   let active = true;
   const revoke = () => {
     active = false;
@@ -123,6 +128,7 @@ export function bindHostedChildInferenceAuthority(
     assertParentActive();
     return createVeryfrontCloudInferenceModelResolver(credential, {
       apiBaseUrl,
+      projectSlug,
       assertParentActive,
     });
   });

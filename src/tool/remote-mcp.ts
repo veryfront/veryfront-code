@@ -871,7 +871,8 @@ function serializeJsonRpcRequest(body: Record<string, unknown>): string {
   return serialized;
 }
 
-function validateEndpoint(endpoint: unknown): string {
+/** @internal Validate and normalize an MCP URL without opening a connection or granting egress. */
+export function validateRemoteMcpEndpoint(endpoint: unknown): string {
   if (typeof endpoint !== "string" || endpoint.trim().length === 0) {
     throw new TypeError("Remote MCP endpoint must be a non-empty absolute HTTP(S) URL");
   }
@@ -1841,7 +1842,7 @@ function createRemoteMCPToolSourceWithFetch(
     context: ToolExecutionContext | undefined,
     lease: McpRequestLease,
   ): Promise<unknown> {
-    const endpoint = validateEndpoint(await resolveValue(config.endpoint, context));
+    const endpoint = validateRemoteMcpEndpoint(await resolveValue(config.endpoint, context));
     const headers = await resolveHeaders(config.headers, context);
     const meta = buildRunContextMeta(context, endpoint);
     const requestId = `${id}:tools:call:${toolName}`;
@@ -1937,7 +1938,7 @@ function createRemoteMCPToolSourceWithFetch(
       // The lease spans configuration resolution and every page, so disposal
       // during any of those awaits closes it.
       return withLease(context?.runId, async (lease) => {
-        const endpoint = validateEndpoint(await resolveValue(config.endpoint, context));
+        const endpoint = validateRemoteMcpEndpoint(await resolveValue(config.endpoint, context));
         const headers = await resolveHeaders(config.headers, context);
         const listMeta = config.listMeta === undefined ? undefined : Object.fromEntries(
           Object.entries(config.listMeta).filter(([key]) => key !== "tool_call_admission"),

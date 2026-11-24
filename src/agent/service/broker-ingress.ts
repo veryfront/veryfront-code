@@ -147,12 +147,20 @@ export interface BrokerRuntimeAgentIngressOptions<TAuthorization> {
   expectedRunId: string;
   expectedSurface: ControlPlaneSurface;
   boundSource: HostedRuntimeSourceIdentity | undefined;
+  /** Host registry lookup after signature and source-namespace verification; a fixed binding takes precedence. */
+  resolveBoundSource?(input: {
+    sourceProject: Readonly<RuntimeAgentRunContext["project"]>;
+    requestedSource: RuntimeAgentRunInvocation["agentSource"];
+  }): HostedRuntimeSourceIdentity | undefined;
   expectedOwner: HostedExecutorOwner;
   authorizeScope(
     input: BrokerIngressScopeInput,
   ): TAuthorization | undefined | Promise<TAuthorization | undefined>;
   signal?: AbortSignal;
   readTimeoutMs?: number;
+  /** Trusted host destination and transport for private run pause control. Never read from the invocation. */
+  pauseApiBaseUrl?: string;
+  pauseFetch?: typeof fetch;
 }
 
 /** Separate private authority and executor-safe invocation data. */
@@ -281,7 +289,18 @@ export async function parseBrokerRuntimeAgentIngress<TAuthorization>(
     claims.project_id !== sourceProject.projectId ||
     claims.aud !== sourceProject.projectSlug
   ) throw new BrokerIngressError(403, "BROKER_INGRESS_SCOPE_DENIED");
-  const sourceError = verifyHostedRuntimeSourceBinding(options.boundSource, invocation.agentSource);
+  let boundSource = options.boundSource;
+  if (boundSource === undefined && options.resolveBoundSource) {
+    try {
+      boundSource = options.resolveBoundSource({
+        sourceProject: Object.freeze({ ...sourceProject }),
+        requestedSource: Object.freeze({ ...invocation.agentSource }),
+      });
+    } catch {
+      throw new BrokerIngressError(500, "BROKER_INGRESS_SCOPE_FAILED");
+    }
+  }
+  const sourceError = verifyHostedRuntimeSourceBinding(boundSource, invocation.agentSource);
   if (sourceError) throw new BrokerIngressError(sourceError.status, sourceError.errorCode);
 
   const inbound = buildRuntimeAgentControlPlaneStreamRequestFromInvocation(invocation);
@@ -367,7 +386,8 @@ export async function parseBrokerRuntimeAgentIngress<TAuthorization>(
       ingress,
       (signal, settlementSignal) =>
         createRunBoundAgentManualPause({
-          apiUrl: resolveHostOwnedSourceApiBaseUrl(),
+          apiUrl: options.pauseApiBaseUrl ?? resolveHostOwnedSourceApiBaseUrl(),
+          fetch: options.pauseFetch,
           runId: expectedRunId,
           token: stopToken,
           signal,

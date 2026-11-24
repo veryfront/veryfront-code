@@ -9,6 +9,13 @@ import {
 } from "../runtime/resume-session.ts";
 import type { AgUiResumeValue } from "../ag-ui/tool-shared.ts";
 import type { HostedServiceAuth } from "./auth.ts";
+import type { ExecutorToolCapability } from "../hosted/executor-tool-bridge.ts";
+import { createCanonicalApiToolSource } from "./canonical-api-tool-source.ts";
+import {
+  executorNodeClock,
+  scheduleExecutorNodeDeadline,
+} from "../hosted/executor-node-deadline.ts";
+import type { HostedExecutorSessionClock } from "../hosted/executor-session.ts";
 
 type CanonicalOptions<T> = Parameters<typeof createCanonicalManagedBrokerHandler<T>>[0];
 type Prepare<T> = CanonicalOptions<T>["prepareExecutor"];
@@ -23,22 +30,35 @@ export function createCanonicalManagedBrokerService<T>(
       "authenticateRequest" | "verifyRunCancellationToken" | "verifyRunResumeToken"
     >;
     maxActiveRuns?: number;
+    /** Host UTC/elapsed clock shared with executor deadlines. */
+    clock?: HostedExecutorSessionClock;
     prepareExecutor(
       input: Parameters<Prepare<T>>[0] & {
         /** Host-tool callback; never serialize or forward this function to project execution. */
-        waitForToolResult(toolCallId: string): Promise<AgUiResumeValue>;
+        waitForToolResult(toolCallId: string, signal?: AbortSignal): Promise<AgUiResumeValue>;
+        /** API result capability, not an automatic tool grant. Retained only by the broker. */
+        apiTools: ExecutorToolCapability;
       },
     ): ReturnType<Prepare<T>>;
   },
 ) {
-  const { auth, maxActiveRuns = 16, prepareExecutor, responseMode = "sse", ...canonicalOptions } =
-    options;
+  const {
+    auth,
+    maxActiveRuns = 16,
+    prepareExecutor,
+    responseMode = "sse",
+    clock = executorNodeClock,
+    ...canonicalOptions
+  } = options;
   if (responseMode !== "sse") throw new TypeError("Canonical API service requires SSE");
   if (!Number.isSafeInteger(maxActiveRuns) || maxActiveRuns < 1 || maxActiveRuns > 1024) {
     throw new TypeError("Invalid canonical run ownership limit");
   }
   const tracker = createDetachedRunTracker<AgUiResumeValue>({
-    sessionManager: new RunResumeSessionManager({ maxConcurrentSessions: maxActiveRuns }),
+    sessionManager: new RunResumeSessionManager({
+      maxConcurrentSessions: maxActiveRuns,
+      maxPendingWaitsPerRun: 32,
+    }),
   });
   const control = createHostedRunControlHandler({
     tracker,
@@ -50,6 +70,7 @@ export function createCanonicalManagedBrokerService<T>(
   let closing: Promise<void> | undefined;
   const handler = createCanonicalManagedBrokerHandler({
     ...canonicalOptions,
+    clock,
     responseMode,
     maxActiveRuns,
     async prepareExecutor(input) {
@@ -57,6 +78,12 @@ export function createCanonicalManagedBrokerService<T>(
       const negotiated = input.ingress.privateAuthority.projectEventPersistence;
       if (!negotiated) throw new BrokerIngressError(503, "BROKER_UNAVAILABLE");
       const run = input.ingress.executor.run;
+      const deadline = run.effectiveDeadlineAt === undefined
+        ? undefined
+        : Date.parse(run.effectiveDeadlineAt);
+      if (deadline !== undefined && (!Number.isFinite(deadline) || deadline <= clock.now())) {
+        throw new BrokerIngressError(409, "BROKER_RUN_NOT_ACTIVE");
+      }
       const cursor = negotiated;
       if (!cursor) throw new BrokerIngressError(503, "BROKER_UNAVAILABLE");
       let ownedSignal: AbortSignal;
@@ -75,6 +102,8 @@ export function createCanonicalManagedBrokerService<T>(
       const settled = Promise.withResolvers<void>();
       tracker.registerExecution(run.runId, settled.promise);
       let retired = false;
+      let stopDeadline: (() => void) | undefined;
+      const apiToolLifetime = new AbortController();
       const cancellationSources = new Set<AbortSignal>();
       const cancelOwned = () => {
         if (!retired) tracker.sessionManager.cancelRun(run.runId, ownedSignal);
@@ -88,6 +117,8 @@ export function createCanonicalManagedBrokerService<T>(
       const retire = (failed: boolean, error?: unknown) => {
         if (retired) return;
         retired = true;
+        stopDeadline?.();
+        apiToolLifetime.abort(new RunCancelledError("Run-control ownership has ended"));
         for (const signal of cancellationSources) signal.removeEventListener("abort", cancelOwned);
         cancellationSources.clear();
         if (!failed) {
@@ -100,25 +131,46 @@ export function createCanonicalManagedBrokerService<T>(
       };
       followCancellation(input.signal);
       try {
+        if (deadline !== undefined) {
+          const deadlineOwner = new AbortController();
+          followCancellation(deadlineOwner.signal);
+          // Observe forward UTC corrections without large-timer overflow or
+          // letting a backward correction extend the elapsed run budget.
+          stopDeadline = scheduleExecutorNodeDeadline(clock, deadline, () => {
+            deadlineOwner.abort(new RunCancelledError("Canonical run deadline elapsed"));
+          }, 1000);
+        }
+        const preparationSignal = AbortSignal.any([input.signal, ownedSignal]);
+        const prepareToolResult = (toolCallId: string) => {
+          if (
+            retired || ownedSignal.aborted ||
+            tracker.sessionManager.isSupersededRun(run.runId, ownedSignal)
+          ) {
+            throw new RunCancelledError("Run-control ownership has ended");
+          }
+          if (
+            typeof toolCallId !== "string" || toolCallId.length < 1 || toolCallId.length > 256
+          ) {
+            throw new TypeError("Invalid run-control wait key");
+          }
+          tracker.sessionManager.prepareForSignal(run.runId, toolCallId);
+        };
+        const waitForToolResult = (toolCallId: string, signal?: AbortSignal) => {
+          prepareToolResult(toolCallId);
+          return tracker.sessionManager.waitForSignal(run.runId, toolCallId, signal);
+        };
+        const apiTools = createCanonicalApiToolSource({
+          ingress: input.ingress,
+          signal: AbortSignal.any([preparationSignal, apiToolLifetime.signal]),
+          waitForToolResult,
+        });
         const prepared = await prepareExecutor({
           ...input,
-          signal: AbortSignal.any([input.signal, ownedSignal]),
-          waitForToolResult(toolCallId) {
-            if (
-              retired || ownedSignal.aborted ||
-              tracker.sessionManager.isSupersededRun(run.runId, ownedSignal)
-            ) {
-              throw new RunCancelledError("Run-control ownership has ended");
-            }
-            if (
-              typeof toolCallId !== "string" || toolCallId.length < 1 || toolCallId.length > 256
-            ) {
-              throw new TypeError("Invalid run-control wait key");
-            }
-            tracker.sessionManager.prepareForSignal(run.runId, toolCallId);
-            return tracker.sessionManager.waitForSignal(run.runId, toolCallId);
-          },
+          signal: preparationSignal,
+          waitForToolResult,
+          apiTools,
         });
+        const beforeApiToolInput = prepared.beforeApiToolInput?.bind(prepared);
         const cleanup = prepared.cleanup?.bind(prepared);
         const cancelPrepared = prepared.cancelExecution?.bind(prepared);
         const executionSignal = AbortSignal.any([prepared.executionSignal, ownedSignal]);
@@ -126,6 +178,10 @@ export function createCanonicalManagedBrokerService<T>(
         let cleanupPromise: Promise<void> | undefined;
         return {
           ...prepared,
+          beforeApiToolInput(input) {
+            if (apiTools.allowedToolNames.has(input.toolName)) prepareToolResult(input.toolCallId);
+            beforeApiToolInput?.(input);
+          },
           executionSignal,
           cancelExecution() {
             if (retired) return;

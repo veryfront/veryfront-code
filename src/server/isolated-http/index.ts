@@ -14,3 +14,9 @@ export {
   type InstalledHttpBrokerOptions,
 } from "./installed-http-broker.ts";
 export { createRuntimeSourceAuthorizer } from "./source-api-authorizer.ts";
+export {
+  createInstalledProjectAgentSessionResolver,
+  type InstalledProjectAgentSessionOptions,
+} from "./installed-agent-session.ts";
+
+export { createInstalledCanonicalAgentService } from "./installed-agent-service.ts";

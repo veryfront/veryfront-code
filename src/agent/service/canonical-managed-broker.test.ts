@@ -1,3 +1,4 @@
+import { FakeTime } from "#std/testing/time";
 import "#veryfront/schemas/_test-setup.ts";
 import { assert, assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
@@ -47,11 +48,17 @@ async function fixture(input: {
   admission?: { claimed: boolean };
   admissionStatus?: number;
   admissionMismatch?: boolean;
+  deadline?: string;
+  now?: number;
+  advanceDuringStatus?: number;
+  advanceDuringAdmission?: number;
+  observeAdmission?: (signal: AbortSignal) => void;
 } = {}) {
   const base = invocation();
   const body = invocation({
     run: {
       ...base.run,
+      ...(input.deadline === undefined ? {} : { effectiveDeadlineAt: input.deadline }),
       ...(input.cursor === false ? {} : {
         eventCursor: {
           canonicalRunId: canonicalId,
@@ -109,7 +116,9 @@ async function fixture(input: {
   let prepared = 0;
   let cleaned = 0;
   let started: ManagedExecutorStartInput | undefined;
+  let now = input.now ?? Date.now();
   const handler = createCanonicalManagedBrokerHandler({
+    clock: { now: () => now },
     apiUrl: "https://api.example.test",
     responseMode: input.stream ? "sse" : "detached",
     resolveProvider: () => "synthetic",
@@ -134,6 +143,8 @@ async function fixture(input: {
           return Promise.resolve(new Response(null, { status: input.admissionStatus ?? 409 }));
         }
         if (input.admission) input.admission.claimed = true;
+        now += input.advanceDuringAdmission ?? 0;
+        input.observeAdmission?.(init?.signal as AbortSignal);
         return Promise.resolve(
           Response.json({
             version: 1,
@@ -183,6 +194,7 @@ async function fixture(input: {
         );
       }
       if (url.pathname.startsWith("/runs/")) {
+        now += input.advanceDuringStatus ?? 0;
         return Promise.resolve(
           Response.json({ id: canonicalId, status: input.status ?? "running" }, {
             status: input.apiStatus ?? 200,
@@ -361,6 +373,51 @@ describe("canonical managed broker preparation", () => {
       assert(parsed.events.some((event) => event.type === agUiSseEventTypes.runFinished));
       assertEquals(result.appends[0]?.expected_previous_external_event_sequence, 19);
       assertEquals(result.finalizations, []);
+    } finally {
+      await result.close();
+    }
+  });
+  for (const advanceDuringStatus of [0, 2000]) {
+    it(`rejects expired deadlines before consuming dispatch (status delay: ${advanceDuringStatus})`, async () => {
+      const now = Date.parse("2026-01-01T00:00:00Z");
+      const admission = { claimed: false };
+      const result = await fixture({
+        deadline: new Date(now + (advanceDuringStatus ? 1000 : -1)).toISOString(),
+        now,
+        advanceDuringStatus,
+        admission,
+      });
+      try {
+        assertEquals(admission.claimed, false);
+        assertEquals(result.response.status, 409);
+        assertEquals(result.prepared, 0);
+        assertEquals(
+          result.calls.some(({ url }) => url.pathname.endsWith("/runtime/admission")),
+          false,
+        );
+      } finally {
+        await result.close();
+      }
+    });
+  }
+  it("bounds in-flight admission by the signed deadline and refuses a late receipt", async () => {
+    const now = Date.parse("2026-01-01T00:00:00Z");
+    using time = new FakeTime(now);
+    let admissionAborted = false;
+    const result = await fixture({
+      now,
+      deadline: new Date(now + 1000).toISOString(),
+      advanceDuringAdmission: 1001,
+      observeAdmission(signal) {
+        time.tick(1001);
+        admissionAborted = signal.aborted;
+      },
+    });
+    try {
+      assertEquals(admissionAborted, true);
+      assertEquals(result.response.status, 409);
+      assertEquals(result.prepared, 0);
+      assertEquals(result.started, undefined);
     } finally {
       await result.close();
     }

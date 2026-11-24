@@ -607,9 +607,15 @@ function normalizeHostedRuntimeInvocationMessages(
   });
 }
 
-function getStudioRuntimeEnvironmentContext(input: RuntimeAgentRunInvocation): string | undefined {
+/** Read the signed Studio context, with the existing durable-eval fallback. */
+export function getStudioRuntimeEnvironmentContext(
+  input: { context: readonly unknown[]; forwardedProps?: unknown },
+): string | undefined {
   for (const item of input.context) {
-    if (item.type !== "json" || item.title !== "studio_context") continue;
+    if (
+      !isRecord(item) || item.type !== "json" || item.title !== "studio_context" ||
+      !isRecord(item.data)
+    ) continue;
 
     const environmentContext = item.data.environmentContext;
     if (typeof environmentContext === "string" && privateTextTrim(environmentContext).length > 0) {

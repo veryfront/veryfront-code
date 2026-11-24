@@ -66,6 +66,7 @@ import {
 } from "#veryfront/agent/hosted/executor-discovery-schema.ts";
 import { verifyHostedRuntimeSourceBinding } from "#veryfront/agent/hosted/runtime-source-binding.ts";
 import {
+  isHostedToolSelectionClosed,
   resolveHostedRuntimeAllowedProviderTools,
   resolveHostedRuntimeAllowedTools,
 } from "#veryfront/agent/hosted/runtime-request-config.ts";
@@ -362,6 +363,8 @@ export interface ExecutorRuntimeFacades {
     initial?: CreationOptions["serverResolvedProviderReplayCheckpoints"];
     persist: NonNullable<CreationOptions["persistProviderReplayCheckpoint"]>;
   };
+  /** API caller tools admitted by the trusted host, not project metadata. */
+  callerToolNames?: readonly string[];
   /** Broker-owned hosted project credentials for framework knowledge retrieval. */
   hostedKnowledgeContext?: HostedKnowledgeExecutionContext;
   /** Own partial facade setup and prepared runtime resources, not the channel/allocation. */
@@ -573,6 +576,7 @@ export function createRuntimePreparationCore(input: RuntimePreparationCoreOption
     toolExposureCheckpoint: snapshotCheckpointFacade(input.facades.toolExposureCheckpoint),
     providerReplayCheckpoint: snapshotCheckpointFacade(input.facades.providerReplayCheckpoint),
     hostedKnowledgeContext: input.facades.hostedKnowledgeContext,
+    callerToolNames: Object.freeze([...(input.facades.callerToolNames ?? [])]),
   };
   if (input.projectTools) {
     facades.remoteToolSources = new Map(facades.remoteToolSources).set(
@@ -654,12 +658,17 @@ export function createRuntimePreparationCore(input: RuntimePreparationCoreOption
   function requireFacades(
     definition: RuntimeAgentMarkdownDefinition,
     effective: ExecutorRuntimeGrantData,
+    requestedToolNames?: readonly string[],
   ) {
     if (
       typeof facades.resolveModelRuntime !== "function" || typeof facades.cleanup !== "function"
     ) refuse("EXECUTOR_RUNTIME_CAPABILITY_UNAVAILABLE");
     requireGrantedSourceFacades(effective);
-    requireConfiguredServerFacades(definition, effective);
+    if (
+      !isHostedToolSelectionClosed(definition.tools, requestedToolNames, definition.deniedTools)
+    ) {
+      requireConfiguredServerFacades(definition, effective);
+    }
     if (
       (effective.execution.projectId !== null ||
         includes(effective.requiredCapabilities ?? [], "project-steering")) &&
@@ -739,7 +748,7 @@ export function createRuntimePreparationCore(input: RuntimePreparationCoreOption
       const { thinking, maxOutputTokens } = withServedFacts(() =>
         resolvePreparedOutput(request, definition, modelId, modelGrant.maxOutputTokens)
       );
-      requireFacades(definition, grant);
+      requireFacades(definition, grant, request.allowedToolNames);
       // Enroll only after agent.describe returns: a failed discovery operation
       // can await discovery.close(). No remaining preparation work awaits it.
       input.project.retainTask(preparation!);
@@ -814,10 +823,18 @@ export function createRuntimePreparationCore(input: RuntimePreparationCoreOption
         }
       };
       // A closed selector calls no tools, so no remote source is connected or listed.
-      if (definition.tools !== false) populateRemoteToolSources();
+      if (
+        !isHostedToolSelectionClosed(
+          definition.tools,
+          request.allowedToolNames,
+          definition.deniedTools,
+        )
+      ) {
+        populateRemoteToolSources();
+      }
       if (remoteToolSources.length > 0) resourcesStarted = true;
       const resolveInitialToolSelection = () => {
-        const sourceToolNames = resolveHostedRuntimeAllowedTools({
+        const authoredToolNames = resolveHostedRuntimeAllowedTools({
           configuredTools: definition.tools,
           configuredDeniedTools: definition.deniedTools,
           configuredDelegates: definition.delegates,
@@ -825,6 +842,10 @@ export function createRuntimePreparationCore(input: RuntimePreparationCoreOption
           configuredKnowledge: definition.knowledge,
           requestedTools: undefined,
         });
+        const sourceToolNames = authoredToolNames === undefined ||
+            isHostedToolSelectionClosed(definition.tools, undefined, definition.deniedTools)
+          ? authoredToolNames
+          : [...createPrivateSet([...authoredToolNames, ...(facades.callerToolNames ?? [])])];
         const allowedToolNames = intersectNames(
           normalizeGrantedToolNames(grant!.allowedToolNames),
           arrayIsArray(sourceToolNames) ? normalizeToolNames(sourceToolNames) : sourceToolNames,

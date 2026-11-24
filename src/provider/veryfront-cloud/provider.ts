@@ -224,6 +224,7 @@ function withServedCatalog(
 type VeryfrontCloudModelOptions = {
   getInferenceCredential?: () => string;
   apiBaseUrl?: string;
+  projectSlug?: string;
   assertInferenceCredentialActive?: () => void;
   credentialSource?: "application";
   providerSelection?: "first-party";
@@ -250,7 +251,7 @@ function createVeryfrontCloudModelInternal(
   assertCredentialActive();
   const { apiBaseUrl, apiToken, projectSlug } = options.credentialSource === "application"
     ? requireApplicationBootstrap()
-    : requireVeryfrontCloudBootstrap(inferenceCredential, options.apiBaseUrl);
+    : requireVeryfrontCloudBootstrap(inferenceCredential, options.apiBaseUrl, options.projectSlug);
   const usesHostPrivateCredential = inferenceCredential === undefined &&
     options.credentialSource !== "application" && getHostSecret("VERYFRONT_API_TOKEN") === apiToken;
   const usesPrivateCredential = inferenceCredential !== undefined || usesHostPrivateCredential ||
@@ -710,7 +711,11 @@ export function createVeryfrontCloudModel(
 export function createVeryfrontCloudInferenceModel(
   modelId: string,
   inferenceCredential: string | (() => string),
-  options: { apiBaseUrl?: string; assertInferenceCredentialActive?: () => void } = {},
+  options: {
+    apiBaseUrl?: string;
+    projectSlug?: string;
+    assertInferenceCredentialActive?: () => void;
+  } = {},
 ): ModelRuntime {
   if (typeof inferenceCredential === "string") {
     return createVeryfrontCloudModelInternal(modelId, inferenceCredential, options);

@@ -549,3 +549,62 @@ async function assertIngressError(
   const error = await assertRejects(operation, BrokerIngressError) as BrokerIngressError;
   assertEquals({ status: error.status, errorCode: error.errorCode }, { status, errorCode });
 }
+
+Deno.test("broker registry binding runs only after signature verification and never widens a fixed source", async () => {
+  let lookups = 0;
+  const lookup = (
+    input: { sourceProject: { projectId: string }; requestedSource: { type: string } },
+  ) => {
+    lookups++;
+    assertEquals(input.sourceProject.projectId, projectId);
+    assertEquals(input.requestedSource.type, "release");
+    assertEquals(Object.isFrozen(input.sourceProject), true);
+    return { type: "release" as const, releaseId: "release-1" };
+  };
+  const valid = await signedRequest();
+  await parseBrokerRuntimeAgentIngress(valid.request, {
+    ...options(valid.publicKeyPem),
+    boundSource: undefined,
+    resolveBoundSource: lookup,
+  });
+  assertEquals(lookups, 1);
+  const invalid = await signedRequest();
+  invalid.request.headers.set("x-veryfront-control-plane-jws", "invalid");
+  await assertRejects(
+    () =>
+      parseBrokerRuntimeAgentIngress(invalid.request, {
+        ...options(invalid.publicKeyPem),
+        boundSource: undefined,
+        resolveBoundSource: lookup,
+      }),
+    BrokerIngressError,
+  );
+  assertEquals(lookups, 1);
+  const fixed = await signedRequest();
+  await parseBrokerRuntimeAgentIngress(fixed.request, {
+    ...options(fixed.publicKeyPem),
+    resolveBoundSource: () => {
+      throw new Error("fixed binding must take precedence");
+    },
+  });
+});
+Deno.test("broker registry misses and lookup errors fail closed before scope authorization", async () => {
+  for (const mode of ["missing", "error"] as const) {
+    const signed = await signedRequest();
+    let authorizations = 0;
+    await assertRejects(() =>
+      parseBrokerRuntimeAgentIngress(signed.request, {
+        ...options(signed.publicKeyPem),
+        boundSource: undefined,
+        resolveBoundSource: () => {
+          if (mode === "error") throw new Error("lookup failed");
+          return undefined;
+        },
+        authorizeScope: () => {
+          authorizations++;
+          return {};
+        },
+      }), BrokerIngressError);
+    assertEquals(authorizations, 0);
+  }
+});

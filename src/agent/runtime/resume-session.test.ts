@@ -773,3 +773,228 @@ describe("owned session cancellation", () => {
     }
   });
 });
+
+describe("bounded concurrent result waits", () => {
+  it("routes out-of-order results by key and keeps the run waiting for remaining calls", async () => {
+    const manager = new RunResumeSessionManager<number>({ maxPendingWaitsPerRun: 2 });
+    manager.startRun({ runId: "parallel", threadId: "thread" });
+    const first = manager.waitForSignal("parallel", "first");
+    const second = manager.waitForSignal("parallel", "second");
+    manager.submitSignal("parallel", { waitKey: "second", value: 2 });
+    assertEquals(await second, 2);
+    assertEquals(manager.getRunStatus("parallel"), "waiting");
+    assertEquals(manager.submitSignal("parallel", { waitKey: "second", value: 2 }).duplicate, true);
+    assertThrows(
+      () => manager.submitSignal("parallel", { waitKey: "second", value: 3 }),
+      WaitConflictError,
+    );
+    manager.submitSignal("parallel", { waitKey: "first", value: 1 });
+    assertEquals(await first, 1);
+    assertEquals(manager.getRunStatus("parallel"), "running");
+    manager.completeRun("parallel");
+  });
+  it("retains the single-wait default and rejects excess waits without replacing active waiters", async () => {
+    for (const maximum of [1, 2]) {
+      const manager = new RunResumeSessionManager<number>(
+        maximum === 1 ? {} : { maxPendingWaitsPerRun: maximum },
+      );
+      manager.startRun({ runId: "bounded", threadId: "thread" });
+      const waits = Array.from(
+        { length: maximum },
+        (_, index) => manager.waitForSignal("bounded", String(index)),
+      );
+      await assertRejects(() => manager.waitForSignal("bounded", "excess"), WaitNotPendingError);
+      for (let index = 0; index < maximum; index++) {
+        manager.submitSignal("bounded", { waitKey: String(index), value: index });
+      }
+      assertEquals(await Promise.all(waits), Array.from({ length: maximum }, (_, index) => index));
+      manager.completeRun("bounded");
+    }
+    for (const maximum of [0, 33, Number.POSITIVE_INFINITY]) {
+      assertThrows(
+        () => new RunResumeSessionManager({ maxPendingWaitsPerRun: maximum }),
+        TypeError,
+      );
+    }
+  });
+  it("shares duplicate waits without losing the first subscriber", async () => {
+    const manager = new RunResumeSessionManager<number>();
+    manager.startRun({ runId: "shared", threadId: "thread" });
+    const first = manager.waitForSignal("shared", "key"),
+      duplicate = manager.waitForSignal("shared", "key");
+    manager.submitSignal("shared", { waitKey: "key", value: 7 });
+    assertEquals(await Promise.all([first, duplicate]), [7, 7]);
+    manager.completeRun("shared");
+  });
+  it("allows prepared early results while another key waits", async () => {
+    const manager = new RunResumeSessionManager<number>({ maxPendingWaitsPerRun: 2 });
+    manager.startRun({ runId: "early", threadId: "thread" });
+    const first = manager.waitForSignal("early", "first");
+    manager.prepareForSignal("early", "second");
+    manager.submitSignal("early", { waitKey: "second", value: 2 });
+    assertEquals(await manager.waitForSignal("early", "second"), 2);
+    assertEquals(manager.getRunStatus("early"), "waiting");
+    manager.submitSignal("early", { waitKey: "first", value: 1 });
+    assertEquals(await first, 1);
+    manager.completeRun("early");
+  });
+  for (const terminal of ["cancel", "complete", "fail"] as const) {
+    it(`settles every pending waiter on ${terminal}`, async () => {
+      const manager = new RunResumeSessionManager<number>({ maxPendingWaitsPerRun: 2 });
+      const signal = manager.startRun({ runId: "terminal", threadId: "thread" });
+      const results = Promise.allSettled([
+        manager.waitForSignal("terminal", "a"),
+        manager.waitForSignal("terminal", "b"),
+      ]);
+      if (terminal === "cancel") manager.cancelRun("terminal", signal);
+      else if (terminal === "complete") manager.completeRun("terminal", signal);
+      else manager.failRun("terminal", signal);
+      assertEquals((await results).map((result) => result.status), ["rejected", "rejected"]);
+    });
+  }
+  it("keeps independent wait deadlines and cancels all calls when the earliest expires", async () => {
+    using time = new FakeTime(1000);
+    const manager = new RunResumeSessionManager<number>({
+      maxPendingWaitsPerRun: 2,
+      waitingTtlMs: 10,
+    });
+    const signal = manager.startRun({ runId: "ttl", threadId: "thread" });
+    const first = manager.waitForSignal("ttl", "first");
+    time.tick(5);
+    const second = manager.waitForSignal("ttl", "second");
+    const results = Promise.allSettled([first, second]);
+    time.tick(6);
+    assertEquals(signal.aborted, true);
+    assertEquals((await results).map((result) => result.status), ["rejected", "rejected"]);
+    manager.settleCancelledRun("ttl", signal);
+  });
+  it("ignores a queued timeout for a resolved key while another call is pending", async () => {
+    const timers = createManualTimers();
+    const manager = new RunResumeSessionManager<number>({ maxPendingWaitsPerRun: 2, ...timers });
+    const signal = manager.startRun({ runId: "stale", threadId: "thread" });
+    const first = manager.waitForSignal("stale", "first"),
+      second = manager.waitForSignal("stale", "second");
+    manager.submitSignal("stale", { waitKey: "first", value: 1 });
+    assertEquals(await first, 1);
+    timers.callbacks[0]!();
+    assertEquals(signal.aborted, false);
+    manager.submitSignal("stale", { waitKey: "second", value: 2 });
+    assertEquals(await second, 2);
+    manager.completeRun("stale");
+  });
+});
+
+it("rejects every waiter and preserves a timer failure during result delivery", async () => {
+  const timers = createManualTimers();
+  const diagnostic = new Error("Synthetic timer failure");
+  let calls = 0;
+  const failingTimer = new Proxy(timers.setTimeoutFn, {
+    apply(target, receiver, args) {
+      if (++calls === 6) throw diagnostic;
+      return Reflect.apply(target, receiver, args);
+    },
+  });
+  const manager = new RunResumeSessionManager<number>({
+    maxPendingWaitsPerRun: 2,
+    sessionTtlMs: 1000,
+    setTimeoutFn: failingTimer,
+    clearTimeoutFn: timers.clearTimeoutFn,
+  });
+  const signal = manager.startRun({ runId: "timer-failure", threadId: "thread" });
+  const results = Promise.allSettled([
+    manager.waitForSignal("timer-failure", "first"),
+    manager.waitForSignal("timer-failure", "second"),
+  ]);
+  assertThrows(
+    () => manager.submitSignal("timer-failure", { waitKey: "first", value: 1 }),
+    Error,
+    "Synthetic timer failure",
+  );
+  const settled = await results;
+  assertEquals(settled.map((result) => result.status), ["rejected", "rejected"]);
+  if (settled[0]?.status === "rejected") assertEquals(settled[0].reason, diagnostic);
+  assertEquals(signal.aborted, true);
+  manager.settleCancelledRun("timer-failure", signal);
+});
+
+Deno.test("operation cancellation retires only its keyed waiter", async () => {
+  const manager = new RunResumeSessionManager<string>({ maxPendingWaitsPerRun: 2 });
+  const owner = manager.startRun({ runId: "operation-cancel", threadId: "thread" });
+  const operation = new AbortController();
+  const first = manager.waitForSignal("operation-cancel", "first", operation.signal);
+  const rejected = assertRejects(() => first, DOMException, "cancelled operation");
+  const second = manager.waitForSignal("operation-cancel", "second");
+  operation.abort(new DOMException("cancelled operation", "AbortError"));
+  await rejected;
+  assertEquals(owner.aborted, false);
+  assertThrows(
+    () => manager.submitSignal("operation-cancel", { waitKey: "first", value: "late" }),
+    WaitNotPendingError,
+  );
+  manager.submitSignal("operation-cancel", { waitKey: "second", value: "sibling" });
+  assertEquals(await second, "sibling");
+  manager.completeRun("operation-cancel");
+  manager.reset();
+});
+
+Deno.test("duplicate keyed subscriptions cancel independently and retire the final abandoned key", async () => {
+  for (const cancelledIndex of [0, 1]) {
+    const manager = new RunResumeSessionManager<number>();
+    const owner = manager.startRun({ runId: "subscriptions", threadId: "thread" });
+    const controllers = [new AbortController(), new AbortController()];
+    const waits = controllers.map((controller) =>
+      manager.waitForSignal("subscriptions", "shared", controller.signal)
+    );
+    const cancelled = assertRejects(
+      () => waits[cancelledIndex]!,
+      DOMException,
+      "subscriber stopped",
+    );
+    controllers[cancelledIndex]!.abort(new DOMException("subscriber stopped", "AbortError"));
+    await cancelled;
+    assertEquals(owner.aborted, false);
+    assertEquals(manager.getRunStatus("subscriptions"), "waiting");
+    manager.submitSignal("subscriptions", { waitKey: "shared", value: 42 });
+    assertEquals(await waits[1 - cancelledIndex], 42);
+    manager.completeRun("subscriptions");
+  }
+  const manager = new RunResumeSessionManager<number>();
+  manager.startRun({ runId: "abandoned", threadId: "thread" });
+  const controllers = [new AbortController(), new AbortController()];
+  const waits = controllers.map((controller) =>
+    manager.waitForSignal("abandoned", "shared", controller.signal)
+  );
+  const outcomes = Promise.allSettled(waits);
+  controllers.forEach((controller) => controller.abort());
+  assertEquals((await outcomes).map((outcome) => outcome.status), ["rejected", "rejected"]);
+  assertThrows(
+    () => manager.submitSignal("abandoned", { waitKey: "shared", value: 42 }),
+    WaitNotPendingError,
+  );
+  assertEquals(manager.getRunStatus("abandoned"), "running");
+  manager.completeRun("abandoned");
+});
+
+Deno.test("abandoned wait timeouts cannot cancel a replacement key or unrelated calls", async () => {
+  const timers = createManualTimers();
+  const manager = new RunResumeSessionManager<number>({ maxPendingWaitsPerRun: 2, ...timers });
+  const signal = manager.startRun({ runId: "replacement", threadId: "thread" });
+  const abandoned = new AbortController();
+  const first = manager.waitForSignal("replacement", "shared", abandoned.signal);
+  const rejected = assertRejects(() => first);
+  abandoned.abort();
+  await rejected;
+  const replacement = manager.waitForSignal("replacement", "shared");
+  const unrelated = manager.waitForSignal("replacement", "other");
+  const outcomes = Promise.allSettled([replacement, unrelated]);
+  timers.callbacks[0]!();
+  const prematurelyCancelled = signal.aborted;
+  if (!prematurelyCancelled) {
+    manager.submitSignal("replacement", { waitKey: "shared", value: 1 });
+    manager.submitSignal("replacement", { waitKey: "other", value: 2 });
+  }
+  const results = await outcomes;
+  manager.completeRun("replacement", signal);
+  assertEquals(prematurelyCancelled, false);
+  assertEquals(results, [{ status: "fulfilled", value: 1 }, { status: "fulfilled", value: 2 }]);
+});
