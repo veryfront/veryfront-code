@@ -109,6 +109,7 @@ function runtimeModel(): ModelRuntime {
 function fixture(
   options: {
     owner?: HostedExecutorSessionOptions["request"]["owner"];
+    executionProfile?: "project-tools";
     completeStream?: boolean;
     skipModelRequest?: boolean;
     runtimeObservationStepId?: string;
@@ -133,6 +134,7 @@ function fixture(
     invocationId: crypto.randomUUID(),
     owner: fixtureOwner,
     source,
+    ...(options.executionProfile ? { executionProfile: options.executionProfile } : {}),
     requestedAt: now,
     prepareDeadlineAt: now + 10_000,
     hardDeadlineAt: now + (options.hardDeadlineMs ?? 60_000),
@@ -177,6 +179,7 @@ function fixture(
         invocationId: request.invocationId,
         owner: fixtureOwner,
         source,
+        ...(options.executionProfile ? { executionProfile: options.executionProfile } : {}),
         generation,
         brokerInstanceId: "broker-test",
       },
@@ -1756,9 +1759,14 @@ function trustedFixture(
     owner,
     projectId: owner.projectId,
   },
-  agentOptions: { knowledge?: true } = {},
+  agentOptions: { knowledge?: true; executionProfile?: "project-tools" } = {},
 ) {
-  const f = fixture({ owner: scope.owner, allocationLifetimeMs: 120_000, hardDeadlineMs: 120_000 });
+  const f = fixture({
+    owner: scope.owner,
+    executionProfile: agentOptions.executionProfile,
+    allocationLifetimeMs: 120_000,
+    hardDeadlineMs: 120_000,
+  });
   const privateMarker = "synthetic-private-broker-runtime";
   const steeringEntered = Promise.withResolvers<void>();
   configureCanonical(f.input, () => Promise.resolve(), () => {});
@@ -2601,4 +2609,205 @@ it("trusted broker preserves the selected source in the authenticated project-to
   f.input.installation.agentEntrypoint = { path: "agents/selected.ts" };
   await drainTrustedFixture(f);
   assertEquals(f.installedAgentEntrypoint, { path: "agents/selected.ts" });
+});
+
+function preparedSourceInput(f: ReturnType<typeof trustedFixture>) {
+  const execution = f.input.installation.grant.execution;
+  assert(execution.kind === "canonical");
+  return {
+    session: f.input.session,
+    installation: {
+      version: 1 as const,
+      mode: "project-tools" as const,
+      owner: f.input.installation.owner,
+      source: f.input.installation.source,
+      root: "project" as const,
+      context: {
+        agentId: f.input.installation.grant.agentId,
+        projectId: execution.projectId,
+        runId: execution.runId,
+        ...(execution.userId === undefined ? {} : { userId: execution.userId }),
+        ...(execution.projectSlug === undefined ? {} : { projectSlug: execution.projectSlug }),
+        ...(execution.branchId === undefined ? {} : { branch: execution.branchId }),
+      },
+      ...(f.input.installation.agentEntrypoint
+        ? { agentEntrypoint: f.input.installation.agentEntrypoint }
+        : {}),
+      allowedToolNames: f.input.trustedRuntime.projectToolNames,
+      maxCalls: f.input.tools.maxCalls,
+      maxConcurrent: f.input.tools.maxConcurrent,
+      limits: f.input.tools.limits,
+    },
+  };
+}
+Deno.test("prepared source discovery and execution share one allocation and single-use broker authority", async () => {
+  const f = trustedFixture(undefined, false, undefined, undefined, undefined, {
+    executionProfile: "project-tools",
+  });
+  const broker = createTrustedManagedExecutorBroker({ maxActive: 1 });
+  const other = createTrustedManagedExecutorBroker({ maxActive: 1 });
+  let runtime: Awaited<ReturnType<typeof broker.start>> | undefined;
+  try {
+    const prepared = await broker.prepareSource(preparedSourceInput(f));
+    assertEquals(prepared.definition.id, "coder");
+    assertEquals(broker.active, 1);
+    assertEquals(f.model.calls.length, 0);
+    assertEquals(f.hostCalls, 0);
+    assertEquals(f.executions, 0);
+    f.input.preparedSource = { ...prepared.capability };
+    await assertRejects(
+      () => broker.start(f.input),
+      TypeError,
+      "Source preparation is unavailable",
+    );
+    f.input.preparedSource = prepared.capability;
+    await assertRejects(() => other.start(f.input), TypeError, "Source preparation is unavailable");
+    prepared.definition.model = "foreign-mutation";
+    runtime = await broker.start(f.input);
+    assertEquals(runtime.definition.model === "foreign-mutation", false);
+    assertEquals(f.calls.filter((call) => call === "allocate").length, 1);
+    await assertRejects(
+      () => broker.start(f.input),
+      TypeError,
+      "Source preparation is unavailable",
+    );
+    runtime.accept({ kind: "execution" });
+    const stream = await runtime.agent.stream({
+      messages: [{
+        id: "user",
+        role: "user",
+        parts: [{ type: "text", text: "Complete the task" }],
+        timestamp: 1,
+      }],
+      abortSignal: new AbortController().signal,
+    });
+    const chunks = await Array.fromAsync(stream.toUIMessageStream());
+    assert(chunks.length > 0);
+    assertEquals(f.executions, 1);
+  } finally {
+    await runtime?.close("completed");
+    await broker.shutdown();
+    await other.shutdown();
+    await broker.settled;
+    await other.settled;
+    await f.peerCleanup;
+  }
+});
+Deno.test("prepared source rejects widened tool authority and retires its allocation", async () => {
+  const f = trustedFixture(undefined, false, undefined, undefined, undefined, {
+    executionProfile: "project-tools",
+  });
+  const broker = createTrustedManagedExecutorBroker({ maxActive: 1 });
+  try {
+    const prepared = await broker.prepareSource(preparedSourceInput(f));
+    f.input.preparedSource = prepared.capability;
+    f.input.tools.maxCalls++;
+    await assertRejects(
+      () => broker.start(f.input),
+      TypeError,
+      "Prepared project-tool authority cannot change",
+    );
+    await prepared.settled;
+    assertEquals(broker.active, 0);
+    assertEquals(f.calls.filter((call) => call === "allocate").length, 1);
+    assertEquals(f.model.calls.length, 0);
+  } finally {
+    await broker.shutdown();
+    await broker.settled;
+    await f.peerCleanup;
+  }
+});
+Deno.test("prepared source cannot move to a different request or survive explicit close", async () => {
+  for (const mode of ["request", "closed"] as const) {
+    const f = trustedFixture(undefined, false, undefined, undefined, undefined, {
+      executionProfile: "project-tools",
+    });
+    const broker = createTrustedManagedExecutorBroker({ maxActive: 1 });
+    try {
+      const prepared = await broker.prepareSource(preparedSourceInput(f));
+      f.input.preparedSource = prepared.capability;
+      if (mode === "request") {
+        f.input.session = {
+          ...f.input.session,
+          request: { ...f.input.session.request, invocationId: crypto.randomUUID() },
+        };
+      } else await prepared.close();
+      await assertRejects(() => broker.start(f.input), TypeError);
+      await prepared.settled;
+      assertEquals(broker.active, 0);
+      assertEquals(f.model.calls.length, 0);
+    } finally {
+      await broker.shutdown();
+      await broker.settled;
+      await f.peerCleanup;
+    }
+  }
+});
+
+Deno.test("source preparation rejects non-project profiles and snapshots image identity before discovery", async () => {
+  const f = trustedFixture(undefined, false, undefined, undefined, undefined, {
+    executionProfile: "project-tools",
+  });
+  const broker = createTrustedManagedExecutorBroker({ maxActive: 1 });
+  const raw = createManagedExecutorBroker({ maxActive: 1 });
+  try {
+    const input = preparedSourceInput(f);
+    await assertRejects(
+      () =>
+        broker.prepareSource({
+          ...input,
+          session: {
+            ...input.session,
+            request: { ...input.session.request, executionProfile: "http" },
+          },
+        }),
+      TypeError,
+    );
+    await assertRejects(() => raw.prepareSource(input), TypeError);
+    assertEquals(f.calls.length, 0);
+    const opening = broker.prepareSource(input);
+    input.session.expectedImage = "registry.test/changed@sha256:" + "b".repeat(64);
+    const prepared = await opening;
+    f.input.preparedSource = prepared.capability;
+    await assertRejects(
+      () => broker.start(f.input),
+      TypeError,
+      "Source preparation ownership cannot change",
+    );
+    await prepared.settled;
+    assertEquals(broker.active, 0);
+  } finally {
+    await broker.shutdown();
+    await raw.shutdown();
+    await broker.settled;
+    await raw.settled;
+    await f.peerCleanup;
+  }
+});
+
+Deno.test("prepared source retains pool admission until original policy work retires", async () => {
+  const f = trustedFixture(undefined, false, undefined, undefined, undefined, {
+    executionProfile: "project-tools",
+  });
+  const broker = createTrustedManagedExecutorBroker({ maxActive: 1, shutdownTimeoutMs: 5 });
+  const release = Promise.withResolvers<void>();
+  let work: Promise<void> | undefined;
+  try {
+    const prepared = await broker.prepareSource(preparedSourceInput(f));
+    work = prepared.runOwned(() => release.promise);
+    await broker.shutdown();
+    assertEquals(prepared.signal.aborted, true);
+    assertEquals(broker.active, 1);
+    assertEquals(f.model.calls.length, 0);
+    release.resolve();
+    await work;
+    await broker.settled;
+    assertEquals(broker.active, 0);
+  } finally {
+    release.resolve();
+    await work;
+    await broker.shutdown();
+    await broker.settled;
+    await f.peerCleanup;
+  }
 });

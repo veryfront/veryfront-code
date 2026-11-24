@@ -54,6 +54,7 @@ import {
 import {
   createHostedExecutorSessionClock,
   type HostedExecutorOwnedWork,
+  type HostedExecutorSession,
   type HostedExecutorSessionCloseResult,
   type HostedExecutorSessionOptions,
 } from "#veryfront/agent/hosted/executor-session.ts";
@@ -133,12 +134,30 @@ export interface ManagedExecutorRuntime {
   close(reason?: "completed" | "canceled"): Promise<HostedExecutorSessionCloseResult>;
 }
 
+declare const preparedSourceBrand: unique symbol;
+/** Broker-private single-use source-session capability. JSON copies carry no authority. */
+export type ManagedExecutorPreparedSource = Readonly<{ [preparedSourceBrand]: true }>;
+
+type PreparedSourceRecord = {
+  session: HostedExecutorSession;
+  request: HostedExecutorAllocationRequest;
+  installation: ExecutorProjectToolInstall;
+  expectedImage: string;
+  expectedBrokerInstanceId: string;
+  clock: NonNullable<SessionInput["clock"]>;
+  definition: RuntimeAgentMarkdownDefinition;
+  owner: { revoke?: () => void };
+  used: boolean;
+};
+
 /**
  * Trusted per-invocation source, model, tool, persistence, and state authority.
  * Broker model limits, provider tools, and tool capabilities must not exceed
  * the corresponding installed grant. Startup rejects mismatches before allocation.
  */
 export interface ManagedExecutorStartInput {
+  /** Consume an authenticated project-only discovery session from this broker exactly once. */
+  preparedSource?: ManagedExecutorPreparedSource;
   /** Trusted ingress configuration; never selected by a project protocol message. */
   trustedRuntime?: {
     projectToolNames: readonly string[];
@@ -194,10 +213,122 @@ export function createManagedExecutorBroker(
     throw new TypeError("Invalid trusted runtime composition");
   }
   const pool = createHostedExecutorSessionPool(options);
+  const preparedSources = new WeakMap<ManagedExecutorPreparedSource, PreparedSourceRecord>();
+
+  async function prepareSource(input: {
+    session: SessionInput;
+    installation: Omit<ExecutorProjectToolInstall, "binding" | "limits"> & {
+      limits?: Partial<ExecutorToolLimits>;
+    };
+  }) {
+    if (!trustedRuntimeFactory) throw new TypeError("Source preparation requires a trusted broker");
+    const request = parseHostedExecutorData(
+      getHostedExecutorAllocationRequestSchema(),
+      input.session.request,
+    );
+    if (request.executionProfile !== "project-tools") {
+      throw new TypeError("Source preparation requires the project-tools execution profile");
+    }
+    const expectedImage = input.session.expectedImage;
+    const expectedBrokerInstanceId = input.session.expectedBrokerInstanceId;
+    const validationBinding = {
+      allocationId: request.allocationId,
+      invocationId: request.invocationId,
+      generation: 1,
+    };
+    const installation = parseExecutorInstallation(getExecutorProjectToolInstallSchema(), {
+      ...input.installation,
+      limits: executorToolLimits(input.installation.limits),
+      binding: validationBinding,
+    });
+    if (
+      !sameHostedExecutorOwner(installation.owner, request.owner) ||
+      verifyHostedRuntimeSourceBinding(request.source, installation.source)
+    ) throw new TypeError("Source preparation does not match its session");
+    const clock = input.session.clock ?? createHostedExecutorSessionClock(Date.now());
+    const owner: PreparedSourceRecord["owner"] = {};
+    const session = pool.start({
+      ...input.session,
+      request,
+      clock,
+      createOperations: () => ({ operations: new Map(), revoke: () => owner.revoke?.() }),
+    });
+    try {
+      const channel = await session.ready;
+      session.signal.throwIfAborted();
+      const binding = session.binding;
+      if (!binding) throw new TypeError("Source preparation is not bound");
+      const installed = parseExecutorInstallation(getExecutorProjectToolInstallSchema(), {
+        ...installation,
+        binding: toChannelBinding(binding),
+      });
+      assertExecutorInstallationAcknowledgement(
+        await channel.request("runtime.install", installed),
+      );
+      const description = parseDiscoveryData(
+        getExecutorAgentDescribeResultSchema(),
+        await channel.request("agent.describe", { agentId: installed.context.agentId }),
+        true,
+      );
+      if (!description.ok) throw new ExecutorDiscoveryError(description.code);
+      if (
+        description.value.definition.id !== installed.context.agentId ||
+        verifyHostedRuntimeSourceBinding(installed.source, description.value.source)
+      ) throw new ExecutorDiscoveryError("EXECUTOR_DISCOVERY_INVALID_OUTPUT");
+      session.signal.throwIfAborted();
+      const capability = Object.freeze({}) as ManagedExecutorPreparedSource;
+      preparedSources.set(capability, {
+        session,
+        request,
+        installation: installed,
+        expectedImage,
+        expectedBrokerInstanceId,
+        clock,
+        definition: description.value.definition,
+        owner,
+        used: false,
+      });
+      return Object.freeze({
+        capability,
+        definition: structuredClone(description.value.definition),
+        signal: session.signal,
+        settled: session.settled,
+        runOwned: session.runOwned.bind(session),
+        close: () => {
+          preparedSources.delete(capability);
+          return session.close("canceled");
+        },
+      });
+    } catch (error) {
+      await session.close("canceled");
+      throw error;
+    }
+  }
 
   async function start(
     input: ManagedExecutorStartInput,
     lifecycle: { onAdmitted?(settled: Promise<void>): void } = {},
+  ) {
+    const prepared = input.preparedSource === undefined
+      ? undefined
+      : preparedSources.get(input.preparedSource);
+    if (input.preparedSource !== undefined && (!prepared || prepared.used)) {
+      throw new TypeError("Source preparation is unavailable");
+    }
+    if (prepared) prepared.used = true;
+    try {
+      prepared?.session.signal.throwIfAborted();
+      return await startPrepared(input, lifecycle, prepared);
+    } catch (error) {
+      if (prepared) await prepared.session.close("canceled");
+      throw error;
+    }
+  }
+
+  async function startPrepared(
+    input: ManagedExecutorStartInput,
+    lifecycle: { onAdmitted?(settled: Promise<void>): void } = {},
+    preparedSource?: PreparedSourceRecord,
   ): Promise<ManagedExecutorRuntime> {
     if (Boolean(trustedRuntimeFactory) !== (input.trustedRuntime !== undefined)) {
       throw new TypeError("Trusted runtime configuration requires its dedicated broker entrypoint");
@@ -206,7 +337,14 @@ export function createManagedExecutorBroker(
       getHostedExecutorAllocationRequestSchema(),
       input.session.request,
     );
-    const clock = input.session.clock ?? createHostedExecutorSessionClock(Date.now());
+    if (
+      preparedSource &&
+      (JSON.stringify(request) !== JSON.stringify(preparedSource.request) ||
+        input.session.expectedImage !== preparedSource.expectedImage ||
+        input.session.expectedBrokerInstanceId !== preparedSource.expectedBrokerInstanceId)
+    ) throw new TypeError("Source preparation ownership cannot change");
+    const clock = preparedSource?.clock ?? input.session.clock ??
+      createHostedExecutorSessionClock(Date.now());
     // Generation one is used only to validate local operation descriptors.
     // Actual authority is rebuilt against the allocator's authenticated binding.
     const validationBinding: ExecutorBinding = {
@@ -252,7 +390,7 @@ export function createManagedExecutorBroker(
 
     let gate: ExecutorOperationGate | undefined;
     let localRuntime: TrustedManagedRuntime | undefined;
-    const session = pool.start({
+    const session = preparedSource?.session ?? pool.start({
       ...input.session,
       request,
       clock,
@@ -288,7 +426,14 @@ export function createManagedExecutorBroker(
         return { operations: gate.operations, revoke: gate.revoke };
       },
     });
+    if (preparedSource) {
+      preparedSource.owner.revoke = () => {
+        gate?.revoke();
+        void localRuntime?.close().catch(() => {});
+      };
+    }
     try {
+      session.signal.throwIfAborted();
       bindSessionOwnedWork?.(session.runOwned.bind(session));
       lifecycle.onAdmitted?.(session.settled);
       const channel = await session.ready;
@@ -299,27 +444,41 @@ export function createManagedExecutorBroker(
         ...installation,
         binding: channelBinding,
       });
-      const installed = await channel.request(
-        "runtime.install",
-        trusted
-          ? {
-            ...trusted.projectInstallation,
-            binding: channelBinding,
-          }
-          : installRequest,
-      );
-      assertExecutorInstallationAcknowledgement(installed);
-      const description = parseDiscoveryData(
-        getExecutorAgentDescribeResultSchema(),
-        await channel.request("agent.describe", { agentId: prepare.agentId }),
-        true,
-      );
-      if (!description.ok) throw new ExecutorDiscoveryError(description.code);
-      if (
-        description.value.definition.id !== prepare.agentId ||
-        verifyHostedRuntimeSourceBinding(installation.source, description.value.source) !==
-          undefined
-      ) throw new ExecutorDiscoveryError("EXECUTOR_DISCOVERY_INVALID_OUTPUT");
+      let definition: RuntimeAgentMarkdownDefinition;
+      if (preparedSource) {
+        if (!trusted) throw new TypeError("Prepared source requires a trusted runtime");
+        const expected = parseExecutorInstallation(getExecutorProjectToolInstallSchema(), {
+          ...trusted.projectInstallation,
+          binding: channelBinding,
+        });
+        if (JSON.stringify(expected) !== JSON.stringify(preparedSource.installation)) {
+          throw new TypeError("Prepared project-tool authority cannot change");
+        }
+        definition = structuredClone(preparedSource.definition);
+      } else {
+        const installed = await channel.request(
+          "runtime.install",
+          trusted
+            ? {
+              ...trusted.projectInstallation,
+              binding: channelBinding,
+            }
+            : installRequest,
+        );
+        assertExecutorInstallationAcknowledgement(installed);
+        const description = parseDiscoveryData(
+          getExecutorAgentDescribeResultSchema(),
+          await channel.request("agent.describe", { agentId: prepare.agentId }),
+          true,
+        );
+        if (!description.ok) throw new ExecutorDiscoveryError(description.code);
+        if (
+          description.value.definition.id !== prepare.agentId ||
+          verifyHostedRuntimeSourceBinding(installation.source, description.value.source) !==
+            undefined
+        ) throw new ExecutorDiscoveryError("EXECUTOR_DISCOVERY_INVALID_OUTPUT");
+        definition = description.value.definition;
+      }
       if (trusted) {
         activateHostedAgentPauseCapability(input, session.signal);
         const runtimeOptions: Parameters<TrustedManagedRuntimeFactory>[0] = {
@@ -420,7 +579,7 @@ export function createManagedExecutorBroker(
         () => undefined,
       );
       const runtime = {
-        definition: description.value.definition,
+        definition,
         modelId: prepared.value.modelId,
         runtimeKind: prepared.value.runtimeKind,
         agent,
@@ -458,6 +617,7 @@ export function createManagedExecutorBroker(
     closed: pool.closed,
     settled: pool.settled,
     start,
+    prepareSource,
     shutdown: pool.shutdown.bind(pool),
   };
 }

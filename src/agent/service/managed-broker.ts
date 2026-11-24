@@ -11,6 +11,7 @@ export { createCanonicalManagedBrokerHandler } from "./canonical-managed-broker.
 export {
   createManagedExecutorBroker,
   type ManagedExecutorBrokerOptions,
+  type ManagedExecutorPreparedSource,
   type ManagedExecutorRuntime,
   type ManagedExecutorStartInput,
 } from "../hosted/managed-executor-broker.ts";
