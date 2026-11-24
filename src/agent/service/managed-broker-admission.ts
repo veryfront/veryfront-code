@@ -25,6 +25,11 @@ const getAdmissionReceipt = defineSchema((v) =>
   }).strict()
 );
 
+/** Best-effort disposal must preserve the admission result, including synchronous failures. */
+function cancelResponseBody(response: Response): void {
+  void Promise.resolve().then(() => response.body?.cancel()).catch(() => {});
+}
+
 /** Consume the dispatch in the API before any deployment callback can allocate or execute. */
 export async function claimManagedBrokerAdmission(input: {
   apiUrl: string;
@@ -73,7 +78,6 @@ export async function claimManagedBrokerAdmission(input: {
       },
     );
     if (response.status !== 200) {
-      void response.body?.cancel().catch(() => {});
       throw response.status === 409
         ? new BrokerIngressError(409, "BROKER_RUN_NOT_ACTIVE")
         : response.status === 401 || response.status === 403
@@ -100,9 +104,7 @@ export async function claimManagedBrokerAdmission(input: {
     // A caller can abort immediately after headers arrive, before the bounded
     // reader owns the body. Cancel that unread response without waiting on it.
     if (response?.body && !response.bodyUsed) {
-      try {
-        void response.body.cancel().catch(() => {});
-      } catch { /* Preserve admission failure. */ }
+      cancelResponseBody(response);
     }
     if (error instanceof BrokerIngressError) throw error;
     const failure = new BrokerIngressError(503, "BROKER_UNAVAILABLE");

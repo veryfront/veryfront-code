@@ -146,4 +146,32 @@ describe("managed broker API admission", () => {
     assert(error instanceof BrokerIngressError);
     assertEquals(canceled, true);
   });
+  for (const failure of ["synchronous", "asynchronous"] as const) {
+    it(`preserves a conflict when response cancellation fails ${failure}ly`, async () => {
+      const response = new Response("unread", { status: 409 });
+      let cancellations = 0;
+      Object.defineProperty(response.body, "cancel", {
+        value() {
+          cancellations++;
+          const diagnostic = new Error("private response disposal failure");
+          if (failure === "synchronous") throw diagnostic;
+          return Promise.reject(diagnostic);
+        },
+      });
+      const error = await assertRejects(() =>
+        claimManagedBrokerAdmission({
+          ...input(),
+          fetch: () => Promise.resolve(response),
+        })
+      );
+      assert(error instanceof BrokerIngressError);
+      assertEquals(
+        error.status,
+        409,
+        "Response cleanup must preserve duplicate-dispatch rejection",
+      );
+      assertEquals(error.errorCode, "BROKER_RUN_NOT_ACTIVE");
+      assertEquals(cancellations, 1, "Dispose the refused response once without retrying cleanup");
+    });
+  }
 });
