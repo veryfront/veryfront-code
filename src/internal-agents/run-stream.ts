@@ -63,6 +63,7 @@ import {
   markTrustedHostToolSet,
 } from "#veryfront/tool/host-tool-provenance.ts";
 import { isReservedPlatformToolName } from "#veryfront/tool/platform-tool-policy.ts";
+import { createInputRequestApprovalGate } from "#veryfront/tool/approval-input-request-gate.ts";
 import {
   type Agent,
   type AgentMessage as Message,
@@ -1611,6 +1612,18 @@ export async function createRuntimeAgentStreamResponse(
         : {}),
       ...(deps.projectAgentSandbox?.authToken
         ? { authToken: deps.projectAgentSandbox.authToken }
+        : {}),
+      // A tool declared with `approval` asks a checker through this run's input requests. Only a
+      // run the host bound to the project can hold them; any other run keeps failing closed.
+      ...(deps.runIdBindsToolAuthorization === true && deps.projectAgentSandbox?.projectId &&
+          deps.projectAgentSandbox.apiUrl && deps.projectAgentSandbox.authToken
+        ? {
+          requestToolApproval: createInputRequestApprovalGate({
+            apiUrl: deps.projectAgentSandbox.apiUrl,
+            authToken: deps.projectAgentSandbox.authToken,
+            runId: input.runId,
+          }),
+        }
         : {}),
       ...(deps.projectAgentSandbox === undefined
         ? {}
