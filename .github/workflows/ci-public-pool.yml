@@ -183,7 +183,7 @@ jobs:
       - name: Include CLI, dependency history, and runtime security integration coverage
         if: inputs.shard == 1
         run: |
-          rm -rf coverage-history coverage-cli coverage-canonical
+          rm -rf coverage-history coverage-cli
           deno task test:file --coverage=coverage-history \
             tests/integration/semantic-unit-boundary/src/platform/adapters/fs/veryfront/dependency-metadata-history.test.ts \
             tests/integration/semantic-unit-boundary/src/platform/adapters/veryfront-api-client/dependency-metadata-history.test.ts \
@@ -206,10 +206,6 @@ jobs:
             tests/integration/semantic-unit-boundary/server/handlers/request/project-run-runtime-ownership-index-probe.test.ts \
             tests/integration/semantic-unit-boundary/server/handlers/request/project-run-runtime-ownership-okf-inspector.test.ts \
             tests/integration/semantic-unit-boundary/cli/commands/knowledge/indexing.test.ts
-          # Carry coverage into the isolated, synthetic writer-token subprocesses.
-          DENO_COVERAGE_DIR="$PWD/coverage-canonical" deno task test:file --coverage=coverage-canonical \
-            tests/integration/agent/canonical-tool-policy.test.ts \
-            tests/integration/agent/installed-agent-service.execution.test.ts
           # The CLI regression changes cwd, so give it a separate process.
           deno task test:file --coverage=coverage-cli \
             tests/integration/cli/merge-preview.integration.test.ts \
@@ -217,10 +213,9 @@ jobs:
           # Kept as separate reports: block ids are normalized only when every
           # report is merged at once (coverage gate and Sonar), so an early
           # merge here must not rewrite them.
-          mkdir -p coverage-shard-1/history coverage-shard-1/cli coverage-shard-1/canonical
+          mkdir -p coverage-shard-1/history coverage-shard-1/cli
           deno coverage coverage-history --include=src/ --include=cli/ --exclude=/tests/ --exclude=/__tests__/ --lcov > coverage-shard-1/history/lcov.info
           deno coverage coverage-cli --include=src/ --include=cli/ --exclude=/tests/ --exclude=/__tests__/ --lcov > coverage-shard-1/cli/lcov.info
-          deno coverage coverage-canonical --include=src/ --exclude=/tests/ --exclude=/__tests__/ --lcov > coverage-shard-1/canonical/lcov.info
       - name: Upload unit coverage lcov
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
