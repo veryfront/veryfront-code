@@ -40,6 +40,7 @@ const body = invocation({
  forwardedProps: { runtimeOverrides: { serverResolvedProjectTools: ["inspect"] } },
  projectEventPersistence: { mode: "runtime-owned-v1", canonicalRunId: canonicalId, latestEventId: 0, latestExternalEventSequence: 0 }, platformToolDependencies: [],
 });
+if (data.outputOverride) body.forwardedProps.runtimeOverrides.maxOutputTokens = 8192;
 if (data.environmentContext) body.context = [{ type: "json", title: "studio_context", data: { environmentContext: "Run-specific ledger context" } }];
 if (data.apiTools) body.tools.push({ name: "api_review", description: "Review through the API", parameters: { type: "object", properties: { query: { type: "string" } } } });
 if (data.onlyApiTool) body.forwardedProps.runtimeOverrides.allowedTools = ["api_review"];
@@ -102,9 +103,10 @@ const transport = async (value, init) => {
  assert(url.origin === new URL(inferenceApiBaseUrl).origin, "Inference must use its configured destination");
  assertEquals(request.headers.get("authorization"), "Bearer inference-token");
  assertEquals(request.headers.get("x-veryfront-project-slug"), "demo-project");
- if (url.pathname.endsWith("/ai/models")) return Response.json({ models: [{ id: "synthetic", modelId: "openai/synthetic", provider: "openai", aliases: [], surface: "openai", operations: ["chat-completions"], transport: "chat-completions", supportedProviderTools: [], capabilities: { limit: { output: 4096 } } }] });
+ if (url.pathname.endsWith("/ai/models")) return Response.json({ models: [{ id: "synthetic", modelId: "openai/synthetic", provider: "openai", aliases: [], surface: "openai", operations: ["chat-completions"], transport: "chat-completions", supportedProviderTools: [], capabilities: { limit: { output: data.outputOverride ? 2048 : 4096 } } }] });
  assert(url.pathname.endsWith("/chat/completions"));
  const inference = await request.json();
+ if (data.outputOverride) assertEquals(inference.max_completion_tokens ?? inference.max_tokens, 2048);
  if (data.environmentContext) assertStringIncludes(JSON.stringify(inference.messages), "Run-specific ledger context");
  if (data.emptyTools || data.disableTools) assertEquals(inference.tools === undefined || inference.tools.length === 0, true);
  const useApiTool = data.apiTools && !data.denyApiTool && !data.emptyTools && !data.disableTools;
@@ -147,6 +149,10 @@ for (
       name:
         "installed canonical service executes the selected code agent and native tool with one source allocation",
       input: {},
+    },
+    {
+      name: "oversized output overrides execute within the served model limit",
+      input: { outputOverride: true },
     },
     { name: "signed API tools execute without source predeclaration", input: { apiTools: true } },
     {
