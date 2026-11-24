@@ -162,7 +162,9 @@ export function createInstalledCanonicalAgentService(options: {
           owner: ingress.executor.owner,
           source: agentSource,
           root: "project",
-          agentEntrypoint: ingress.executor.agentEntrypoint,
+          ...(ingress.executor.agentEntrypoint === undefined
+            ? {}
+            : { agentEntrypoint: ingress.executor.agentEntrypoint }),
           context: {
             agentId: run.agentId,
             projectId: run.project.projectId,
@@ -236,7 +238,9 @@ export function createInstalledCanonicalAgentService(options: {
             owner: ingress.executor.owner,
             source: agentSource,
             root: "project",
-            agentEntrypoint: ingress.executor.agentEntrypoint,
+            ...(ingress.executor.agentEntrypoint === undefined
+              ? {}
+              : { agentEntrypoint: ingress.executor.agentEntrypoint }),
             grant: {
               agentId: run.agentId,
               defaultModelId: prepared.model.modelId,
@@ -281,8 +285,10 @@ export function createInstalledCanonicalAgentService(options: {
             agentId: run.agentId,
             modelId: prepared.model.modelId,
             maxSteps: prepared.model.maxSteps,
-            maxOutputTokens: prepared.model.maxOutputTokens,
-            thinking: prepared.model.thinking,
+            ...(prepared.model.maxOutputTokens === undefined
+              ? {}
+              : { maxOutputTokens: prepared.model.maxOutputTokens }),
+            ...(prepared.model.thinking === undefined ? {} : { thinking: prepared.model.thinking }),
             providerToolNames: prepared.model.providerToolNames,
           },
         };
