@@ -38,6 +38,7 @@ const body = invocation({
  forwardedProps: { runtimeOverrides: { serverResolvedProjectTools: ["inspect"] } },
  projectEventPersistence: { mode: "runtime-owned-v1", canonicalRunId: canonicalId, latestEventId: 0, latestExternalEventSequence: 0 }, platformToolDependencies: [],
 });
+if (data.environmentContext) body.context = [{ type: "json", title: "studio_context", data: { environmentContext: "Run-specific ledger context" } }];
 if (data.omitEntrypoint) delete body.agentEntrypoint;
 if (data.emptyTools) body.forwardedProps.runtimeOverrides.allowedTools = [];
 const contract = await import("./src/agent/runtime/agent-invocation-contract.ts");
@@ -92,6 +93,7 @@ const transport = async (value, init) => {
  if (url.pathname.endsWith("/ai/models")) return Response.json({ models: [{ id: "synthetic", modelId: "openai/synthetic", provider: "openai", aliases: [], surface: "openai", operations: ["chat-completions"], transport: "chat-completions", supportedProviderTools: [], capabilities: { limit: { output: 4096 } } }] });
  assert(url.pathname.endsWith("/chat/completions"));
  const inference = await request.json();
+ if (data.environmentContext) assertStringIncludes(JSON.stringify(inference.messages), "Run-specific ledger context");
  if (data.emptyTools || data.disableTools) assertEquals(inference.tools === undefined || inference.tools.length === 0, true);
  modelCalls++;
  if (data.knowledge && modelCalls === 2) assertStringIncludes(JSON.stringify(inference.messages), "Claim approval requires signed evidence.");
@@ -123,6 +125,10 @@ for (
       name:
         "installed canonical service executes the selected code agent and native tool with one source allocation",
       input: {},
+    },
+    {
+      name: "installed canonical execution preserves signed Studio context across tool steps",
+      input: { environmentContext: true },
     },
     {
       name: "installed canonical agents retrieve immutable source knowledge without exposing credentials",

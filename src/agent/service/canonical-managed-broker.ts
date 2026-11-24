@@ -1,3 +1,4 @@
+import { getStudioRuntimeEnvironmentContext } from "../hosted/chat-request.ts";
 import { executorNodeClock } from "../hosted/executor-node-deadline.ts";
 import type { HostedExecutorSessionClock } from "../hosted/executor-session.ts";
 import { claimManagedBrokerAdmission } from "./managed-broker-admission.ts";
@@ -208,6 +209,7 @@ export function createCanonicalManagedBrokerHandler<T>(
           agentId: run.agentId,
           fetch: transport,
           latestConversationUserText: prepared.latestConversationUserText,
+          environmentContext: getStudioRuntimeEnvironmentContext(ingress.executor.input),
         });
         const { serverResolvedResumeToolCall: _adapterResume, ...prepare } = start.prepare;
         const resume = ingress.executor.input.resumeToolCall;
