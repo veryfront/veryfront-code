@@ -1,3 +1,4 @@
+import { getServerResolvedProjectToolNames } from "#veryfront/agent/runtime/server-resolved-project-tools.ts";
 import {
   prepareSourceObservationFrames,
   SOURCE_SNAPSHOT_SSE_EVENT_NAME,
@@ -1062,22 +1063,6 @@ function getRequiredLocalToolNames(input: {
       return Boolean(registryTool && isToolVisibleTo(registryTool, { agentId: input.agent.id }));
     })
     .map(([toolName]) => toolName);
-}
-
-function getServerResolvedProjectToolNames(
-  forwardedProps: RuntimeRunAgentInput["forwardedProps"],
-): Set<string> {
-  const runtimeOverrides = isRecord(forwardedProps?.runtimeOverrides)
-    ? forwardedProps.runtimeOverrides
-    : null;
-  if (!runtimeOverrides) return new Set();
-  const toolNames = runtimeOverrides.serverResolvedProjectTools;
-  if (!Array.isArray(toolNames)) return new Set();
-  return new Set(
-    toolNames.filter((toolName): toolName is string =>
-      typeof toolName === "string" && toolName.length > 0
-    ),
-  );
 }
 
 interface ForwardedToolDef {

@@ -1,3 +1,4 @@
+import { getServerResolvedProjectToolNames } from "../runtime/server-resolved-project-tools.ts";
 import { AGENT_ERROR } from "#veryfront/errors";
 import type { RemoteToolSource, ToolExecutionContext } from "#veryfront/tool/types.ts";
 import type { AgUiResumeValue } from "../ag-ui/tool-shared.ts";
@@ -32,6 +33,9 @@ export function createCanonicalApiToolSource<T>(input: {
   const limits = executorToolLimits();
   const declared = input.ingress.executor.input.tools ?? [];
   if (declared.length > 50) throw new TypeError("Too many canonical API tools");
+  const projectTools = getServerResolvedProjectToolNames(
+    input.ingress.executor.input.forwardedProps,
+  );
   const definitions = new Map(declared.map((value) => {
     const tool = getRuntimeAgentToolSchema().parse(value);
     return [
@@ -49,6 +53,7 @@ export function createCanonicalApiToolSource<T>(input: {
     ] as const;
   }));
   if (definitions.size !== declared.length) throw new TypeError("Duplicate canonical API tool");
+  for (const name of projectTools) definitions.delete(name);
   const wait = input.waitForToolResult.bind(input);
   const lifetime = input.signal;
   const pending = new Set<string>();

@@ -158,3 +158,47 @@ Deno.test("canonical API tool forwards operation cancellation to its waiter", as
   await rejected;
   assertEquals(f.lifetime.signal.aborted, false);
 });
+
+Deno.test("canonical API tools leave server-resolved project tools in project execution", async () => {
+  const f = await fixture();
+  let calls = 0;
+  const capability = createCanonicalApiToolSource({
+    ingress: {
+      ...f.ingress,
+      executor: {
+        ...f.ingress.executor,
+        input: {
+          ...f.ingress.executor.input,
+          tools: [...f.ingress.executor.input.tools!, {
+            name: "native_lookup",
+            parameters: { type: "object" },
+          }],
+          forwardedProps: { runtimeOverrides: { serverResolvedProjectTools: ["native_lookup"] } },
+        },
+      },
+    },
+    signal: f.lifetime.signal,
+    async waitForToolResult() {
+      calls++;
+      return { result: "api", isError: false };
+    },
+  });
+  assertEquals((await capability.source.listTools(capability.context)).map((tool) => tool.name), [
+    "review_claim",
+  ]);
+  assertEquals(capability.allowedToolNames.has("native_lookup"), false);
+  await assertRejects(() =>
+    capability.source.executeTool("native_lookup", {}, {
+      ...capability.context,
+      toolCallId: "native",
+    })
+  );
+  assertEquals(calls, 0);
+  assertEquals(
+    await capability.source.executeTool("review_claim", {}, {
+      ...capability.context,
+      toolCallId: "api",
+    }),
+    "api",
+  );
+});
