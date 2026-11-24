@@ -43,6 +43,16 @@ async function integrityOf(bytes: Uint8Array): Promise<string> {
   return `sha512-${btoa(String.fromCharCode(...digest))}`;
 }
 
+async function complete(version: string): Promise<Record<string, unknown>> {
+  return {
+    schema_version: 1,
+    version,
+    tarball_url: `https://registry.npmjs.org/veryfront/-/veryfront-${version}.tgz`,
+    integrity: await integrityOf(TARBALL),
+    source_sha: SOURCE_SHA,
+  };
+}
+
 const FAKE_CURL = `#!/usr/bin/env bash
 set -euo pipefail
 out=""; url=""
@@ -277,16 +287,35 @@ describe("current release record", () => {
   });
 
   it("replaces an older record and never moves a newer one back", async () => {
-    const older = await run({ existing: { version: "0.1.5-rc.9" } });
+    const older = await run({ existing: await complete("0.1.5-rc.9") });
     assertEquals(older.output.code, 0, stderr(older));
     assert(older.gh.some((call) => call.startsWith("release edit current-release")));
     assertEquals(JSON.parse(older.body ?? "").version, VERSION);
 
     for (const newer of ["0.1.5-rc.11", "0.1.5", "0.1.10-rc.1"]) {
-      const result = await run({ existing: { version: newer } });
+      const result = await run({ existing: await complete(newer) });
       assertEquals(result.output.code, 0, stderr(result));
       assertEquals(result.gh.filter((call) => /^release (create|edit)/.test(call)), []);
       assertEquals(JSON.parse(result.body ?? "").version, newer);
+    }
+  });
+
+  it("repairs an incomplete record even when it names a newer version", async () => {
+    for (
+      const existing of [
+        { version: "0.1.6" },
+        {
+          schema_version: 1,
+          version: "0.1.6",
+          tarball_url: "https://x",
+          integrity: "sha512-x",
+          source_sha: SOURCE_SHA,
+        },
+      ]
+    ) {
+      const result = await run({ existing });
+      assertEquals(result.output.code, 0, stderr(result));
+      assertEquals(JSON.parse(result.body ?? "").version, VERSION);
     }
   });
 

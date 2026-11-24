@@ -2910,7 +2910,16 @@ jobs:
           if [ "$exists" = true ]; then
             # Queued runs can finish out of order; never move the record back.
             old=""
-            if jq -e 'type == "object" and (.version | type == "string")' "$work/current.json" > /dev/null 2>&1; then
+            # Only a complete record may hold its place; anything else is repaired.
+            if jq -e '
+              type == "object"
+              and (keys == ["integrity", "schema_version", "source_sha", "tarball_url", "version"])
+              and .schema_version == 1
+              and (.version | type == "string")
+              and (.tarball_url | type == "string" and startswith("https://"))
+              and (.integrity | type == "string" and test("^sha512-[A-Za-z0-9+/]{86}==$"))
+              and (.source_sha | type == "string" and test("^[0-9a-f]{40}$"))
+            ' "$work/current.json" > /dev/null 2>&1; then
               old="$(jq -r .version "$work/current.json")"
             fi
             if [[ "$old" =~ $semver ]]; then
