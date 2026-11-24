@@ -31,6 +31,7 @@ const apiUrl = data.destinations ? "https://93.184.216.35/api" : "https://93.184
 const inferenceApiBaseUrl = data.destinations ? "https://93.184.216.36/api" : apiUrl;
 const terminal = "header." + btoa(JSON.stringify({ runId: "run-1", canonicalRunId: canonicalId, tokenUse: "run_event_writer", writerPurpose: "current_run_terminal", dispatchNonce: "33333333-3333-4333-8333-333333333333" })) + ".signature";
 const base = invocation();
+const branchId = "00000000-0000-4000-8000-000000000077";
 const body = invocation({
  run: { ...base.run, project: { ...base.run.project, runtimeTargetBranchName: "main" }, eventCursor: { canonicalRunId: canonicalId, latestEventId: 0, latestExternalEventSequence: 0 } },
  sourceProject: { projectId: sourceId, projectSlug: "private-source", runtimeTargetKind: "environment", runtimeTargetEnvironmentId: environmentId, runtimeTargetEnvironmentName: "production" },
@@ -40,6 +41,7 @@ const body = invocation({
  forwardedProps: { runtimeOverrides: { serverResolvedProjectTools: ["inspect"] } },
  projectEventPersistence: { mode: "runtime-owned-v1", canonicalRunId: canonicalId, latestEventId: 0, latestExternalEventSequence: 0 }, platformToolDependencies: [],
 });
+if (data.branchScope) { body.run.project.runtimeTargetKind = "preview_branch"; body.run.project.runtimeTargetBranchId = branchId; }
 if (data.outputOverride) body.forwardedProps.runtimeOverrides.maxOutputTokens = 8192;
 if (data.environmentContext) body.context = [{ type: "json", title: "studio_context", data: { environmentContext: "Run-specific ledger context" } }];
 if (data.apiTools) body.tools.push({ name: "api_review", description: "Review through the API", parameters: { type: "object", properties: { query: { type: "string" } } } });
@@ -72,7 +74,7 @@ const connectTransport = async ({ binding }) => {
  const outbound = new TransformStream({ transform(chunk, controller) { wire += new TextDecoder().decode(chunk); controller.enqueue(chunk); } });
  const inbound = new TransformStream();
  const installation = createExecutorRuntimeInstallation({ mode: "project-tools", binding, artifact: { version: 1, owner, source, root: "project" }, async install(input, signal, context) {
-  const inspect = tool({ id: "inspect", description: "Inspect a claim", inputSchema: defineSchema(v => v.object({ query: v.string() }))(), execute: (args, call) => { executions++; assertEquals(args, { query: "approved" }); assertEquals(call.projectId, projectId); assertEquals(call.userId, userId); assertEquals(call.runId, "run-1"); return { ok: true }; } });
+  const inspect = tool({ id: "inspect", description: "Inspect a claim", inputSchema: defineSchema(v => v.object({ query: v.string() }))(), execute: (args, call) => { executions++; assertEquals(args, { query: "approved" }); assertEquals(call.projectId, projectId); assertEquals(call.userId, userId); assertEquals(call.runId, "run-1"); if (data.branchScope) assertEquals(call.branch, branchId); return { ok: true }; } });
   const discovery = createExecutorDiscovery({ binding, source, projectDir: "/synthetic-project", defaultAgentId: input.context.agentId, agentEntrypoint: input.agentEntrypoint, signal, backend: { load: async () => ({ agents: new Map([["builder", agent({ id: "builder", model: "veryfront-cloud/openai/synthetic", system: "Use inspect then answer", tools: data.disableTools ? false : { inspect: true, ...(data.denyApiTool ? { api_review: false } : {}) }, skills: false, ...(data.knowledge ? { knowledge: true } : {}), ...(data.explicitMcp ? { mcpServers: [{ kind: "veryfront-api", id: "unneeded" }] } : data.disableTools ? {} : { mcpServers: [] }) })]]), tools: new Map([["inspect", inspect]]), skills: new Map(), prompts: new Map(), resources: new Map(), workflows: new Map(), tasks: new Map(), schedules: new Map(), webhooks: new Map(), evals: new Map(), errors: [], sourceIntegrationPolicy: { schemaVersion: 1, mode: "unrestricted" } }), cleanup: async () => {} } });
   return await createExecutorProjectToolRuntime({ input, discovery, signal, deadline: context.deadline });
  } });
@@ -113,6 +115,7 @@ const transport = async (value, init) => {
  if (url.pathname.endsWith("/ai/models")) return Response.json({ models: [{ id: "synthetic", modelId: "openai/synthetic", provider: "openai", aliases: [], surface: "openai", operations: ["chat-completions"], transport: "chat-completions", supportedProviderTools: [], capabilities: { limit: { output: data.outputOverride ? 2048 : 4096 } } }] });
  assert(url.pathname.endsWith("/chat/completions"));
  const inference = await request.json();
+ if (data.branchScope) assertStringIncludes(JSON.stringify(inference.messages), branchId);
  if (data.outputOverride) assertEquals(inference.max_completion_tokens ?? inference.max_tokens, 2048);
  if (data.environmentContext) assertStringIncludes(JSON.stringify(inference.messages), "Run-specific ledger context");
  if (data.emptyTools || data.disableTools) assertEquals(inference.tools === undefined || inference.tools.length === 0, true);
@@ -145,6 +148,7 @@ await __runWithOutboundFetchTransportForTests({ fetch: transport, pinnedFetch: (
   assertEquals(modelCalls, data.emptyTools || data.disableTools ? 1 : 2);
   assert(events.length > 0);
   if (data.pauseControl) assertEquals(pauseReads > 0, true);
+  if (data.branchScope) { assertStringIncludes(wire, JSON.stringify({ branch: branchId }).slice(1,-1)); }
   for (const secret of ["private-stop-token", "api-auth-token", "source-read-token", "inference-token", "never-forward", data.token]) assertEquals(wire.includes(secret), false);
  } finally { await service.close(); await service.settled; await peerCleanup; }
 }, { allowedResolvedAddresses: ["93.184.216.34", "93.184.216.35", "93.184.216.36"] });
@@ -153,6 +157,10 @@ console.log("installed-canonical-execution-qualified");
 
 for (
   const scenario of [
+    {
+      name: "native tools retain the signed consuming preview branch",
+      input: { branchScope: true },
+    },
     {
       name: "trailing API slashes normalize across source, run and pause control",
       input: { trailingApiBaseUrl: true, pauseControl: true },

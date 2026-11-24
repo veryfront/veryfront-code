@@ -195,6 +195,9 @@ export function createInstalledCanonicalAgentService(options: {
             agentId: run.agentId,
             projectId: run.project.projectId,
             projectSlug: run.project.projectSlug,
+            ...(run.project.runtimeTargetBranchId
+              ? { branch: run.project.runtimeTargetBranchId }
+              : {}),
             userId: run.requestedByUserId,
             runId: run.runId,
           },
@@ -305,6 +308,9 @@ export function createInstalledCanonicalAgentService(options: {
                 kind: "canonical",
                 projectId: run.project.projectId,
                 projectSlug: run.project.projectSlug,
+                ...(run.project.runtimeTargetBranchId
+                  ? { branchId: run.project.runtimeTargetBranchId }
+                  : {}),
                 userId: run.requestedByUserId,
                 conversationId: run.conversationId,
                 runId: run.runId,
