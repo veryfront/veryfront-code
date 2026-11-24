@@ -60,28 +60,41 @@ export async function runCanonicalWriterProgram(
     const value = Deno.env.get(key);
     if (value) env[key] = value;
   }
-  const child = new Deno.Command(Deno.execPath(), {
-    args: ["eval", "--config", "deno.json", program],
-    clearEnv: true,
-    env,
-    stdin: "piped",
-    stdout: "piped",
-    stderr: "piped",
-    signal: AbortSignal.timeout(30000),
-  }).spawn();
-  const input = child.stdin.getWriter();
-  await input.write(
-    new TextEncoder().encode(
-      JSON.stringify({
-        ...additionalInput,
-        token,
-        publicKeyPem,
-        serverId: writerContract.payload.serviceAccountId,
-      }),
-    ),
-  );
-  await input.close();
-  const output = await child.output();
-  assertEquals(output.code, 0, new TextDecoder().decode(output.stderr));
-  return new TextDecoder().decode(output.stdout).trim();
+  // `deno eval` does not collect coverage. Keep relative fixture imports rooted
+  // in the checkout when the coverage job runs the same program as a script.
+  const coverageDir = env.DENO_COVERAGE_DIR;
+  const scriptPath = coverageDir
+    ? await Deno.makeTempFile({ dir: Deno.cwd(), prefix: ".canonical-writer-", suffix: ".ts" })
+    : undefined;
+  try {
+    if (scriptPath) await Deno.writeTextFile(scriptPath, program);
+    const child = new Deno.Command(Deno.execPath(), {
+      args: scriptPath
+        ? ["run", "--allow-all", "--config", "deno.json", "--coverage=" + coverageDir, scriptPath]
+        : ["eval", "--config", "deno.json", program],
+      clearEnv: true,
+      env,
+      stdin: "piped",
+      stdout: "piped",
+      stderr: "piped",
+      signal: AbortSignal.timeout(30000),
+    }).spawn();
+    const input = child.stdin.getWriter();
+    await input.write(
+      new TextEncoder().encode(
+        JSON.stringify({
+          ...additionalInput,
+          token,
+          publicKeyPem,
+          serverId: writerContract.payload.serviceAccountId,
+        }),
+      ),
+    );
+    await input.close();
+    const output = await child.output();
+    assertEquals(output.code, 0, new TextDecoder().decode(output.stderr));
+    return new TextDecoder().decode(output.stdout).trim();
+  } finally {
+    if (scriptPath) await Deno.remove(scriptPath);
+  }
 }
