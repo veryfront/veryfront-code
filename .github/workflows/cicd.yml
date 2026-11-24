@@ -2832,9 +2832,9 @@ jobs:
       group: veryfront-current-release
       queue: max
     name: Publish current release record
-    needs: [quality-gate-registry]
+    needs: [quality-gate-registry, prerelease]
     if: ${{ always() && github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && needs.quality-gate-registry.result == 'success' && needs.quality-gate-registry.outputs.current_release != '' }}
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.ubuntu26 == true && 'ubuntu-26.04' || 'ubuntu-latest' }}
     timeout-minutes: 15
     permissions:
       contents: write
@@ -2845,7 +2845,10 @@ jobs:
           GH_REPO: ${{ github.repository }}
           VERSION: ${{ needs.quality-gate-registry.outputs.current_release }}
           RELEASE_BASE: https://github.com/veryfront/veryfront/releases/download
+          NPM_REGISTRY: https://registry.npmjs.org/veryfront
           RECORD_TAG: current-release
+          # While npm refuses the core, the release carries its tarball and provenance.
+          NPM_CORE_SUSPENDED: ${{ needs.prerelease.outputs.npm_core_suspended == 'true' }}
         run: |
           set -euo pipefail
           semver='^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$'
@@ -2855,27 +2858,44 @@ jobs:
           fi
           work="${RUNNER_TEMP}/current-release-record"
           mkdir "$work"
-          tarball_url="${RELEASE_BASE}/v${VERSION}/veryfront-${VERSION}.tgz"
           fetch() {
             curl --fail --silent --show-error --location --max-time 600 --retry 3 --retry-all-errors \
               --proto '=https' --proto-redir '=https' --output "$2" "$1"
           }
-          fetch "${RELEASE_BASE}/v${VERSION}/veryfront-${VERSION}.npm-provenance.json" "$work/provenance.json"
-          fetch "$tarball_url" "$work/package.tgz"
           # The record carries only what the published tarball's bytes prove.
-          integrity="sha512-$(openssl dgst -sha512 -binary "$work/package.tgz" | openssl base64 -A)"
-          jq -ce --arg version "$VERSION" --arg integrity "$integrity" --arg url "$tarball_url" '
-            if type == "object" and (keys == ["git_head", "package", "repository", "schema_version"])
-              and .schema_version == 1
-              and (.package | type == "object" and keys == ["integrity", "name", "version"])
-              and .package.name == "veryfront" and .package.version == $version
-              and .package.integrity == $integrity
-              and .repository == "https://github.com/veryfront/veryfront-code"
-              and (.git_head | type == "string" and test("^[0-9a-f]{40}$"))
-            then {schema_version: 1, version: $version, tarball_url: $url,
-                  integrity: $integrity, source_sha: .git_head}
-            else error("Release provenance does not match its published tarball") end
-          ' "$work/provenance.json" > "$work/record.json"
+          sha512() {
+            echo "sha512-$(openssl dgst -sha512 -binary "$1" | openssl base64 -A)"
+          }
+          if [ "$NPM_CORE_SUSPENDED" = true ]; then
+            tarball_url="${RELEASE_BASE}/v${VERSION}/veryfront-${VERSION}.tgz"
+            fetch "${RELEASE_BASE}/v${VERSION}/veryfront-${VERSION}.npm-provenance.json" "$work/provenance.json"
+            fetch "$tarball_url" "$work/package.tgz"
+            jq -ce --arg version "$VERSION" --arg integrity "$(sha512 "$work/package.tgz")" --arg url "$tarball_url" '
+              if type == "object" and (keys == ["git_head", "package", "repository", "schema_version"])
+                and .schema_version == 1
+                and (.package | type == "object" and keys == ["integrity", "name", "version"])
+                and .package.name == "veryfront" and .package.version == $version
+                and .package.integrity == $integrity
+                and .repository == "https://github.com/veryfront/veryfront-code"
+                and (.git_head | type == "string" and test("^[0-9a-f]{40}$"))
+              then {schema_version: 1, version: $version, tarball_url: $url,
+                    integrity: $integrity, source_sha: .git_head}
+              else error("Release provenance does not match its published tarball") end
+            ' "$work/provenance.json" > "$work/record.json"
+          else
+            tarball_url="${NPM_REGISTRY}/-/veryfront-${VERSION}.tgz"
+            fetch "${NPM_REGISTRY}/${VERSION}" "$work/metadata.json"
+            fetch "$tarball_url" "$work/package.tgz"
+            jq -ce --arg version "$VERSION" --arg integrity "$(sha512 "$work/package.tgz")" --arg url "$tarball_url" '
+              if type == "object" and .name == "veryfront" and .version == $version
+                and .repository.url == "git+https://github.com/veryfront/veryfront-code.git"
+                and .dist.integrity == $integrity and .dist.tarball == $url
+                and (.gitHead | type == "string" and test("^[0-9a-f]{40}$"))
+              then {schema_version: 1, version: $version, tarball_url: $url,
+                    integrity: $integrity, source_sha: .gitHead}
+              else error("npm metadata does not match its published tarball") end
+            ' "$work/metadata.json" > "$work/record.json"
+          fi
 
           if gh release view "$RECORD_TAG" --json body --jq .body > "$work/current.json" 2> "$work/view.err"; then
             exists=true

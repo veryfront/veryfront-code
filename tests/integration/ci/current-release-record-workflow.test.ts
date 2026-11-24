@@ -10,6 +10,7 @@ const VERSION = "0.1.5-rc.10";
 const SOURCE_SHA = "3d43cdfb299f95c9befab12fc67ee310c944a8ba";
 const TARBALL_URL =
   `https://github.com/veryfront/veryfront/releases/download/v${VERSION}/veryfront-${VERSION}.tgz`;
+const NPM_TARBALL_URL = `https://registry.npmjs.org/veryfront/-/veryfront-${VERSION}.tgz`;
 const TARBALL = new TextEncoder().encode("veryfront release tarball bytes\n");
 
 function asRecord(value: unknown, context: string): YamlRecord {
@@ -29,6 +30,11 @@ async function recordStep(): Promise<YamlRecord> {
   const job = asRecord((await jobs())["publish-current-release"], "publish-current-release");
   assert(Array.isArray(job.steps));
   assertEquals(job.steps.length, 1);
+  return asRecord(job.steps[0], "record step");
+}
+
+function step0(job: YamlRecord): YamlRecord {
+  assert(Array.isArray(job.steps));
   return asRecord(job.steps[0], "record step");
 }
 
@@ -52,6 +58,8 @@ echo "$url" >> "$STATE/curl.log"
 case "$url" in
   "$EXPECTED_BASE/v$VERSION/veryfront-$VERSION.npm-provenance.json") cp "$FIXTURES/provenance.json" "$out" ;;
   "$EXPECTED_BASE/v$VERSION/veryfront-$VERSION.tgz") cp "$FIXTURES/package.tgz" "$out" ;;
+  "$NPM_REGISTRY/$VERSION") cp "$FIXTURES/metadata.json" "$out" ;;
+  "$NPM_REGISTRY/-/veryfront-$VERSION.tgz") cp "$FIXTURES/package.tgz" "$out" ;;
   *) echo "unexpected URL $url" >&2; exit 22 ;;
 esac
 `;
@@ -78,7 +86,12 @@ interface Run {
 }
 
 async function run(
-  options: { existing?: unknown; provenance?: unknown; env?: Record<string, string> } = {},
+  options: {
+    existing?: unknown;
+    provenance?: unknown;
+    metadata?: unknown;
+    env?: Record<string, string>;
+  } = {},
 ): Promise<Run> {
   const step = await recordStep();
   return await withTempDir(async (dir) => {
@@ -94,6 +107,14 @@ async function run(
       repository: "https://github.com/veryfront/veryfront-code",
     };
     await Deno.writeTextFile(`${fixtures}/provenance.json`, JSON.stringify(provenance));
+    const metadata = options.metadata ?? {
+      name: "veryfront",
+      version: VERSION,
+      gitHead: SOURCE_SHA,
+      repository: { type: "git", url: "git+https://github.com/veryfront/veryfront-code.git" },
+      dist: { integrity: await integrityOf(TARBALL), tarball: NPM_TARBALL_URL },
+    };
+    await Deno.writeTextFile(`${fixtures}/metadata.json`, JSON.stringify(metadata));
     if (options.existing !== undefined) {
       await Deno.writeTextFile(
         `${state}/body`,
@@ -110,6 +131,8 @@ async function run(
         EXPECTED_BASE: String(env.RELEASE_BASE),
         RELEASE_BASE: String(env.RELEASE_BASE),
         RECORD_TAG: String(env.RECORD_TAG),
+        NPM_REGISTRY: String(env.NPM_REGISTRY),
+        NPM_CORE_SUSPENDED: "true",
         VERSION,
         GITHUB_SHA: "1111111111111111111111111111111111111111",
         RUNNER_TEMP: `${dir}/runner`,
@@ -144,7 +167,11 @@ describe("current release record", () => {
     assertEquals(dispatch?.name, "Trigger sandbox deploy");
 
     const job = asRecord(all["publish-current-release"], "publish-current-release");
-    assertEquals(job.needs, ["quality-gate-registry"]);
+    assertEquals(job.needs, ["quality-gate-registry", "prerelease"]);
+    assertEquals(
+      asRecord(step0(job).env, "record env").NPM_CORE_SUSPENDED,
+      "${{ needs.prerelease.outputs.npm_core_suspended == 'true' }}",
+    );
     assertEquals(job.permissions, { contents: "write" });
     assertEquals(job.concurrency, { group: "veryfront-current-release", queue: "max" });
     for (
@@ -174,6 +201,33 @@ describe("current release record", () => {
     assert(create, result.gh.join("\n"));
     assertStringIncludes(create, "--prerelease --latest=false");
     assertStringIncludes(create, "--target 1111111111111111111111111111111111111111");
+  });
+
+  it("records the npm tarball when the core is published on npm", async () => {
+    const result = await run({ env: { NPM_CORE_SUSPENDED: "false" } });
+    assertEquals(result.output.code, 0, stderr(result));
+    assertEquals(JSON.parse(result.body ?? ""), {
+      schema_version: 1,
+      version: VERSION,
+      tarball_url: NPM_TARBALL_URL,
+      integrity: await integrityOf(TARBALL),
+      source_sha: SOURCE_SHA,
+    });
+  });
+
+  it("refuses npm metadata whose integrity differs from the tarball", async () => {
+    const result = await run({
+      env: { NPM_CORE_SUSPENDED: "false" },
+      metadata: {
+        name: "veryfront",
+        version: VERSION,
+        gitHead: SOURCE_SHA,
+        repository: { url: "git+https://github.com/veryfront/veryfront-code.git" },
+        dist: { integrity: await integrityOf(new Uint8Array([1])), tarball: NPM_TARBALL_URL },
+      },
+    });
+    assert(result.output.code !== 0);
+    assertEquals(result.body, undefined);
   });
 
   it("refuses provenance whose integrity differs from the tarball", async () => {
