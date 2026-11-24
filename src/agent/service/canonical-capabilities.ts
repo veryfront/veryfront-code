@@ -10,7 +10,8 @@ import {
 } from "#veryfront/security/input-validation/limits.ts";
 import type { BrokerRuntimeAgentIngressOptions } from "./broker-ingress.ts";
 
-/** Report the composed protocol only to the exact operator-signed source namespace. */
+/** Version two additionally requires single-use API dispatch admission before executor allocation.
+ * Report the composed protocol only to the exact operator-signed source namespace. */
 export function createCanonicalCapabilitiesHandler(
   input:
     & Pick<
@@ -68,7 +69,7 @@ export function createCanonicalCapabilitiesHandler(
         if (operationSignal.aborted) return unavailable();
         return Response.json({
           project_id: projectId,
-          capabilities: { account_agent_publications: { version: 1 } },
+          capabilities: { account_agent_publications: { version: 2 } },
         }, { headers: { "cache-control": "no-store" } });
       } finally {
         clearTimeout(timer);

@@ -162,7 +162,7 @@ Deno.test("composed capabilities authenticate exact source namespace and do no A
     assertEquals(response.status, 200);
     assertEquals(await response.json(), {
       project_id: projectId,
-      capabilities: { account_agent_publications: { version: 1 } },
+      capabilities: { account_agent_publications: { version: 2 } },
     });
     assertEquals((await service.capabilities.handle(request(body, "invalid"))).status, 401);
     assertEquals(
