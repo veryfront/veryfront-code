@@ -80,6 +80,8 @@ export function createManagedBrokerHandler<TAuthorization>(options: {
   broker: ManagedExecutorStarter;
   /** Trusted route configuration; never read from request data. */
   responseMode: "detached" | "sse";
+  /** Includes canceled executions until executor and persistence cleanup settle. */
+  maxActiveRuns?: number;
   signal?: AbortSignal;
   resolveIngressOptions(input: {
     request: Request;
@@ -352,6 +354,7 @@ export function createManagedDurableBrokerHandler(options: {
 function createManagedBrokerIngressHandler<TIngress>(options: {
   broker: ManagedExecutorStarter;
   responseMode: "detached" | "sse";
+  maxActiveRuns?: number;
   signal?: AbortSignal;
   parse(request: Request, signal: AbortSignal): Promise<
     Response | {
@@ -365,6 +368,13 @@ function createManagedBrokerIngressHandler<TIngress>(options: {
   createInferenceResolver(ingress: TIngress): AgentModelRuntimeResolver | undefined;
   onExecutionError?: (error: unknown, runId: string) => void;
 }) {
+  const maxActiveRuns = options.maxActiveRuns;
+  if (
+    maxActiveRuns !== undefined &&
+    (!Number.isSafeInteger(maxActiveRuns) || maxActiveRuns < 1 || maxActiveRuns > 1024)
+  ) {
+    throw new TypeError("Invalid managed run ownership limit");
+  }
   const active = new Map<string, { accepted: boolean; settled: Promise<void> }>();
   const lifetime = new AbortController();
   const executions = new Set<Promise<void>>();
@@ -392,6 +402,9 @@ function createManagedBrokerIngressHandler<TIngress>(options: {
         return options.responseMode === "detached"
           ? Response.json({ accepted: true, duplicate: true }, { status: 202 })
           : Response.json({ errorCode: "BROKER_RUN_ALREADY_ACTIVE" }, { status: 409 });
+      }
+      if (maxActiveRuns !== undefined && active.size >= maxActiveRuns) {
+        return Response.json({ errorCode: "BROKER_UNAVAILABLE" }, { status: 503 });
       }
       const reservation = Promise.withResolvers<void>();
       const activeRun = { accepted: false, settled: reservation.promise };

@@ -55,6 +55,7 @@ export function createCanonicalManagedBrokerHandler<T>(
   return createManagedBrokerHandler({
     broker: options.broker,
     responseMode: options.responseMode,
+    maxActiveRuns: options.maxActiveRuns,
     signal: options.signal,
     resolveIngressOptions: options.resolveIngressOptions,
     onExecutionError: options.onExecutionError,
@@ -89,10 +90,10 @@ export function createCanonicalManagedBrokerHandler<T>(
         fetch: transport,
       });
       signal.throwIfAborted();
-      if (
-        !["pending", "running", "waiting_for_tool"].includes(lifecycle.status) ||
-        (lifecycle.status === "waiting_for_tool" && !ingress.executor.input.resumeToolCall)
-      ) {
+      // The API claims and transitions a resumed run before signing its dispatch.
+      // A durable wait therefore belongs to an already-paused segment, even if
+      // an old signed request still carries its previous resume decision.
+      if (!["pending", "running"].includes(lifecycle.status)) {
         throw new BrokerIngressError(409, "BROKER_RUN_NOT_ACTIVE");
       }
       const snapshot: ManagedBrokerRunSnapshot = {

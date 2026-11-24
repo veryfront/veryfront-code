@@ -1019,13 +1019,13 @@ describe("managed durable broker handler", () => {
   }
 });
 
-async function request(signal?: AbortSignal, requestPath = path) {
+async function request(signal?: AbortSignal, requestPath = path, runId = "run-1") {
   const body = JSON.stringify({
     run: {
       agentServiceId: "service-1",
       agentId: "builder",
       conversationId: "00000000-0000-4000-8000-000000000001",
-      runId: "run-1",
+      runId,
       messageId: "00000000-0000-4000-8000-000000000002",
       inputAnchorMessageId: "00000000-0000-4000-8000-000000000003",
       requestedByUserId: userId,
@@ -1040,7 +1040,7 @@ async function request(signal?: AbortSignal, requestPath = path) {
   const signed = await createControlPlaneSignature(body, {
     audience: "demo-project",
     projectId,
-    requestId: "run-1",
+    requestId: runId,
     requestPath,
   });
   return {
@@ -1185,6 +1185,7 @@ async function handler(
   options: {
     signal?: AbortSignal;
     serviceSignal?: AbortSignal;
+    maxActiveRuns?: number;
     requestPath?: string;
     failStart?: boolean;
     admitBeforeFailure?: boolean;
@@ -1240,8 +1241,10 @@ async function handler(
   const authorizationRelease = Promise.withResolvers<void>();
   const admitted = Promise.withResolvers<void>();
   const executionController = new AbortController();
+  const additionalKeys = new Map<string, string>();
   const managed = createManagedBrokerHandler({
     responseMode: mode,
+    maxActiveRuns: options.maxActiveRuns,
     signal: options.serviceSignal,
     broker: {
       start: (start, lifecycle) => {
@@ -1253,8 +1256,8 @@ async function handler(
           : Promise.resolve(fixture.runtime);
       },
     },
-    resolveIngressOptions: () => ({
-      publicKeyPem: first.publicKeyPem,
+    resolveIngressOptions: ({ runId }) => ({
+      publicKeyPem: additionalKeys.get(runId) ?? first.publicKeyPem,
       audience: "demo-project",
       projectId,
       expectedSurface: "studio",
@@ -1331,6 +1334,11 @@ async function handler(
     releaseOutput: outputRelease.resolve,
     outputEntered: outputEntered.promise,
     abortExecution: () => executionController.abort(),
+    async nextRequest(runId: string) {
+      const next = await request(undefined, `/api/control-plane/runs/${runId}/stream`, runId);
+      additionalKeys.set(runId, next.publicKeyPem);
+      return next.request;
+    },
     get prepareCalls() {
       return prepareCalls;
     },
@@ -1525,6 +1533,33 @@ describe("managed broker handler", () => {
     } finally {
       f.fixture.release();
       await f.managed.close();
+    }
+  });
+
+  it("holds capacity for canceled executions until their output and cleanup settle", async () => {
+    const f = await handler("sse", { maxActiveRuns: 1, waitForOutput: true });
+    let reading: Promise<string> | undefined;
+    let next: Response | undefined;
+    try {
+      const response = await f.managed.handle(f.first.request);
+      reading = response.text();
+      f.fixture.release();
+      await f.outputEntered;
+      f.abortExecution();
+      next = await f.managed.handle(await f.nextRequest("run-2"));
+      assertEquals(next.status, 503);
+      assertEquals(f.prepareCalls, 1);
+      assertEquals(f.brokerStarts, 1);
+      assertEquals(f.managed.active, 1);
+      f.releaseOutput();
+      await reading;
+      assertEquals(f.managed.active, 0);
+    } finally {
+      f.releaseOutput();
+      f.fixture.release();
+      await next?.body?.cancel();
+      await f.managed.close();
+      await reading;
     }
   });
 

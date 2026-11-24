@@ -51,6 +51,7 @@ export function createCanonicalManagedBrokerService<T>(
   const handler = createCanonicalManagedBrokerHandler({
     ...canonicalOptions,
     responseMode,
+    maxActiveRuns,
     async prepareExecutor(input) {
       if (closed) throw new BrokerIngressError(503, "BROKER_UNAVAILABLE");
       const negotiated = input.ingress.privateAuthority.projectEventPersistence;

@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assert, assertEquals } from "#veryfront/testing/assert.ts";
+import { assert, assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { managedStart } from "../../../tests/fixtures/managed-executor-start.ts";
 import type {
@@ -293,6 +293,27 @@ async function fixture(input: {
 }
 
 describe("canonical managed broker preparation", () => {
+  it("validates its configured admission limit before invoking deployment callbacks", () => {
+    assertThrows(
+      () =>
+        createCanonicalManagedBrokerHandler({
+          maxActiveRuns: 0,
+          apiUrl: "https://api.example.test",
+          responseMode: "sse",
+          resolveProvider: () => "synthetic",
+          broker: { start: () => Promise.reject(new Error("Unexpected allocation")) },
+          resolveIngressOptions() {
+            throw new Error("Unexpected ingress resolution");
+          },
+          prepareExecutor() {
+            throw new Error("Unexpected preparation");
+          },
+        }),
+      TypeError,
+      "Invalid managed run ownership limit",
+    );
+  });
+
   it("acknowledges the signed API writer snapshot and leaves terminal ownership with the API", async () => {
     const result = await fixture({ stream: true, projectWriter: "valid" });
     try {
@@ -417,7 +438,7 @@ describe("canonical managed broker preparation", () => {
     }
   });
 
-  it("admits a waiting run with its signed resume decision", async () => {
+  it("refuses a replayed signed resume after its segment has entered another wait", async () => {
     const result = await fixture({
       status: "waiting",
       resume: true,
@@ -425,8 +446,9 @@ describe("canonical managed broker preparation", () => {
       projectWriter: "valid",
     });
     try {
-      assertEquals(result.response.status, 200);
-      await result.response.text();
+      assertEquals(result.response.status, 409);
+      assertEquals(result.prepared, 0);
+      assertEquals(result.started, undefined);
     } finally {
       await result.close();
     }
