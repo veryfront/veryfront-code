@@ -39,3 +39,38 @@ Deno.test("canonical tool preparation preserves verified authority, ownership an
   const output = await runCanonicalWriterProgram(program);
   assertEquals(output.split("\n").at(-1), "canonical-tool-policy-qualified");
 });
+
+for (const origin of ["api", "project", "remote"] as const) {
+  Deno.test(`canonical tool preparation enforces signed no-delegation for ${origin} tools`, async () => {
+    let scenario = program.replace(
+      "invocation({ agentConfig:",
+      "invocation({ allowDelegation: false, agentConfig:",
+    );
+    if (origin === "api") {
+      scenario = scenario.replaceAll("api_task", "invoke_agent").replace(
+        '["invoke_agent", "native_lookup", "veryfront__remote_lookup"]',
+        '["native_lookup", "veryfront__remote_lookup"]',
+      );
+    }
+    if (origin === "project") {
+      scenario = scenario.replaceAll("native_lookup", "invoke_agent").replace(
+        '["api_task", "invoke_agent", "veryfront__remote_lookup"]',
+        '["api_task", "veryfront__remote_lookup"]',
+      ).replace(
+        'assertEquals(policy.projectToolNames, ["invoke_agent"]);',
+        "assertEquals(policy.projectToolNames, []);",
+      );
+    }
+    if (origin === "remote") {
+      scenario = scenario.replaceAll("remote_lookup", "invoke_agent").replace(
+        '["api_task", "native_lookup", "veryfront__invoke_agent"]',
+        '["api_task", "native_lookup"]',
+      ).replace(
+        'assertEquals(await capability.source.executeTool("veryfront__invoke_agent", {}, { ...capability.context, toolCallId: "remote-1" }), "remote");',
+        'await assertRejects(() => capability.source.executeTool("veryfront__invoke_agent", {}, { ...capability.context, toolCallId: "remote-1" }));',
+      ).replace("assertEquals(calls, 1);", "assertEquals(calls, 0);");
+    }
+    const output = await runCanonicalWriterProgram(scenario);
+    assertEquals(output.split("\n").at(-1), "canonical-tool-policy-qualified");
+  });
+}

@@ -2,6 +2,7 @@ import { requireSecureInferenceApiBaseUrl } from "#veryfront/provider/veryfront-
 import { validateRemoteMcpEndpoint } from "#veryfront/tool/remote-mcp.ts";
 import { createCanonicalCapabilitiesHandler } from "#veryfront/agent/service/canonical-capabilities.ts";
 import {
+  isHostedDelegationToolAllowed,
   isHostedToolSelectionClosed,
   resolveHostedRuntimeRequestConfig,
 } from "#veryfront/agent/hosted/runtime-request-config.ts";
@@ -179,7 +180,9 @@ export function createInstalledCanonicalAgentService(options: {
       const session = resolveSession(ingress.executor, preparationSignal);
       const projectToolNames = [
         ...getServerResolvedProjectToolNames(ingress.executor.input.forwardedProps),
-      ];
+      ].filter((name) =>
+        isHostedDelegationToolAllowed(name, ingress.executor.input.allowDelegation)
+      );
       const source = await broker.prepareSource({
         session,
         installation: {

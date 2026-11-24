@@ -1,3 +1,4 @@
+import { isHostedDelegationToolAllowed } from "../hosted/runtime-request-config.ts";
 import { getServerResolvedProjectToolNames } from "../runtime/server-resolved-project-tools.ts";
 import { AGENT_ERROR } from "#veryfront/errors";
 import type { RemoteToolSource, ToolExecutionContext } from "#veryfront/tool/types.ts";
@@ -54,6 +55,11 @@ export function createCanonicalApiToolSource<T>(input: {
   }));
   if (definitions.size !== declared.length) throw new TypeError("Duplicate canonical API tool");
   for (const name of projectTools) definitions.delete(name);
+  for (const name of definitions.keys()) {
+    if (!isHostedDelegationToolAllowed(name, input.ingress.executor.input.allowDelegation)) {
+      definitions.delete(name);
+    }
+  }
   const wait = input.waitForToolResult.bind(input);
   const lifetime = input.signal;
   const pending = new Set<string>();

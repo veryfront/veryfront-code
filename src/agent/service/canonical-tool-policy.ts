@@ -1,5 +1,6 @@
 import {
   getForwardedHostedRuntimeOverrides,
+  isHostedDelegationToolAllowed,
   isHostedToolSelectionClosed,
 } from "../hosted/runtime-request-config.ts";
 import { isKnowledgeEnabled } from "../runtime/knowledge-tools.ts";
@@ -133,9 +134,11 @@ export async function prepareCanonicalBrokerTools(input: {
       createRemoteToolSource: input.createRemoteToolSource,
     });
     const limits = executorToolLimits();
+    const allowTool = (name: string) =>
+      isHostedDelegationToolAllowed(name, input.ingress.executor.input.allowDelegation);
     const projectToolNames = [
       ...getServerResolvedProjectToolNames(input.ingress.executor.input.forwardedProps),
-    ];
+    ].filter(allowTool);
     const catalog = new Map<string, { ownerAgentId?: string; shortName?: string }>(
       projectToolNames.map((name) => [name, {}]),
     );
@@ -169,7 +172,9 @@ export async function prepareCanonicalBrokerTools(input: {
       const names = new Set<string>();
       for (const value of definitions) {
         const definition = executorToolDefinition(value, limits);
-        if (input.apiTools.allowedToolNames.has(definition.name)) continue;
+        if (!allowTool(definition.name) || input.apiTools.allowedToolNames.has(definition.name)) {
+          continue;
+        }
         if (names.has(definition.name) || catalog.has(definition.name)) {
           throw new TypeError("Ambiguous canonical tool ownership");
         }
