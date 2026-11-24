@@ -1,3 +1,5 @@
+import { readCanonicalSourceDefinition } from "./canonical-source-definition.ts";
+import type { RuntimeAgentMarkdownDefinition } from "../runtime/agent-definition.ts";
 import type { BrokerRuntimeAgentIngress } from "./broker-ingress.ts";
 import { BrokerIngressError } from "./broker-ingress.ts";
 import {
@@ -23,6 +25,8 @@ import type { ManagedExecutorStartInput } from "../hosted/managed-executor-broke
 /** Resolve model policy using the consuming run's catalog and private inference authority. */
 export async function prepareCanonicalBrokerModel<T>(input: {
   ingress: BrokerRuntimeAgentIngress<T>;
+  /** Definition read over the authenticated source channel; API structured metadata may be absent for code agents. */
+  sourceDefinition: RuntimeAgentMarkdownDefinition;
   apiBaseUrl: string;
   signal: AbortSignal;
   /** Explicit deployment ceilings; this adapter does not grant an implicit quota. */
@@ -34,6 +38,7 @@ export async function prepareCanonicalBrokerModel<T>(input: {
   };
 }) {
   input.signal.throwIfAborted();
+  const definition = readCanonicalSourceDefinition(input.ingress.executor, input.sourceDefinition);
   requireSecureInferenceApiBaseUrl(input.apiBaseUrl);
   const limits = { ...input.limits };
   if (
@@ -61,7 +66,7 @@ export async function prepareCanonicalBrokerModel<T>(input: {
   const config = scoped(() =>
     resolveHostedRuntimeRequestConfig({
       request: { forwardedProps: input.ingress.executor.input.forwardedProps },
-      agentConfig: input.ingress.executor.agentConfig ?? {},
+      agentConfig: definition,
       resolveModelId: (model) => model,
       resolveModelThinking: resolveVeryfrontCloudModelThinking,
     })

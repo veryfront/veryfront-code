@@ -1,3 +1,5 @@
+import { readCanonicalSourceDefinition } from "./canonical-source-definition.ts";
+import type { RuntimeAgentMarkdownDefinition } from "../runtime/agent-definition.ts";
 import type { BrokerRuntimeAgentIngress } from "./broker-ingress.ts";
 import type { createCanonicalBrokerAuthorizer } from "./canonical-broker-authorization.ts";
 import { createVerifiedPlatformToolDependencyRunner } from "./auth.ts";
@@ -21,6 +23,8 @@ type Authorization = NonNullable<
 /** Prepare authenticated remote capabilities; project code remains in the executor. */
 export async function prepareCanonicalBrokerTools(input: {
   ingress: BrokerRuntimeAgentIngress<Authorization>;
+  /** Definition read over the authenticated source channel, including configured first-party MCP presets. */
+  sourceDefinition: RuntimeAgentMarkdownDefinition;
   apiTools: ExecutorToolCapability;
   apiMcpUrl: string;
   studioMcpUrl?: string;
@@ -32,6 +36,7 @@ export async function prepareCanonicalBrokerTools(input: {
   >[0]["createRemoteToolSource"];
 }) {
   input.signal.throwIfAborted();
+  const definition = readCanonicalSourceDefinition(input.ingress.executor, input.sourceDefinition);
   const { maxCalls, maxConcurrent } = input.limits;
   if (
     !Number.isSafeInteger(maxCalls) || maxCalls < 1 || !Number.isSafeInteger(maxConcurrent) ||
@@ -110,7 +115,7 @@ export async function prepareCanonicalBrokerTools(input: {
       authToken: input.ingress.privateAuthority.apiAuthToken,
       apiMcpUrl: input.apiMcpUrl,
       studioMcpUrl: input.studioMcpUrl,
-      mcpServers: input.ingress.executor.agentConfig?.mcpServers,
+      mcpServers: definition.mcpServers,
       clientProfile: resolveRuntimeClientProfile(input.ingress.executor.input.forwardedProps),
       getProjectId: () => identity.projectId,
       defaultProjectId: () => identity.projectId,

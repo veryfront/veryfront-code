@@ -89,6 +89,7 @@ Deno.test("canonical model preparation uses only consuming inference scope and s
   await withCatalog(async (requests) => {
     const policy = await prepareCanonicalBrokerModel({
       ingress: input,
+      sourceDefinition: input.executor.agentConfig!,
       apiBaseUrl: "https://93.184.216.34/api",
       signal: new AbortController().signal,
       limits,
@@ -113,6 +114,7 @@ Deno.test("canonical model preparation refuses missing inference authority befor
   await withCatalog(async (requests) => {
     await assertRejects(() =>
       prepareCanonicalBrokerModel({
+        sourceDefinition: input.executor.agentConfig!,
         ingress: {
           ...input,
           privateAuthority: { ...input.privateAuthority, inferenceAuthToken: undefined },
@@ -131,6 +133,7 @@ Deno.test("canonical model preparation refuses unlisted and ambiguous model iden
     await assertRejects(() =>
       prepareCanonicalBrokerModel({
         ingress: input,
+        sourceDefinition: input.executor.agentConfig!,
         apiBaseUrl: "https://93.184.216.34/api",
         signal: new AbortController().signal,
         limits,
@@ -142,6 +145,7 @@ Deno.test("canonical model preparation refuses unlisted and ambiguous model iden
     await assertRejects(() =>
       prepareCanonicalBrokerModel({
         ingress: ambiguous,
+        sourceDefinition: ambiguous.executor.agentConfig!,
         apiBaseUrl: "https://93.184.216.34/api",
         signal: new AbortController().signal,
         limits,
@@ -156,6 +160,7 @@ Deno.test("canonical model authority retires with cancellation and accepts no im
       () =>
         prepareCanonicalBrokerModel({
           ingress: input,
+          sourceDefinition: input.executor.agentConfig!,
           apiBaseUrl: "https://93.184.216.34/api",
           signal: new AbortController().signal,
           limits: { ...limits, maxCalls: 0 },
@@ -166,6 +171,7 @@ Deno.test("canonical model authority retires with cancellation and accepts no im
     const controller = new AbortController();
     const policy = await prepareCanonicalBrokerModel({
       ingress: input,
+      sourceDefinition: input.executor.agentConfig!,
       apiBaseUrl: "https://93.184.216.34/api",
       signal: controller.signal,
       limits,
@@ -182,6 +188,7 @@ Deno.test("canonical model catalogs remain isolated between consuming credential
   await withCatalog(async (requests) => {
     const policy = await prepareCanonicalBrokerModel({
       ingress: first,
+      sourceDefinition: first.executor.agentConfig!,
       apiBaseUrl: "https://93.184.216.34/api",
       signal: new AbortController().signal,
       limits,
@@ -190,6 +197,7 @@ Deno.test("canonical model catalogs remain isolated between consuming credential
     await assertRejects(() =>
       prepareCanonicalBrokerModel({
         ingress: second,
+        sourceDefinition: second.executor.agentConfig!,
         apiBaseUrl: "https://93.184.216.34/api",
         signal: new AbortController().signal,
         limits,
@@ -217,6 +225,7 @@ Deno.test("canonical output overrides do not consume the model reasoning allowan
   await withCatalog(async () => {
     const policy = await prepareCanonicalBrokerModel({
       ingress: input,
+      sourceDefinition: input.executor.agentConfig!,
       apiBaseUrl: "https://93.184.216.34/api",
       signal: new AbortController().signal,
       limits,
@@ -232,6 +241,7 @@ Deno.test("canonical inference retains consuming scope despite a different ambie
   await withCatalog(async (requests) => {
     const policy = await prepareCanonicalBrokerModel({
       ingress: input,
+      sourceDefinition: input.executor.agentConfig!,
       apiBaseUrl: "https://93.184.216.34/api",
       signal: new AbortController().signal,
       limits,
@@ -272,5 +282,34 @@ Deno.test("canonical inference retains consuming scope despite a different ambie
     } finally {
       policy.cleanup();
     }
+  });
+});
+
+Deno.test("code agents retain source model metadata when the API structured projection is absent", async () => {
+  const base = await ingress();
+  const input = { ...base, executor: { ...base.executor, agentConfig: undefined } };
+  await withCatalog(async (requests) => {
+    const policy = await prepareCanonicalBrokerModel({
+      ingress: input,
+      sourceDefinition: base.executor.agentConfig!,
+      apiBaseUrl: "https://93.184.216.34/api",
+      signal: new AbortController().signal,
+      limits,
+    });
+    assertEquals(policy.modelId, "veryfront-cloud/anthropic/claude-sonnet-test");
+    policy.cleanup();
+    const count = requests.length;
+    await assertRejects(
+      () =>
+        prepareCanonicalBrokerModel({
+          ingress: input,
+          sourceDefinition: { ...base.executor.agentConfig!, id: "foreign" },
+          apiBaseUrl: "https://93.184.216.34/api",
+          signal: new AbortController().signal,
+          limits,
+        }),
+      TypeError,
+    );
+    assertEquals(requests.length, count);
   });
 });
