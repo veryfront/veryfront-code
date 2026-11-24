@@ -1,6 +1,6 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
-import { runCanonicalWriterProgram } from "./canonical-writer.test-helpers.ts";
+import { runCanonicalWriterProgram } from "#veryfront/agent/service/canonical-writer.test-helpers.ts";
 
 const program = `
 import "#veryfront/schemas/_test-setup.ts";

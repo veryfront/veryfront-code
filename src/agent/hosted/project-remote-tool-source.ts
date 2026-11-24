@@ -10,16 +10,20 @@ import {
 } from "#veryfront/tool/platform-source-provenance.ts";
 import {
   createProjectScopedRemoteToolCatalog,
-  createRemoteMCPToolSource,
   isProjectNavigationRemoteTool,
   type ProjectScopedRemoteToolCatalogOptions,
   type ProjectScopedRemoteToolDefaultProjectId,
   type ProjectScopedRemoteToolOptions,
+} from "#veryfront/tool/project-scoped-remote-tools.ts";
+import {
+  createRemoteMCPToolSource,
   type RemoteMCPToolSourceConfig,
-  type RemoteToolSource,
-  type ToolDefinition,
-  type ToolExecutionContext,
-} from "#veryfront/tool";
+} from "#veryfront/tool/remote-mcp.ts";
+import type {
+  RemoteToolSource,
+  ToolDefinition,
+  ToolExecutionContext,
+} from "#veryfront/tool/types.ts";
 
 import {
   type AgentServiceMcpServerConfig,
