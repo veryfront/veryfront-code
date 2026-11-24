@@ -832,6 +832,7 @@ function startsMdxHeadingFlow(line: string): boolean {
 
 type MdxHeadingContainer =
   | { kind: "quote" }
+  | { kind: "footnote"; indent: 4 }
   | { kind: "list"; indent: number; empty: boolean };
 
 type MdxHeadingParagraph = {
@@ -918,6 +919,28 @@ type HeadingInterruption = {
   owner: MdxHeadingContainer[];
 };
 
+/** Footnote labels use GFM's single-line, non-whitespace identifier grammar. */
+function headingFootnotePrefix(line: string, mdx: boolean): number {
+  const start = (mdx ? /^ *\[\^/ : /^ {0,3}\[\^/).exec(line);
+  if (!start) return 0;
+  let size = 0;
+  for (let index = start[0].length; index < line.length; index += 1) {
+    const character = line[index];
+    if (character === "]") {
+      if (!size || size > 999 || line[index + 1] !== ":") return 0;
+      const whitespace = /^[ \t]*/.exec(line.slice(index + 2))?.[0].length ?? 0;
+      return index + 2 + whitespace;
+    }
+    if (character === "[" || /[ \t\r\n]/.test(character ?? "")) return 0;
+    size += 1;
+    if (character === "\\" && /[\[\]\\]/.test(line[index + 1] ?? "")) {
+      index += 1;
+      size += 1;
+    }
+  }
+  return 0;
+}
+
 /** Match old ownership before opening prefixes with inherited interruption rules. */
 function headingOwnerLine(
   source: string,
@@ -940,26 +963,41 @@ function headingOwnerLine(
       if (!prefix) break;
       line = line.slice(prefix[0].length);
     } else {
-      if (frame.empty && !hasHeadingContent(line, mdx)) break;
+      if (frame.kind === "list" && frame.empty && !hasHeadingContent(line, mdx)) break;
       if ((/^ */.exec(line)?.[0].length ?? 0) < frame.indent) {
-        if (hasHeadingContent(line, mdx) || frame.empty) break;
+        if (hasHeadingContent(line, mdx) || frame.kind === "list" && frame.empty) break;
         line = "";
       } else line = line.slice(frame.indent);
     }
     owner.push(frame);
   }
   const matchedOwner = [...owner];
+  // A continued outer footnote keeps nested footnote paragraph ownership,
+  // even when the physical line omits the nested four-column prefix.
+  if (
+    context?.kind === "paragraph" && owner.at(-1)?.kind === "footnote" &&
+    owner.length < context.owner.length &&
+    owner.every((frame, index) => frame === context.owner[index]) &&
+    context.owner.slice(owner.length).every((frame) => frame.kind === "footnote")
+  ) owner.push(...context.owner.slice(owner.length));
   const sameContext = context !== undefined && sameHeadingOwner(owner, context.owner);
   const lazy = Boolean(
     context?.kind === "paragraph" && !sameContext &&
       owner.every((frame, index) => frame === context.owner[index]) &&
-      hasHeadingContent(line, mdx) && !startsInterruptingBlock(line, mdx, flow?.(line, owner)) &&
+      hasHeadingContent(line, mdx) && !headingFootnotePrefix(line, mdx) &&
+      !startsInterruptingBlock(line, mdx, flow?.(line, owner)) &&
       headingListMarker(line, mdx) === null,
   );
   if (lazy && context) {
     return { line, owner: context.owner, matchedOwner, lazy: true, sameParagraph: true };
   }
   for (;;) {
+    const footnote = headingFootnotePrefix(line, mdx);
+    if (footnote) {
+      owner.push({ kind: "footnote", indent: 4 });
+      line = line.slice(footnote);
+      continue;
+    }
     const quote = (mdx ? /^ *>[ \t]?/ : /^ {0,3}>[ \t]?/).exec(line);
     if (quote) {
       owner.push({ kind: "quote" });
@@ -988,6 +1026,16 @@ function headingOwnerLine(
     lazy: false,
     sameParagraph: context?.kind === "paragraph" && sameHeadingOwner(owner, context.owner),
   };
+}
+
+/** Concrete leaves continue at the physical footnote prefix that opened them. */
+function headingLeafOwner(parsed: ReturnType<typeof headingOwnerLine>): MdxHeadingContainer[] {
+  const missing = parsed.owner.slice(parsed.matchedOwner.length);
+  if (!missing.length || !missing.every((frame) => frame.kind === "footnote")) return parsed.owner;
+  if (parsed.lazy) return parsed.owner.slice(0, parsed.matchedOwner.length + 1);
+  return parsed.sameParagraph && parsed.matchedOwner.at(-1)?.kind === "footnote"
+    ? parsed.matchedOwner
+    : parsed.owner;
 }
 
 function mdxHeadingLine(
@@ -1050,7 +1098,9 @@ function headingTableDelimiter(
 }
 
 function continuesHeadingTable(line: string, mdx: boolean): boolean {
-  return hasHeadingContent(line, mdx) && !startsInterruptingBlock(line, mdx) &&
+  return hasHeadingContent(line, mdx) &&
+    !headingFootnotePrefix(expandHeadingIndentation(line), mdx) &&
+    !startsInterruptingBlock(line, mdx) &&
     !headingListMarker(line, mdx) && !(mdx && startsMdxHeadingFlow(line)) &&
     (mdx || !/^ {4}/.test(line) && markdownHtmlBlockEnd(line, true) === undefined);
 }
@@ -1133,7 +1183,7 @@ function findFirstMdxH1(markdown: string): string | undefined {
     }
     const fence = !parsed.lazy && markdownFenceStart(structural);
     if (fence) {
-      state.fence = { owner: parsed.owner, marker: fence };
+      state.fence = { owner: headingLeafOwner(parsed), marker: fence };
       state.paragraph = undefined;
       continue;
     }
@@ -1305,13 +1355,17 @@ function findFirstH1(markdown: string, mdx = false): string | undefined {
     const html = markdownHtmlBlockEnd(line, !previous || parsed.lazy);
     if (html) {
       leaf = html === "blank" || !html.test(line)
-        ? { kind: "html", owner: containers, end: html }
+        ? {
+          kind: "html",
+          owner: headingLeafOwner(parsed),
+          end: html,
+        }
         : undefined;
       continue;
     }
     const fence = !parsed.lazy && markdownFenceStart(line);
     if (fence) {
-      leaf = { kind: "fence", owner: containers, marker: fence };
+      leaf = { kind: "fence", owner: headingLeafOwner(parsed), marker: fence };
       continue;
     }
     if (!previous && !parsed.lazy && hasHeadingContent(line, false) && /^ {4}/.test(line)) {
