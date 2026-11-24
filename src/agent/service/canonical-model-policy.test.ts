@@ -374,3 +374,46 @@ Deno.test("canonical output override leaves room for additive reasoning", async 
     capabilities: { limit: { output: 8192 } },
   }]);
 });
+
+Deno.test("canonical default output validates the reasoning reservation", async () => {
+  const base = await ingress("consumer-inference", "anthropic/claude-sonnet-4-6");
+  const input = {
+    ...base,
+    executor: {
+      ...base.executor,
+      input: { ...base.executor.input, forwardedProps: { runtimeOverrides: { thinking: 4096 } } },
+    },
+  };
+  await withCatalog(async () => {
+    for (const maxOutputTokens of [2048, 4096]) {
+      await assertRejects(() =>
+        prepareCanonicalBrokerModel({
+          ingress: input,
+          sourceDefinition: input.executor.agentConfig!,
+          apiBaseUrl: "https://93.184.216.34/api",
+          signal: new AbortController().signal,
+          limits: { ...limits, maxOutputTokens },
+        })
+      );
+    }
+    const policy = await prepareCanonicalBrokerModel({
+      ingress: input,
+      sourceDefinition: input.executor.agentConfig!,
+      apiBaseUrl: "https://93.184.216.34/api",
+      signal: new AbortController().signal,
+      limits: { ...limits, maxOutputTokens: 8192 },
+    });
+    try {
+      assertEquals(policy.maxOutputTokens, undefined);
+      assertEquals(policy.model.grant.models.get(policy.modelId)?.maxOutputTokens, 8192);
+    } finally {
+      policy.cleanup();
+    }
+  }, [{
+    ...model,
+    id: "anthropic/claude-sonnet-4-6",
+    modelId: "anthropic/claude-sonnet-4-6",
+    aliases: [],
+    capabilities: { limit: { output: 8192 } },
+  }]);
+});

@@ -107,7 +107,7 @@ export async function prepareCanonicalBrokerModel<T>(input: {
   ) throw new TypeError("Invalid canonical model budget");
   // The grant covers total provider output; preparation receives only the
   // answer allowance, leaving additive reasoning inside that same ceiling.
-  const maxOutputTokens = config.requestedMaxOutputTokens === undefined ? undefined : scoped(() => {
+  const maxOutputTokens = scoped(() => {
     const thinking = config.requestedThinking ?? resolveVeryfrontCloudModelThinking(modelId);
     const reasoning = isVeryfrontCloudAnthropicSurfaceModel(modelId)
       ? getExecutorModelAdditiveReasoningTokens({
@@ -118,11 +118,13 @@ export async function prepareCanonicalBrokerModel<T>(input: {
         },
       })
       : 0;
-    const available = Math.min(config.requestedMaxOutputTokens!, output - reasoning);
+    const available = output - reasoning;
     if (!Number.isSafeInteger(available) || available < 1) {
       throw new BrokerIngressError(403, "BROKER_INGRESS_SCOPE_DENIED");
     }
-    return available;
+    return config.requestedMaxOutputTokens === undefined
+      ? undefined
+      : Math.min(config.requestedMaxOutputTokens, available);
   });
   const resolver = createVeryfrontCloudInferenceModelResolver(credential, {
     apiBaseUrl: input.apiBaseUrl,
