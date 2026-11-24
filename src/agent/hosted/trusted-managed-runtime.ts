@@ -146,6 +146,7 @@ export async function createTrustedManagedRuntime(
       },
       facades: {
         ...facades,
+        callerToolNames: options.callerToolNames,
         ...(options.hostedKnowledgeContext === undefined
           ? {}
           : { hostedKnowledgeContext: options.hostedKnowledgeContext }),

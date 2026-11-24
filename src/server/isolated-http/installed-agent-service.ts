@@ -1,5 +1,10 @@
+import { requireSecureInferenceApiBaseUrl } from "#veryfront/provider/veryfront-cloud/shared.ts";
+import { validateRemoteMcpEndpoint } from "#veryfront/tool/remote-mcp.ts";
 import { createCanonicalCapabilitiesHandler } from "#veryfront/agent/service/canonical-capabilities.ts";
-import { resolveHostedRuntimeRequestConfig } from "#veryfront/agent/hosted/runtime-request-config.ts";
+import {
+  isHostedToolSelectionClosed,
+  resolveHostedRuntimeRequestConfig,
+} from "#veryfront/agent/hosted/runtime-request-config.ts";
 import { extractLatestUserText } from "#veryfront/agent/artifacts/default-research-artifact-support.ts";
 import {
   convertAgentRuntimeMessagesToProviderMessages,
@@ -28,6 +33,13 @@ type Authorization = NonNullable<
   Awaited<ReturnType<ReturnType<typeof createCanonicalBrokerAuthorizer>>>
 >;
 type ServiceOptions = Parameters<typeof createCanonicalManagedBrokerService<Authorization>>[0];
+
+function validateFixedMcpEndpoint(endpoint: string): string {
+  const normalized = validateRemoteMcpEndpoint(endpoint);
+  // Fixed host destinations carry private authority and use the host egress policy.
+  requireSecureInferenceApiBaseUrl(new URL(normalized).origin);
+  return normalized;
+}
 
 /** Deployment composition for signed canonical runs over immutable installed project sources. */
 export function createInstalledCanonicalAgentService(options: {
@@ -73,7 +85,10 @@ export function createInstalledCanonicalAgentService(options: {
   const modelLimits = Object.freeze({ ...options.modelLimits });
   const toolLimits = Object.freeze({ ...options.toolLimits });
   if (
-    Object.values(modelLimits).some((value) => !Number.isSafeInteger(value) || value < 1) ||
+    Object.keys(modelLimits).length !== 4 ||
+    (["maxCalls", "maxConcurrentCalls", "maxOutputTokens", "maxSteps"] as const).some((key) =>
+      !Number.isSafeInteger(modelLimits[key]) || modelLimits[key] < 1
+    ) ||
     modelLimits.maxConcurrentCalls > modelLimits.maxCalls ||
     !Number.isSafeInteger(toolLimits.maxCalls) || toolLimits.maxCalls < 1 ||
     toolLimits.maxCalls > 4096 || !Number.isSafeInteger(toolLimits.maxConcurrent) ||
@@ -83,8 +98,11 @@ export function createInstalledCanonicalAgentService(options: {
   const ingressOptions = Object.freeze({ ...options.ingress });
   const apiUrl = options.apiUrl;
   const inferenceApiBaseUrl = options.inferenceApiBaseUrl;
-  const apiMcpUrl = options.apiMcpUrl;
-  const studioMcpUrl = options.studioMcpUrl;
+  requireSecureInferenceApiBaseUrl(inferenceApiBaseUrl);
+  const apiMcpUrl = validateFixedMcpEndpoint(options.apiMcpUrl);
+  const studioMcpUrl = options.studioMcpUrl === undefined
+    ? undefined
+    : validateFixedMcpEndpoint(options.studioMcpUrl);
   const createRemoteToolSource = options.createRemoteToolSource;
   const authorizeScope = createCanonicalBrokerAuthorizer({
     verifyJwt: options.auth.verifyJwt.bind(options.auth),
@@ -236,10 +254,19 @@ export function createInstalledCanonicalAgentService(options: {
           agentConfig: source.definition,
           resolveModelId: (modelId) => modelId,
         });
-        const invocationToolNames =
-          invocationConfig.effectiveRuntimeOverrides?.allowedTools === undefined
-            ? undefined
-            : invocationConfig.requestedAllowedTools ?? [];
+        const requestedToolNames = invocationConfig.effectiveRuntimeOverrides?.allowedTools;
+        const deniedToolNames = new Set(source.definition.deniedTools ?? []);
+        const callerToolNames = [...apiTools.allowedToolNames];
+        const selectedCallerTools =
+          isHostedToolSelectionClosed(source.definition.tools, requestedToolNames)
+            ? []
+            : callerToolNames.filter((name) =>
+              !deniedToolNames.has(name) &&
+              (requestedToolNames === undefined || requestedToolNames.includes(name))
+            );
+        const invocationToolNames = requestedToolNames === undefined ? undefined : [
+          ...new Set([...(invocationConfig.requestedAllowedTools ?? []), ...selectedCallerTools]),
+        ];
         const start: Omit<
           ManagedExecutorStartInput,
           "state" | "persistence" | "bindSessionOwnedWork"
@@ -290,6 +317,7 @@ export function createInstalledCanonicalAgentService(options: {
           },
           trustedRuntime: {
             projectToolNames,
+            callerToolNames,
             sourceIntegrationPolicy: source.sourceIntegrationPolicy,
             // Keep source knowledge authority in the host, separate from run billing/persistence.
             hostedKnowledgeAuthToken: ingress.privateAuthority.sourceAuthToken ??

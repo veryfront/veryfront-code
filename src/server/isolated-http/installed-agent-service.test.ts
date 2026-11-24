@@ -185,3 +185,34 @@ Deno.test("composed capabilities authenticate exact source namespace and do no A
     await service.settled;
   }
 });
+
+Deno.test("installed service validates fixed inference and MCP destinations before accepting runs", async () => {
+  const signed = await signedRequest(invocation());
+  for (
+    const [field, value] of [
+      ["inferenceApiBaseUrl", "not-a-url"],
+      ["inferenceApiBaseUrl", "http://public.example.test/api"],
+      ["apiMcpUrl", "not-a-url"],
+      ["apiMcpUrl", "http://public.example.test/mcp"],
+      ["apiMcpUrl", "file:///tmp/mcp"],
+      ["studioMcpUrl", "not-a-url"],
+      ["studioMcpUrl", "http://public.example.test/mcp"],
+      ["studioMcpUrl", "https://synthetic:credential@studio.example.test/mcp"],
+    ] as const
+  ) {
+    const f = fixture(signed.publicKeyPem);
+    f.input[field] = value;
+    assertThrows(() => createInstalledCanonicalAgentService(f.input));
+    assertEquals(f.counts(), { allocations: 0, requests: 0 });
+  }
+});
+
+Deno.test("installed service requires every explicit model budget before accepting runs", async () => {
+  const signed = await signedRequest(invocation());
+  for (const key of ["maxCalls", "maxConcurrentCalls", "maxOutputTokens", "maxSteps"] as const) {
+    const f = fixture(signed.publicKeyPem);
+    Reflect.deleteProperty(f.input.modelLimits, key);
+    assertThrows(() => createInstalledCanonicalAgentService(f.input));
+    assertEquals(f.counts(), { allocations: 0, requests: 0 });
+  }
+});

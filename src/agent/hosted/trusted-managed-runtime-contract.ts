@@ -15,6 +15,7 @@ export interface TrustedManagedRuntimeOptions {
   installation: ExecutorRuntimeInstall;
   projectChannel: ExecutorChannel;
   projectToolNames: readonly string[];
+  callerToolNames?: readonly string[];
   toolLimits: ExecutorToolLimits;
   sourceIntegrationPolicy: SourceIntegrationPolicyManifest;
   hostedKnowledgeContext?: HostedKnowledgeExecutionContext;

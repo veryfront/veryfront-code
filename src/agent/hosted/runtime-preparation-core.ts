@@ -363,6 +363,8 @@ export interface ExecutorRuntimeFacades {
     initial?: CreationOptions["serverResolvedProviderReplayCheckpoints"];
     persist: NonNullable<CreationOptions["persistProviderReplayCheckpoint"]>;
   };
+  /** API caller tools admitted by the trusted host, not project metadata. */
+  callerToolNames?: readonly string[];
   /** Broker-owned hosted project credentials for framework knowledge retrieval. */
   hostedKnowledgeContext?: HostedKnowledgeExecutionContext;
   /** Own partial facade setup and prepared runtime resources, not the channel/allocation. */
@@ -574,6 +576,7 @@ export function createRuntimePreparationCore(input: RuntimePreparationCoreOption
     toolExposureCheckpoint: snapshotCheckpointFacade(input.facades.toolExposureCheckpoint),
     providerReplayCheckpoint: snapshotCheckpointFacade(input.facades.providerReplayCheckpoint),
     hostedKnowledgeContext: input.facades.hostedKnowledgeContext,
+    callerToolNames: Object.freeze([...(input.facades.callerToolNames ?? [])]),
   };
   if (input.projectTools) {
     facades.remoteToolSources = new Map(facades.remoteToolSources).set(
@@ -823,7 +826,7 @@ export function createRuntimePreparationCore(input: RuntimePreparationCoreOption
       }
       if (remoteToolSources.length > 0) resourcesStarted = true;
       const resolveInitialToolSelection = () => {
-        const sourceToolNames = resolveHostedRuntimeAllowedTools({
+        const authoredToolNames = resolveHostedRuntimeAllowedTools({
           configuredTools: definition.tools,
           configuredDeniedTools: definition.deniedTools,
           configuredDelegates: definition.delegates,
@@ -831,6 +834,9 @@ export function createRuntimePreparationCore(input: RuntimePreparationCoreOption
           configuredKnowledge: definition.knowledge,
           requestedTools: undefined,
         });
+        const sourceToolNames = authoredToolNames === undefined || definition.tools === false
+          ? authoredToolNames
+          : [...createPrivateSet([...authoredToolNames, ...(facades.callerToolNames ?? [])])];
         const allowedToolNames = intersectNames(
           normalizeGrantedToolNames(grant!.allowedToolNames),
           arrayIsArray(sourceToolNames) ? normalizeToolNames(sourceToolNames) : sourceToolNames,

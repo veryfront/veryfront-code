@@ -2519,6 +2519,20 @@ describe("broker-local trusted runtime", () => {
       await broker.settled;
     }
   });
+  for (const name of ["ungranted", "inspect"]) {
+    it(`refuses caller tool selection without remote authority for ${name}`, async () => {
+      const f = trustedFixture();
+      Object.assign(f.input.trustedRuntime, { callerToolNames: [name] });
+      const broker = createTrustedManagedExecutorBroker({ maxActive: 1 });
+      try {
+        await assertRejects(() => broker.start(f.input), TypeError, "admitted remote authority");
+        assertEquals(f.calls, []);
+      } finally {
+        await broker.shutdown();
+        await broker.settled;
+      }
+    });
+  }
   it("rejects project tool authority outside the normalized grant before allocation", async () => {
     const f = trustedFixture();
     Object.assign(f.input, {

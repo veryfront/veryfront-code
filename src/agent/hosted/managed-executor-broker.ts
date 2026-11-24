@@ -166,6 +166,8 @@ export interface ManagedExecutorStartInput {
   /** Trusted ingress configuration; never selected by a project protocol message. */
   trustedRuntime?: {
     projectToolNames: readonly string[];
+    /** Host-admitted API caller tools; never read from a project protocol request. */
+    callerToolNames?: readonly string[];
     sourceIntegrationPolicy: SourceIntegrationPolicyManifest;
     /** Broker-owned token for hosted framework knowledge retrieval. Never sent to the executor. */
     hostedKnowledgeAuthToken?: string;
@@ -509,6 +511,7 @@ export function createManagedExecutorBroker(
           installation: installRequest,
           projectChannel: channel,
           projectToolNames: trusted.projectInstallation.allowedToolNames,
+          callerToolNames: trusted.callerToolNames,
           toolLimits: operationInput.tools.limits,
           sourceIntegrationPolicy: trusted.sourceIntegrationPolicy,
           hostedKnowledgeContext: trusted.hostedKnowledgeContext,
@@ -777,6 +780,7 @@ function snapshotTrustedRuntime(
   operations: ManagedExecutorOperationInput,
 ): {
   projectInstallation: ExecutorProjectToolInstall;
+  callerToolNames: readonly string[];
   sourceIntegrationPolicy: SourceIntegrationPolicyManifest;
   hostedKnowledgeContext?: HostedKnowledgeExecutionContext;
 } {
@@ -833,9 +837,20 @@ function snapshotTrustedRuntime(
   ) {
     throw new TypeError("Project tool authority exceeds the normalized invocation grant");
   }
+  const callerToolNames = snapshotOwnDataRecords(input.callerToolNames ?? []);
+  if (
+    !Array.isArray(callerToolNames) || callerToolNames.length > limits.maxTotalTools ||
+    callerToolNames.some((name) =>
+      typeof name !== "string" || !operations.tools.catalog.has(name) ||
+      ![...operations.tools.sources.values()].some((capability) =>
+        capability.allowedToolNames.has(name)
+      )
+    )
+  ) throw new TypeError("Caller tools exceed admitted remote authority");
   const hostedKnowledgeContext = snapshotHostedKnowledgeContext(input, installation, execution);
   return {
     projectInstallation,
+    callerToolNames: Object.freeze([...new Set(callerToolNames)]),
     sourceIntegrationPolicy: parseSourceIntegrationPolicyManifest(
       snapshotOwnDataRecords(input.sourceIntegrationPolicy),
     ),
