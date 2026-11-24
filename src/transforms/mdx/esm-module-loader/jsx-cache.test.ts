@@ -3301,6 +3301,89 @@ describe("scheduled prune bound", () => {
     }
   });
 
+  /**
+   * Seed a stale lease for a missing artifact, which a prune pass recovers
+   * through the lease helpers, and make removing the recovered tombstone fail
+   * after `onTombstoneRemoval` runs. That failure is the lease-recovery path
+   * that arms a retry from inside the scan.
+   */
+  async function withFailingTombstoneRemoval(
+    onTombstoneRemoval: () => void,
+    run: (directory: string, lockPath: string) => Promise<void>,
+  ): Promise<void> {
+    const directory = await makeTempDir({ prefix: "vf-jsx-cancel-recovery-test-" });
+    const artifactName = buildMdxJsxCacheFileName(
+      "/tmp/source/Orphan.tsx",
+      "export const v = 0;",
+    );
+    const lockPath = join(directory, `${artifactName}.lock`);
+    const localFs = getLocalFs();
+    const utime = localFs.utime?.bind(localFs);
+    if (!utime) throw new Error("the test runtime must support file timestamps");
+    const originalRemove = localFs.remove.bind(localFs);
+    try {
+      await writeTextFile(lockPath, "terminated-owner");
+      const staleAt = new Date(
+        Date.now() - __jsxCacheInternals.JSX_ARTIFACT_LEASE_STALE_MS - 1_000,
+      );
+      await utime(lockPath, staleAt, staleAt);
+      (localFs as { remove: unknown }).remove = (path: string, options?: unknown) => {
+        if (!path.includes(".stale-")) {
+          return (originalRemove as (path: string, options?: unknown) => Promise<void>)(
+            path,
+            options,
+          );
+        }
+        onTombstoneRemoval();
+        return Promise.reject(Object.assign(new Error("tombstone busy"), { code: "EBUSY" }));
+      };
+      await run(directory, lockPath);
+    } finally {
+      (localFs as { remove: unknown }).remove = originalRemove;
+      cancelScheduledJsxCachePrunes();
+      await remove(directory, { recursive: true });
+    }
+  }
+
+  it("should leave no armed timer when cancellation lands mid-lease-recovery", async () => {
+    // Arrange: cancel while the pass is recovering a stale lease, then fail
+    // the tombstone removal that would otherwise arm a retry.
+    await withFailingTombstoneRemoval(cancelScheduledJsxCachePrunes, async (directory) => {
+      // Act
+      await __jsxCacheInternals.revisitJsxCacheDirectory(
+        directory,
+        undefined,
+        __jsxCacheInternals.currentJsxCachePruneGeneration(),
+      );
+
+      // Assert: the recovery retry belongs to the retired pass.
+      assertEquals(
+        scheduledJsxCachePruneCount(),
+        0,
+        "lease recovery inside a cancelled pass must not arm a retry timer",
+      );
+    });
+  });
+
+  it("should still arm the lease-recovery retry outside a prune pass", async () => {
+    // Arrange: the same failure reached from a lock caller that is not a
+    // prune pass, where the retry keeps a tombstone from being stranded.
+    await withFailingTombstoneRemoval(
+      cancelScheduledJsxCachePrunes,
+      async (directory, lockPath) => {
+        // Act
+        await withJsxArtifactLock(lockPath.slice(0, -".lock".length), async () => {});
+
+        // Assert
+        assertEquals(
+          hasScheduledJsxCachePrune(directory),
+          true,
+          "lease recovery outside a prune pass must keep its retry",
+        );
+      },
+    );
+  });
+
   it("should leave no armed timer when cancellation lands mid-promotion", async () => {
     // Arrange: persisted work that a promotion pass will want to schedule.
     const directory = `${persistedTestPrefix}cancel-during-promotion`;

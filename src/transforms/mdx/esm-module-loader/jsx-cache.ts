@@ -18,6 +18,7 @@ import {
   primordialArraySort,
   primordialArrayValues,
 } from "#veryfront/platform/compat/primordials/array.ts";
+import { AsyncLocalStorage } from "#veryfront/platform/compat/async-context.ts";
 import { basename, dirname, join, normalize } from "#veryfront/compat/path";
 import {
   IntrinsicPromise,
@@ -971,7 +972,7 @@ async function recoverStaleFilesystemLease(
     } else if (!releaseTransition) {
       // An unreadable or unrestored tombstone may belong to a displaced fresh
       // owner. Preserve the fence until abandoned-lease recovery can run.
-      scheduleJsxCachePruneRetry(dirname(lockPath), JSX_CACHE_PRUNE_RETRY_SLACK_MS);
+      scheduleLeaseRecoveryPruneRetry(lockPath);
     }
   }
   async function removeRecoveredTombstone(): Promise<void> {
@@ -981,7 +982,7 @@ async function recoverStaleFilesystemLease(
       // The uniquely renamed lease no longer blocks this lock. Schedule the
       // normal directory sweep so a transient EBUSY/permission race cannot
       // strand one tombstone per recovery forever.
-      scheduleJsxCachePruneRetry(dirname(lockPath), JSX_CACHE_PRUNE_RETRY_SLACK_MS);
+      scheduleLeaseRecoveryPruneRetry(lockPath);
     }
   }
   try {
@@ -1038,7 +1039,7 @@ async function removeFilesystemLeaseTransitionIfOwned(
     logger.debug(`${LOG_PREFIX_MDX_LOADER} Failed to release JSX cache lease transition`, {
       error: cacheFilesystemErrorCode(error),
     });
-    scheduleJsxCachePruneRetry(dirname(lockPath), JSX_CACHE_PRUNE_RETRY_SLACK_MS);
+    scheduleLeaseRecoveryPruneRetry(lockPath);
   }
 }
 
@@ -1159,7 +1160,7 @@ async function withFilesystemLease<T>(
         logger.debug(`${LOG_PREFIX_MDX_LOADER} Failed to release JSX cache lease`, {
           error: cacheFilesystemErrorCode(error),
         });
-        scheduleJsxCachePruneRetry(dirname(lockPath), JSX_CACHE_PRUNE_RETRY_SLACK_MS);
+        scheduleLeaseRecoveryPruneRetry(lockPath);
       }
     } finally {
       if (transitionOwner !== undefined) {
@@ -1298,6 +1299,42 @@ const inFlightJsxCachePruneKeys = new IntrinsicMap<string, number>();
  */
 function mayArmJsxCachePruneRetry(pruneGeneration: number | undefined): boolean {
   return pruneGeneration === undefined || pruneGeneration === jsxCachePruneGeneration;
+}
+
+/**
+ * Generation of the prune pass the current async context runs inside.
+ *
+ * The lease helpers are shared by the serve, refresh and write paths, so the
+ * pass generation is carried with the async context rather than passed through
+ * their signatures. Work outside a pass sees no generation and is never fenced.
+ */
+const activeJsxCachePruneGeneration = new AsyncLocalStorage<number>();
+const AsyncLocalStorageGetStore = AsyncLocalStorage.prototype.getStore;
+const AsyncLocalStorageRun = AsyncLocalStorage.prototype.run;
+
+function getActiveJsxCachePruneGeneration(): number | undefined {
+  return IntrinsicReflectApply(AsyncLocalStorageGetStore, activeJsxCachePruneGeneration, []) as
+    | number
+    | undefined;
+}
+
+function runInJsxCachePruneGeneration<T>(pruneGeneration: number, operation: () => T): T {
+  return IntrinsicReflectApply(AsyncLocalStorageRun, activeJsxCachePruneGeneration, [
+    pruneGeneration,
+    operation,
+  ]) as T;
+}
+
+/**
+ * Re-arm the directory sweep after a lease-recovery step failed.
+ *
+ * Outside a prune pass this keeps a transient EBUSY from stranding a tombstone
+ * or transition fence. Inside a pass that a cancellation retired, the retry
+ * would outlive teardown, so it is fenced like the pass's own follow-ups.
+ */
+function scheduleLeaseRecoveryPruneRetry(lockPath: string): void {
+  if (!mayArmJsxCachePruneRetry(getActiveJsxCachePruneGeneration())) return;
+  scheduleJsxCachePruneRetry(dirname(lockPath), JSX_CACHE_PRUNE_RETRY_SLACK_MS);
 }
 
 function retainInFlightJsxCachePruneKey(pruneKey: string): void {
@@ -1803,14 +1840,20 @@ async function revisitJsxCacheDirectory(
 ): Promise<void> {
   try {
     await scheduledJsxCachePruneSemaphore.acquire(async () => {
-      await collectExcessJsxArtifacts(
-        esmCacheDir,
-        new IntrinsicMap(),
-        hostNow(),
-        0,
-        requestDirectory,
-        pruneGeneration,
-      );
+      const collect = () =>
+        collectExcessJsxArtifacts(
+          esmCacheDir,
+          new IntrinsicMap(),
+          hostNow(),
+          0,
+          requestDirectory,
+          pruneGeneration,
+        );
+      // Carry the generation into the lease helpers the scan reaches, so the
+      // retries they arm are fenced by a cancellation too.
+      await (pruneGeneration === undefined
+        ? collect()
+        : runInJsxCachePruneGeneration(pruneGeneration, collect));
     });
   } catch (error) {
     logger.debug(`${LOG_PREFIX_MDX_LOADER} Scheduled JSX cache prune failed`, {
