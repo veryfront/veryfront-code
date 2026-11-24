@@ -62,16 +62,35 @@ export async function recordSourceCoverage(
   );
 }
 
-/** Select successful upstream receipts from the current or an earlier retry attempt. */
-export async function selectSourceCoverage(
+async function settleOperations<T>(operations: Promise<T>[]): Promise<T[]> {
+  const results = await Promise.allSettled(operations);
+  const values: T[] = [];
+  const errors: unknown[] = [];
+  for (const result of results) {
+    if (result.status === "fulfilled") values.push(result.value);
+    else errors.push(result.reason);
+  }
+  if (errors.length === 1) throw errors[0];
+  if (errors.length > 1) throw new AggregateError(errors, "Coverage artifact operations failed");
+  return values;
+}
+
+interface Receipt {
+  path: string;
+  attempt: number;
+}
+interface VerifiedCoverage {
+  stage: Label;
+  bytes: Uint8Array;
+}
+
+async function inventoryReceipts(
   directory: string,
-  output: string,
-  expected: CoverageIdentity,
-): Promise<void> {
-  identity(expected);
+  maximumAttempt: number,
+): Promise<Map<Label, Receipt>> {
   const root = await Deno.lstat(directory);
   if (!root.isDirectory || root.isSymlink) throw new Error("Invalid coverage receipt directory");
-  const selected = new Map<Label, { path: string; attempt: number }>();
+  const selected = new Map<Label, Receipt>();
   for await (const entry of Deno.readDir(directory)) {
     const match = /^coverage-source-(context-ownership|connected-local)-attempt-([1-9]\d*)$/.exec(
       entry.name,
@@ -79,57 +98,104 @@ export async function selectSourceCoverage(
     const attempt = Number(match?.[2]);
     if (
       !match || !entry.isDirectory || entry.isSymlink || !Number.isSafeInteger(attempt) ||
-      attempt > expected.attempt
+      attempt > maximumAttempt
     ) throw new Error("Unexpected coverage receipt artifact");
     const stage = label(match[1]);
     if (attempt > (selected.get(stage)?.attempt ?? 0)) {
       selected.set(stage, { path: `${directory}/${entry.name}`, attempt });
     }
   }
-  const verified: { stage: Label; bytes: Uint8Array }[] = [];
-  for (const stage of SOURCE_COVERAGE_LABELS) {
-    const receipt = selected.get(stage);
-    if (!receipt) throw new Error("Missing source coverage producer");
-    const manifest = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(
-      await regularFile(`${receipt.path}/source-coverage.json`, 8192),
-    ));
-    if (
-      manifest === null || Array.isArray(manifest) || typeof manifest !== "object" ||
-      Object.keys(manifest).sort().join() !== "attempt,run,schema,sha256,source,stage" ||
-      manifest.schema !== 1 || manifest.stage !== stage || manifest.source !== expected.source ||
-      manifest.run !== expected.run || manifest.attempt !== receipt.attempt
-    ) {
-      throw new Error("Source coverage receipt identity mismatch");
-    }
-    const bytes = await regularFile(`${receipt.path}/lcov.info`, 64 * 1024 * 1024);
-    if (manifest.sha256 !== await sha256(bytes)) throw new Error("Source coverage digest mismatch");
-    requireLcov(bytes);
-    for await (const entry of Deno.readDir(receipt.path)) {
-      if (!["lcov.info", "source-coverage.json"].includes(entry.name)) {
-        throw new Error("Unexpected source coverage payload");
-      }
-    }
-    verified.push({ stage, bytes });
+  return selected;
+}
+
+function validateManifest(
+  value: unknown,
+  stage: Label,
+  receipt: Receipt,
+  expected: CoverageIdentity,
+): Record<string, unknown> {
+  if (value === null || Array.isArray(value) || typeof value !== "object") {
+    throw new Error("Source coverage receipt identity mismatch");
   }
-  // Verify both producers and every destination before writing either report.
-  for (const { stage } of verified) {
-    try {
-      await Deno.lstat(`${output}/coverage-${stage}`);
-    } catch (error) {
-      if (error instanceof Deno.errors.NotFound) continue;
-      throw error;
-    }
-    throw new Error("Source coverage destination already exists");
+  const manifest = value as Record<string, unknown>;
+  const fields = ["schema", "stage", "source", "run", "attempt", "sha256"];
+  if (
+    Object.keys(manifest).length !== fields.length ||
+    !fields.every((field) => Object.hasOwn(manifest, field)) ||
+    manifest.schema !== 1 || manifest.stage !== stage || manifest.source !== expected.source ||
+    manifest.run !== expected.run || manifest.attempt !== receipt.attempt
+  ) {
+    throw new Error("Source coverage receipt identity mismatch");
   }
+  return manifest;
+}
+
+async function readVerifiedCoverage(
+  stage: Label,
+  receipt: Receipt | undefined,
+  expected: CoverageIdentity,
+): Promise<VerifiedCoverage> {
+  if (!receipt) throw new Error("Missing source coverage producer");
+  const [metadata, bytes] = await settleOperations([
+    regularFile(`${receipt.path}/source-coverage.json`, 8192),
+    regularFile(`${receipt.path}/lcov.info`, 64 * 1024 * 1024),
+  ]);
+  const manifest = validateManifest(
+    JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(metadata)),
+    stage,
+    receipt,
+    expected,
+  );
+  if (manifest.sha256 !== await sha256(bytes)) throw new Error("Source coverage digest mismatch");
+  requireLcov(bytes);
+  for await (const entry of Deno.readDir(receipt.path)) {
+    if (!["lcov.info", "source-coverage.json"].includes(entry.name)) {
+      throw new Error("Unexpected source coverage payload");
+    }
+  }
+  return { stage, bytes };
+}
+
+async function requireMissingDestination(path: string): Promise<void> {
+  try {
+    await Deno.lstat(path);
+  } catch (error) {
+    if (error instanceof Deno.errors.NotFound) return;
+    throw error;
+  }
+  throw new Error("Source coverage destination already exists");
+}
+
+async function writeVerifiedCoverage(output: string, verified: VerifiedCoverage[]): Promise<void> {
+  await settleOperations(
+    verified.map(({ stage }) => requireMissingDestination(`${output}/coverage-${stage}`)),
+  );
   await Deno.mkdir(output, { recursive: true });
   const destination = await Deno.lstat(output);
   if (!destination.isDirectory || destination.isSymlink) {
     throw new Error("Unsafe coverage destination");
   }
-  for (const { stage, bytes } of verified) {
+  await settleOperations(verified.map(async ({ stage, bytes }) => {
     await Deno.mkdir(`${output}/coverage-${stage}`);
     await Deno.writeFile(`${output}/coverage-${stage}/lcov.info`, bytes, { createNew: true });
-  }
+  }));
+}
+
+/** Select successful upstream receipts from the current or an earlier retry attempt. */
+export async function selectSourceCoverage(
+  directory: string,
+  output: string,
+  expected: CoverageIdentity,
+): Promise<void> {
+  identity(expected);
+  const selected = await inventoryReceipts(directory, expected.attempt);
+  // Every producer is verified before any output is created. Reads have disjoint paths.
+  const verified = await settleOperations(
+    SOURCE_COVERAGE_LABELS.map((stage) =>
+      readVerifiedCoverage(stage, selected.get(stage), expected)
+    ),
+  );
+  await writeVerifiedCoverage(output, verified);
 }
 
 if (import.meta.main) {

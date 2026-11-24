@@ -1,5 +1,6 @@
 import { assertEquals, assertRejects } from "#std/assert";
 import { fromFileUrl } from "#std/path";
+import { withTempDir } from "#veryfront/testing/deno-compat.ts";
 import {
   type CoverageIdentity,
   recordSourceCoverage,
@@ -11,13 +12,10 @@ const ID: CoverageIdentity = { source: "a".repeat(40), run: "123", attempt: 2 };
 const LCOV = "SF:src/example.ts\nDA:1,1\nend_of_record\n";
 
 async function fixture(run: (root: string) => Promise<void>): Promise<void> {
-  const root = await Deno.makeTempDir({ prefix: "source-coverage-" });
-  try {
+  await withTempDir(async (root) => {
     await Deno.mkdir(`${root}/receipts`);
     await run(root);
-  } finally {
-    await Deno.remove(root, { recursive: true });
-  }
+  }, { prefix: "source-coverage-" });
 }
 
 async function receipt(root: string, stage: string, attempt = 1, lcov = LCOV): Promise<string> {
@@ -188,4 +186,18 @@ Deno.test("the workflow CLI records and selects both producer receipts", () =>
     );
     assertEquals(await command("invalid", "first", "second"), false);
     assertEquals(await command("record"), false);
+  }));
+
+Deno.test("multiple invalid producers settle without writing either report", () =>
+  fixture(async (root) => {
+    for (const stage of SOURCE_COVERAGE_LABELS) {
+      const path = await receipt(root, stage);
+      await Deno.writeTextFile(`${path}/lcov.info`, LCOV.replace("DA:1,1", "DA:1,0"));
+    }
+    const error = await assertRejects(
+      () => selectSourceCoverage(`${root}/receipts`, `${root}/output`, ID),
+      AggregateError,
+    );
+    assertEquals(error.errors.length, 2);
+    await assertRejects(() => Deno.stat(`${root}/output`), Deno.errors.NotFound);
   }));
