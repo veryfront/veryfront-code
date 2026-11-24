@@ -55,6 +55,8 @@ const KEPT = [
   "tests",
   "sonar-coverage",
   "sonar-coverage-main",
+  "source-coverage-context-ownership",
+  "source-coverage-connected-local",
   "sonar",
   "sonar-main",
   "sonar-quality-gate",
@@ -494,6 +496,8 @@ describe("tested merge-queue run workflow", () => {
       "cancel-after-tests-runtime-critical-flow",
       "cancel-after-sonar",
       "cancel-after-sonar-coverage",
+      "cancel-after-source-coverage-context-ownership",
+      "cancel-after-source-coverage-connected-local",
       "cancel-after-coverage-node-executor",
       "cancel-after-coverage-integration-client",
     ];
