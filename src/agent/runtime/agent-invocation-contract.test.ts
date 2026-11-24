@@ -355,14 +355,26 @@ describe("agent/runtime-agent-invocation-contract", () => {
 
   it("reaches the schema result for each credential and returns the given values", () => {
     const credentials = {
-      authToken: "é".repeat(8_193),
+      authToken: "é€ 😀\ud800".repeat(1_000),
       inferenceAuthToken: "run-scoped-inference-token",
       sourceAuthToken: "source-scoped-token",
     };
     const parsed = parseRuntimeAgentRunInvocationValue(createInvocation({ credentials }));
     assertEquals(parsed.credentials, credentials);
 
-    for (const inferenceAuthToken of ["é", "has space", "", "x".repeat(16_385), 7]) {
+    const invalid = [
+      "é",
+      "has space",
+      "",
+      "\u0001",
+      "\ud800",
+      "x".repeat(16_385),
+      "é".repeat(8_193),
+      "€".repeat(5_462),
+      "😀".repeat(4_097),
+      7,
+    ];
+    for (const inferenceAuthToken of invalid) {
       const invocation = createInvocation({
         credentials: { authToken: "request-scoped-user-token", inferenceAuthToken },
       });

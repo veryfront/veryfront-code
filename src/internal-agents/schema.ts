@@ -23,6 +23,7 @@ import {
   getRuntimeAgentSourceContextSchema,
   getRuntimeAgentTargetKindSchema,
   getRuntimeAgentTaskIdSchema,
+  ownField,
   type RuntimeAgentSourceContext,
   validateRuntimeAgentSourceTargetBinding,
   validateRuntimeAgentTargetSelection,
@@ -121,8 +122,18 @@ export const getInternalAgentControlPlaneStreamRequestSchema = defineSchema((v) 
     serverResolvedTrustedHostedHistoryMessageIds: v.array(v.string()).optional(),
     resumeToolCall: getRuntimeResumeToolCallSchema().optional(),
   }).strict().superRefine((input, ctx) => {
-    if (input.sourceProject || input.executionProject) {
-      if (!input.sourceProject || !input.executionProject || !input.credentials?.sourceAuthToken) {
+    // Optional fields are read as own properties: one the request leaves out
+    // is undefined here too.
+    const sourceProject = ownField(input, "sourceProject");
+    const executionProject = ownField(input, "executionProject");
+    const credentials = ownField(input, "credentials");
+    const agentConfig = ownField(input, "agentConfig");
+    const forwardedProps = ownField(input, "forwardedProps");
+    if (sourceProject || executionProject) {
+      if (
+        !sourceProject || !executionProject || !credentials ||
+        !ownField(credentials, "sourceAuthToken")
+      ) {
         ctx.addIssue({
           code: "custom",
           message:
@@ -141,7 +152,7 @@ export const getInternalAgentControlPlaneStreamRequestSchema = defineSchema((v) 
     validateRuntimeAgentTargetSelection(input, ctx);
     validateRuntimeAgentSourceTargetBinding(input, ctx);
 
-    if (input.agentConfig && input.agentConfig.id !== input.agentId) {
+    if (agentConfig && agentConfig.id !== input.agentId) {
       ctx.addIssue({
         code: "custom",
         message: "agentConfig.id must match agentId",
@@ -150,7 +161,7 @@ export const getInternalAgentControlPlaneStreamRequestSchema = defineSchema((v) 
     }
     // Control-plane requests are built from a normalized invocation, where the
     // closed selector is already `tools: []` plus generated allowlists.
-    if (input.agentConfig?.tools === false) {
+    if (agentConfig && ownField(agentConfig, "tools") === false) {
       ctx.addIssue({
         code: "custom",
         message: "agentConfig.tools: false must be normalized before the control-plane request",
@@ -158,10 +169,10 @@ export const getInternalAgentControlPlaneStreamRequestSchema = defineSchema((v) 
       });
     }
 
-    const maxOutputTokens = input.forwardedProps?.maxOutputTokens;
+    const maxOutputTokens = forwardedProps && ownField(forwardedProps, "maxOutputTokens");
     if (
-      input.forwardedProps &&
-      Object.hasOwn(input.forwardedProps, "maxOutputTokens") &&
+      forwardedProps &&
+      Object.hasOwn(forwardedProps, "maxOutputTokens") &&
       (
         typeof maxOutputTokens !== "number" ||
         !Number.isSafeInteger(maxOutputTokens) ||

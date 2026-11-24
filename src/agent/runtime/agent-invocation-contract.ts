@@ -561,6 +561,7 @@ const ObjectGetPrototypeOf = Object.getPrototypeOf;
 const ObjectPrototype = Object.prototype;
 const ArrayIsArray = Array.isArray;
 const StringPrototypeStartsWith = String.prototype.startsWith;
+const StringPrototypeCharCodeAt = String.prototype.charCodeAt;
 const IntrinsicSet = Set;
 const SetPrototypeHas = Set.prototype.has;
 const SetPrototypeAdd = Set.prototype.add;
@@ -635,8 +636,10 @@ function readOwn(source: OwnDataContainer, key: string | number): unknown {
 /**
  * Read a schema field as an own data property. A field the value leaves out
  * reads as undefined, whatever its prototypes define under that name.
+ *
+ * @internal
  */
-function ownField<T extends object, K extends keyof T & string>(
+export function ownField<T extends object, K extends keyof T & string>(
   source: T,
   key: K,
 ): T[K] | undefined {
@@ -769,14 +772,31 @@ function copyOwnDataValue(root: unknown, keepNullPrototypeRecords = false): unkn
 }
 
 /**
- * A string with the length, UTF-8 size and visible-ASCII outcome of `value`,
- * so the credential checks reach the same result for both.
+ * A string with the length, UTF-8 size and visible-ASCII outcome of `value`
+ * that keeps none of its code units, so the credential checks reach the same
+ * result for both. Each code unit maps to a fixed one of the same UTF-8 size.
  */
 function credentialPlaceholder(value: string): string {
   let placeholder = "";
   for (let index = 0; index < value.length; index++) {
-    const unit = value[index]!;
-    placeholder += unit >= "!" && unit <= "~" ? "x" : unit;
+    const unit = IntrinsicReflectApply(StringPrototypeCharCodeAt, value, [index]) as number;
+    if (unit >= 0x21 && unit <= 0x7e) placeholder += "x";
+    else if (unit < 0x80) placeholder += " ";
+    else if (unit < 0x800) placeholder += "\u00e9";
+    else if (unit < 0xd800 || unit > 0xdfff) placeholder += "\u20ac";
+    else {
+      const next = unit <= 0xdbff && index + 1 < value.length
+        ? IntrinsicReflectApply(StringPrototypeCharCodeAt, value, [index + 1]) as number
+        : 0;
+      if (next >= 0xdc00 && next <= 0xdfff) {
+        // A surrogate pair is one four-byte character.
+        placeholder += "\ud83d\ude00";
+        index++;
+      } else {
+        // A lone surrogate encodes as the three-byte replacement character.
+        placeholder += "\ufffd";
+      }
+    }
   }
   return placeholder;
 }

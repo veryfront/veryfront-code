@@ -1,6 +1,9 @@
 import { types as utilTypes } from "node:util";
 import type { AgUiResumeValue } from "#veryfront/agent/ag-ui/tool-shared.ts";
+import { getInternalAgentStreamRequestSchema } from "#veryfront/internal-agents/schema.ts";
 import {
+  buildRuntimeAgentControlPlaneStreamRequestFromInvocation,
+  parseInvocationOwnData,
   parseRuntimeAgentRunInvocationValue,
   safeParseRuntimeAgentRunInvocationValue,
 } from "#veryfront/agent/runtime/agent-invocation-contract.ts";
@@ -1106,11 +1109,15 @@ for (const [name, parse] of invocationParsers) {
 
   it(`validates placeholders in place of credential values (${name})`, () => {
     const canary = "synthetic-validation-canary";
+    // A value made only of characters outside visible ASCII.
+    const wideCanary = "\u00e9\u20ac \u0001\ud83d\ude00\u00e9\u20ac";
     const body = JSON.parse(createRuntimeInvocationBody(canary));
+    body.credentials.authToken = wideCanary;
     let observations = 0;
     // A member the schema validator reads from the values it is given.
     const restore = inheritFields(["aborted"], (_field, receiver) => {
       if (containsBodyCanary(receiver, canary)) observations++;
+      if (containsBodyCanary(receiver, wideCanary)) observations++;
       return undefined;
     });
     let credentials: unknown;
@@ -1121,12 +1128,31 @@ for (const [name, parse] of invocationParsers) {
     }
 
     assertEquals(observations, 0, "validation never holds the credential value");
-    assertEquals(credentials, {
-      authToken: "control-plane-auth-token",
-      inferenceAuthToken: canary,
-    });
+    assertEquals(credentials, { authToken: wideCanary, inferenceAuthToken: canary });
   });
 }
+
+it("validates a stream request without reading inherited optional fields", () => {
+  const invocation = parseRuntimeAgentRunInvocationValue(
+    JSON.parse(createRuntimeInvocationBody("synthetic-stream-request-value")),
+  );
+  const request = buildRuntimeAgentControlPlaneStreamRequestFromInvocation(invocation);
+  const inherited: Record<string, unknown> = {
+    sourceProject: invocation.run.project,
+    agentConfig: { id: "another-agent", tools: false },
+  };
+  const restore = inheritFields(Object.keys(inherited), (field) => inherited[field]);
+  let failure: unknown;
+  try {
+    parseInvocationOwnData(request, (input) => getInternalAgentStreamRequestSchema().parse(input));
+  } catch (error) {
+    failure = error;
+  } finally {
+    restore();
+  }
+
+  assertEquals(failure, undefined);
+});
 
 it("propagates host authentication error identity on the invocation route", async () => {
   const hostFailure = new Error("synthetic host authentication failure");
