@@ -6,12 +6,23 @@ import {
 } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { parse } from "#std/yaml/parse";
-import { readPinnedDenoVersion } from "../../../scripts/lint/check-deno-version.ts";
 
+/** Resolved from this file, not the process cwd, which parallel tests may move. */
+const REPO_ROOT = new URL("../../../", import.meta.url);
 const ACTION_PATH = ".github/actions/fetch-denort/action.yml";
 const LOCAL_ACTION = "./.github/actions/fetch-denort";
 const WORKFLOWS_DIR = ".github/workflows";
 const COMPILE_SCRIPT = "scripts/build/compile-binary.ts";
+/**
+ * Step commands that reach `deno compile`: the script itself, `deno task build`
+ * (deno.json), and the binary e2e suite (tests/e2e/setup/binary.ts).
+ */
+const COMPILE_STEP =
+  /scripts\/build\/compile-binary\.ts|\bdeno task build(?![\w:-])|test:e2e:binary/;
+/** The deno.json tasks that run compile-binary.ts and COMPILE_STEP recognizes. */
+const COMPILE_TASKS = ["build"];
+/** What `deno compile` targets without --target on the x64 Ubuntu runners. */
+const HOST_TARGET = "x86_64-unknown-linux-gnu";
 /** setup-deno's worst case is 150s of retries plus one 120s attempt. */
 const MIN_FETCH_STEP_MINUTES = 5;
 const PIN_PATTERN = /denort_sha256="[0-9a-f]{64}"/g;
@@ -31,8 +42,19 @@ function asSteps(value: unknown, context: string): YamlRecord[] {
   return value.map((step, index) => asRecord(step, `${context}[${index}]`));
 }
 
+function readRepoFile(path: string): Promise<string> {
+  return Deno.readTextFile(new URL(path, REPO_ROOT));
+}
+
 async function parseYamlFile(path: string): Promise<YamlRecord> {
-  return asRecord(parse(await Deno.readTextFile(path)), path);
+  return asRecord(parse(await readRepoFile(path)), path);
+}
+
+/** The Deno version `.tool-versions` pins. */
+async function readPinnedDenoVersion(): Promise<string> {
+  const match = (await readRepoFile(".tool-versions")).match(/^deno\s+(\S+)\s*$/m);
+  assert(match?.[1], ".tool-versions must pin a deno version");
+  return match[1];
 }
 
 async function fetchScript(): Promise<string> {
@@ -54,7 +76,7 @@ interface CompileJob {
 /** Every workflow job that runs `deno compile` through compile-binary.ts. */
 async function compileJobs(): Promise<CompileJob[]> {
   const found: CompileJob[] = [];
-  for await (const entry of Deno.readDir(WORKFLOWS_DIR)) {
+  for await (const entry of Deno.readDir(new URL(`${WORKFLOWS_DIR}/`, REPO_ROOT))) {
     if (!entry.isFile || !/\.ya?ml$/.test(entry.name)) continue;
     const path = `${WORKFLOWS_DIR}/${entry.name}`;
     const jobs = asRecord((await parseYamlFile(path)).jobs, `${path}.jobs`);
@@ -63,7 +85,7 @@ async function compileJobs(): Promise<CompileJob[]> {
       if (job.steps === undefined) continue;
       const steps = asSteps(job.steps, `${path}.jobs.${jobName}.steps`);
       steps.forEach((step, compileIndex) => {
-        if (String(step.run ?? "").includes(COMPILE_SCRIPT)) {
+        if (COMPILE_STEP.test(stepCommand(step))) {
           found.push({ path, jobName, job, steps, compileIndex });
         }
       });
@@ -72,10 +94,24 @@ async function compileJobs(): Promise<CompileJob[]> {
   return found;
 }
 
-function compileTarget(step: YamlRecord): string {
-  const match = String(step.run).match(/--target\s+(\$\{\{.*?\}\}|\S+)/);
-  assert(match, `compile step must pass an explicit --target: ${step.run}`);
-  return match[1];
+/** A step's shell command, whether in `run` or a retry action's `with.command`. */
+function stepCommand(step: YamlRecord): string {
+  if (step.run !== undefined) return String(step.run);
+  const inputs = step.with as YamlRecord | undefined;
+  return String(inputs?.command ?? "");
+}
+
+/** The --target a compile step passes, or the runner's own target without one. */
+function compileTarget({ job, steps, compileIndex }: CompileJob): string {
+  const command = stepCommand(steps[compileIndex]);
+  const match = command.match(/--target\s+(\$\{\{.*?\}\}|\S+)/);
+  if (match?.[1]) return match[1];
+  const runsOn = String(job["runs-on"]);
+  assert(
+    /ubuntu/.test(runsOn) && !/arm/.test(runsOn),
+    `a compile step without --target must run on an x64 Ubuntu runner: ${command}`,
+  );
+  return HOST_TARGET;
 }
 
 function matrixTargets(job: YamlRecord): string[] {
@@ -231,7 +267,8 @@ describe("deno compile base binary", () => {
       jobs.some((entry) => entry.jobName === "build-binaries"),
       "the release build-binaries job must be among the compile jobs",
     );
-    for (const { path, jobName, steps, compileIndex } of jobs) {
+    for (const entry of jobs) {
+      const { path, jobName, steps, compileIndex } = entry;
       const context = `${path} ${jobName}`;
       const fetchIndex = steps.findIndex((step) => step.uses === LOCAL_ACTION);
       // Without DENORT_BIN, deno compile downloads denort with no retry, and
@@ -243,7 +280,7 @@ describe("deno compile base binary", () => {
       const fetch = steps[fetchIndex];
       assertEquals(
         asRecord(fetch.with, `${context} fetch-denort with`).target,
-        compileTarget(steps[compileIndex]),
+        compileTarget(entry),
         `${context} must fetch the denort for the target it compiles`,
       );
       const minutes = Number(fetch["timeout-minutes"]);
@@ -254,15 +291,35 @@ describe("deno compile base binary", () => {
     }
   });
 
+  it("recognizes every compile path, not only the build-binaries job", async () => {
+    const jobNames = new Set((await compileJobs()).map((entry) => entry.jobName));
+    for (const jobName of ["build-binaries", "tests-proxy-binary", "tests-binary-e2e"]) {
+      assert(jobNames.has(jobName), `${jobName} compiles a binary and must be checked`);
+    }
+    const config = JSON.parse(await readRepoFile("deno.json")) as {
+      tasks: Record<string, string | { command?: string }>;
+    };
+    const compileTasks = Object.entries(config.tasks)
+      .filter(([, task]) =>
+        (typeof task === "string" ? task : task.command ?? "").includes(COMPILE_SCRIPT)
+      )
+      .map(([name]) => name);
+    assertEquals(
+      compileTasks,
+      COMPILE_TASKS,
+      "a new deno.json task that compiles must be recognized by COMPILE_STEP",
+    );
+  });
+
   it("pins a distinct digest for every target the workflows compile", async () => {
     const script = await fetchScript();
     const pins = script.match(PIN_PATTERN) ?? [];
     assertEquals(new Set(pins).size, pins.length, "denort pins must be distinct");
     const targets = new Set<string>();
-    for (const { job, steps, compileIndex } of await compileJobs()) {
-      const target = compileTarget(steps[compileIndex]);
+    for (const entry of await compileJobs()) {
+      const target = compileTarget(entry);
       if (target === "${{ matrix.target }}") {
-        matrixTargets(job).forEach((entry) => targets.add(entry));
+        matrixTargets(entry.job).forEach((matrixTarget) => targets.add(matrixTarget));
       } else {
         targets.add(target);
       }
