@@ -15,6 +15,7 @@ import {
   inheritTrustedHostToolProvenance,
 } from "#veryfront/tool/host-tool-provenance.ts";
 import {
+  intersectSourceIntegrationPolicies,
   parseSourceIntegrationPolicyManifest,
   type SourceIntegrationPolicyManifest,
 } from "#veryfront/integrations/source-policy.ts";
@@ -76,7 +77,9 @@ import {
 } from "#veryfront/agent/hosted/executor-runtime-prepare-schema.ts";
 import {
   ExecutorDiscoveryError,
+  executorSourcePolicyOperation,
   getExecutorAgentDescribeResultSchema,
+  getExecutorSourcePolicyResultSchema,
   parseDiscoveryData,
 } from "#veryfront/agent/hosted/executor-discovery-schema.ts";
 import { ExecutorAgentError } from "#veryfront/agent/hosted/executor-agent-schema.ts";
@@ -146,6 +149,7 @@ type PreparedSourceRecord = {
   expectedBrokerInstanceId: string;
   clock: NonNullable<SessionInput["clock"]>;
   definition: RuntimeAgentMarkdownDefinition;
+  sourceIntegrationPolicy: SourceIntegrationPolicyManifest;
   owner: { revoke?: () => void };
   used: boolean;
 };
@@ -153,7 +157,8 @@ type PreparedSourceRecord = {
 /**
  * Trusted per-invocation source, model, tool, persistence, and state authority.
  * Broker model limits, provider tools, and tool capabilities must not exceed
- * the corresponding installed grant. Startup rejects mismatches before allocation.
+ * the corresponding installed grant. Direct startup validates before allocation;
+ * prepared sources expose no host capabilities until final validation.
  */
 export interface ManagedExecutorStartInput {
   /** Consume an authenticated project-only discovery session from this broker exactly once. */
@@ -275,6 +280,17 @@ export function createManagedExecutorBroker(
         description.value.definition.id !== installed.context.agentId ||
         verifyHostedRuntimeSourceBinding(installed.source, description.value.source)
       ) throw new ExecutorDiscoveryError("EXECUTOR_DISCOVERY_INVALID_OUTPUT");
+      const sourcePolicy = parseDiscoveryData(
+        getExecutorSourcePolicyResultSchema(),
+        await channel.request(executorSourcePolicyOperation, {
+          agentId: installed.context.agentId,
+        }),
+        true,
+      );
+      if (!sourcePolicy.ok) throw new ExecutorDiscoveryError(sourcePolicy.code);
+      if (verifyHostedRuntimeSourceBinding(installed.source, sourcePolicy.value.source)) {
+        throw new ExecutorDiscoveryError("EXECUTOR_DISCOVERY_INVALID_OUTPUT");
+      }
       session.signal.throwIfAborted();
       const capability = Object.freeze({}) as ManagedExecutorPreparedSource;
       preparedSources.set(capability, {
@@ -285,12 +301,14 @@ export function createManagedExecutorBroker(
         expectedBrokerInstanceId,
         clock,
         definition: description.value.definition,
+        sourceIntegrationPolicy: sourcePolicy.value.policy,
         owner,
         used: false,
       });
       return Object.freeze({
         capability,
         definition: structuredClone(description.value.definition),
+        sourceIntegrationPolicy: structuredClone(sourcePolicy.value.policy),
         signal: session.signal,
         settled: session.settled,
         runOwned: session.runOwned.bind(session),
@@ -454,6 +472,10 @@ export function createManagedExecutorBroker(
         if (JSON.stringify(expected) !== JSON.stringify(preparedSource.installation)) {
           throw new TypeError("Prepared project-tool authority cannot change");
         }
+        trusted.sourceIntegrationPolicy = intersectSourceIntegrationPolicies(
+          preparedSource.sourceIntegrationPolicy,
+          trusted.sourceIntegrationPolicy,
+        );
         definition = structuredClone(preparedSource.definition);
       } else {
         const installed = await channel.request(

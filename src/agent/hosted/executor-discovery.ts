@@ -24,6 +24,7 @@ import {
   EXECUTOR_DISCOVERY_MAX_AGENTS,
   ExecutorDiscoveryError,
   type ExecutorDiscoverySource,
+  executorSourcePolicyOperation,
   getExecutorAgentDefinitionSchema,
   getExecutorAgentDescribeRequestSchema,
   getExecutorAgentDescribeResultSchema,
@@ -34,6 +35,7 @@ import {
   getExecutorDiscoveryIdSchema,
   getExecutorDiscoveryRequestSchema,
   getExecutorDiscoverySourceSchema,
+  getExecutorSourcePolicyResultSchema,
   parseDiscoveryData,
 } from "#veryfront/agent/hosted/executor-discovery-schema.ts";
 
@@ -123,6 +125,7 @@ export function createExecutorDiscovery(input: ExecutorDiscoveryOptions): Execut
   const discoveryRequestSchema = getExecutorDiscoveryRequestSchema();
   const agentDescribeRequestSchema = getExecutorAgentDescribeRequestSchema();
   const agentDescriptionSchema = getExecutorAgentDescriptionSchema();
+  const sourcePolicyResultSchema = getExecutorSourcePolicyResultSchema();
   getExecutorAgentDescribeResultSchema();
   const discoveryDescriptionSchema = getExecutorDiscoveryDescriptionSchema();
   warmExecutorToolSchemas();
@@ -361,6 +364,25 @@ export function createExecutorDiscovery(input: ExecutorDiscoveryOptions): Execut
               errorCount: discovery.errors.length,
             }, true),
           );
+        });
+      },
+    }],
+    [executorSourcePolicyOperation, {
+      mode: "unary",
+      handle(value, context) {
+        return execute(context, async () => {
+          const request = parseDiscoveryData(agentDescribeRequestSchema, value);
+          if (agentEntrypoint && request.agentId !== defaultId) {
+            throw new ExecutorDiscoveryError("AGENT_NOT_FOUND");
+          }
+          const runtime = await observePrivatePromise(discover());
+          await observePrivatePromise(describeAgent(runtime, request.agentId));
+          const result = parseDiscoveryData(sourcePolicyResultSchema, {
+            ok: true,
+            value: { source, policy: runtime.sourceIntegrationPolicy },
+          }, true);
+          if (!result.ok) throw new ExecutorDiscoveryError(result.code);
+          return discoverySuccess(result.value);
         });
       },
     }],

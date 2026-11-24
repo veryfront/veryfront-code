@@ -1759,7 +1759,13 @@ function trustedFixture(
     owner,
     projectId: owner.projectId,
   },
-  agentOptions: { knowledge?: true; executionProfile?: "project-tools" } = {},
+  agentOptions: {
+    knowledge?: true;
+    executionProfile?: "project-tools";
+    sourceIntegrationPolicy?:
+      import("#veryfront/integrations/source-policy.ts").SourceIntegrationPolicyManifest;
+    withoutSourcePolicy?: boolean;
+  } = {},
 ) {
   const f = fixture({
     owner: scope.owner,
@@ -1902,14 +1908,22 @@ function trustedFixture(
                 webhooks: new Map(),
                 evals: new Map(),
                 errors: [],
-                sourceIntegrationPolicy: { schemaVersion: 1, mode: "unrestricted" },
+                sourceIntegrationPolicy: agentOptions.sourceIntegrationPolicy ??
+                  { schemaVersion: 1, mode: "unrestricted" },
               }),
             cleanup: () => Promise.resolve(),
           },
         });
         const runtime = await createExecutorProjectToolRuntime({
           input,
-          discovery,
+          discovery: agentOptions.withoutSourcePolicy
+            ? {
+              ...discovery,
+              operations: new Map(
+                [...discovery.operations].filter(([name]) => name !== "project.source-policy"),
+              ),
+            }
+            : discovery,
           signal,
           deadline: context.deadline,
         });
@@ -2806,6 +2820,55 @@ Deno.test("prepared source retains pool admission until original policy work ret
   } finally {
     release.resolve();
     await work;
+    await broker.shutdown();
+    await broker.settled;
+    await f.peerCleanup;
+  }
+});
+
+Deno.test("prepared source policy can narrow but never be widened by host policy or returned metadata mutation", async () => {
+  const sourcePolicy = {
+    schemaVersion: 1 as const,
+    mode: "allowlist" as const,
+    integrations: { gmail: { allowedToolIds: ["read_email"] } },
+  };
+  const f = trustedFixture(undefined, false, undefined, undefined, undefined, {
+    executionProfile: "project-tools",
+    sourceIntegrationPolicy: sourcePolicy,
+  });
+  let observed: unknown;
+  const broker = createManagedExecutorBroker({ maxActive: 1 }, async (options) => {
+    observed = options.sourceIntegrationPolicy;
+    return await createTrustedManagedRuntime(options);
+  });
+  let runtime: Awaited<ReturnType<typeof broker.start>> | undefined;
+  try {
+    const prepared = await broker.prepareSource(preparedSourceInput(f));
+    assertEquals(prepared.sourceIntegrationPolicy, sourcePolicy);
+    if (prepared.sourceIntegrationPolicy.mode === "allowlist") {
+      delete (prepared.sourceIntegrationPolicy.integrations as Record<string, unknown>).gmail;
+    }
+    f.input.preparedSource = prepared.capability;
+    runtime = await broker.start(f.input);
+    assertEquals(observed, sourcePolicy);
+  } finally {
+    await runtime?.close();
+    await broker.shutdown();
+    await broker.settled;
+    await f.peerCleanup;
+  }
+});
+Deno.test("prepared source refuses an older executor without source-policy support", async () => {
+  const f = trustedFixture(undefined, false, undefined, undefined, undefined, {
+    executionProfile: "project-tools",
+    withoutSourcePolicy: true,
+  });
+  const broker = createTrustedManagedExecutorBroker({ maxActive: 1 });
+  try {
+    await assertRejects(() => broker.prepareSource(preparedSourceInput(f)));
+    assertEquals(f.model.calls.length, 0);
+    assertEquals(f.hostCalls, 0);
+  } finally {
     await broker.shutdown();
     await broker.settled;
     await f.peerCleanup;

@@ -18,3 +18,5 @@ export {
   createInstalledProjectAgentSessionResolver,
   type InstalledProjectAgentSessionOptions,
 } from "./installed-agent-session.ts";
+
+export { createInstalledCanonicalAgentService } from "./installed-agent-service.ts";

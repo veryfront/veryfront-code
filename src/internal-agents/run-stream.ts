@@ -48,7 +48,6 @@ import {
   slicePrivateArray,
   somePrivateArray,
 } from "#veryfront/security/private-array.ts";
-import { createPrivateMap } from "#veryfront/security/private-map.ts";
 import { createPrivateSet } from "#veryfront/security/private-set.ts";
 import { getAgentExecutionConfig } from "#veryfront/agent/runtime/execution-config.ts";
 import {
@@ -171,12 +170,7 @@ import type { ProviderReplayCheckpointPersister } from "./provider-replay-checkp
 import { createVeryfrontCloudInferenceModelResolver } from "#veryfront/agent/hosted/inference-credential.ts";
 import { resolveVeryfrontInferenceApiBaseUrlFromHostEnv } from "#veryfront/platform/cloud/resolver.ts";
 import { streamWithAgentRuntimeDispatch } from "#veryfront/agent/runtime/index.ts";
-import {
-  inheritTrustedHostedHistorySourceIdentity,
-  inheritTrustedPlatformPolicyMessageMetadata,
-  inheritTrustedPlatformPolicyToolResultMetadata,
-  restoreTrustedHostedPlatformPolicyResultsFromServerHistory,
-} from "#veryfront/agent/runtime/skill-policy-enforcement.ts";
+import { restoreTrustedHostedRuntimeHistory } from "#veryfront/agent/runtime/trusted-hosted-history.ts";
 import { createPrivateWeakStore } from "#veryfront/security/private-weak-store.ts";
 import type { AgentManualPause } from "#veryfront/agent/runtime/manual-pause.ts";
 
@@ -1201,73 +1195,6 @@ function compactRuntimeMessagesForStream(
   ) as Message[];
 }
 
-function isTrustedHostedPolicyMetadataRole(
-  role: RuntimeRunAgentInput["messages"][number]["role"] | Message["role"],
-): role is "assistant" | "tool" {
-  return role === "assistant" || role === "tool";
-}
-
-function restoreTrustedHostedPolicyMetadataFromAgUiMessages(
-  runtimeMessages: readonly Message[],
-  sourceMessages: RuntimeRunAgentInput["messages"],
-  trustedSourceMessageIds: readonly string[] | undefined,
-): Message[] {
-  if (!trustedSourceMessageIds || trustedSourceMessageIds.length === 0) {
-    return [...runtimeMessages];
-  }
-  const trustedSourceIds = createPrivateMap<string, true>();
-  for (let index = 0; index < trustedSourceMessageIds.length; index++) {
-    if (!Object.hasOwn(trustedSourceMessageIds, index)) continue;
-    const messageId = trustedSourceMessageIds[index];
-    if (typeof messageId === "string") trustedSourceIds.set(messageId, true);
-  }
-  const sourceById = createPrivateMap<string, RuntimeRunAgentInput["messages"][number] | null>();
-  for (let index = 0; index < sourceMessages.length; index++) {
-    if (!Object.hasOwn(sourceMessages, index)) continue;
-    const message = sourceMessages[index]!;
-    if (!message.id || !trustedSourceIds.has(message.id)) continue;
-    if (sourceById.has(message.id) || !isTrustedHostedPolicyMetadataRole(message.role)) {
-      sourceById.set(message.id, null);
-    } else {
-      sourceById.set(message.id, message);
-    }
-  }
-
-  const restoredMessages: Message[] = [];
-  for (let index = 0; index < runtimeMessages.length; index++) {
-    if (!Object.hasOwn(runtimeMessages, index)) continue;
-    const message = runtimeMessages[index]!;
-    const sourceMessage = sourceById.get(message.id);
-    const restoredMessage = message.role === "tool"
-      ? inheritTrustedPlatformPolicyToolResultMetadata(message, (id) => sourceById.get(id))
-      : sourceMessage && message.role === sourceMessage.role &&
-          isTrustedHostedPolicyMetadataRole(message.role)
-      ? inheritTrustedPlatformPolicyMessageMetadata(sourceMessage, message)
-      : message;
-    restoredMessages[restoredMessages.length] = sourceMessage
-      ? inheritTrustedHostedHistorySourceIdentity(sourceMessage, restoredMessage)
-      : restoredMessage;
-  }
-  return restoredMessages;
-}
-
-function restoreTrustedHostedPolicyForInternalRuntimeMessages(
-  runtimeMessages: readonly Message[],
-  sourceMessages: RuntimeRunAgentInput["messages"],
-  trustedSourceMessageIds: readonly string[] | undefined,
-): Message[] {
-  const trustedRuntimeMessages = restoreTrustedHostedPolicyMetadataFromAgUiMessages(
-    runtimeMessages,
-    sourceMessages,
-    trustedSourceMessageIds,
-  );
-  restoreTrustedHostedPlatformPolicyResultsFromServerHistory(trustedRuntimeMessages, {
-    trustedMessageIds: trustedSourceMessageIds,
-    sourceMessages,
-  });
-  return trustedRuntimeMessages;
-}
-
 /**
  * Relays run events produced by the runtime into the run's SSE stream.
  *
@@ -1866,7 +1793,7 @@ export async function createRuntimeAgentStreamResponse(
       };
     const runtimeMessages = managedRecovery?.snapshot
       ? managedRecovery.snapshot.messages
-      : restoreTrustedHostedPolicyForInternalRuntimeMessages(
+      : restoreTrustedHostedRuntimeHistory(
         compactRuntimeMessagesForStream(
           normalizeAgUiRuntimeMessages(input.messages),
           systemPrompt,
