@@ -137,6 +137,20 @@ function canonicalKnowledgeIndexResponse(
   return undefined;
 }
 
+/** Answers knowledge ingest's exact-path read of a target file: the published content, else 404. */
+function knowledgeTargetReadResponse(
+  url: string,
+  published: ReadonlyMap<string, string> = new Map(),
+): Response | undefined {
+  const parsed = new URL(url);
+  if (parsed.searchParams.get("exact_path") !== "true") return undefined;
+  const path = decodeURIComponent(parsed.pathname.split("/files/")[1] ?? "");
+  const content = published.get(path);
+  return content === undefined
+    ? Response.json({ error: "File not found" }, { status: 404 })
+    : Response.json({ path, content, version_id: canonicalKnowledgeFixtureReceipt.version_id });
+}
+
 async function canonicalKnowledgePublicationResponse(
   path: string,
   init: RequestInit | undefined,
@@ -3828,6 +3842,15 @@ describe("server/handlers/request/project-run-execute.handler", () => {
       const result = await withMockFetch(
         async (input, init) => {
           const url = input instanceof Request ? input.url : String(input);
+          if (new URL(url).pathname.endsWith("/knowledge/ingest-source")) {
+            return Response.json({
+              status: "matched",
+              path: "knowledge/topic.md",
+              version_id: canonicalKnowledgeFixtureReceipt.version_id,
+            });
+          }
+          const targetRead = knowledgeTargetReadResponse(url);
+          if (targetRead) return targetRead;
           if (new URL(url).pathname === `/runs/${body.canonicalRunId}/events`) {
             assertEquals(
               new Headers(observeFetchRequestInit(init).headers).get("authorization"),
@@ -3949,6 +3972,15 @@ describe("server/handlers/request/project-run-execute.handler", () => {
       });
       await withMockFetch(async (input, init) => {
         const url = input instanceof Request ? input.url : String(input);
+        if (new URL(url).pathname.endsWith("/knowledge/ingest-source")) {
+          return Response.json({
+            status: "matched",
+            path: "knowledge/topic.md",
+            version_id: canonicalKnowledgeFixtureReceipt.version_id,
+          });
+        }
+        const targetRead = knowledgeTargetReadResponse(url);
+        if (targetRead) return targetRead;
         const observation = respondObservation(url, init);
         if (observation) return observation;
         if (url.endsWith("/cancellation-ack")) {
@@ -4128,6 +4160,18 @@ describe("server/handlers/request/project-run-execute.handler", () => {
   for (const cancel of [false, true]) {
     it(`executes retained-source ingestion through publication and full retry (cancel: ${cancel})`, async () => {
       const sources = ["first", "second", "third"];
+      const paths = new Map(
+        await Promise.all(
+          sources.map(async (name) =>
+            [
+              name,
+              `knowledge/source-${await computeHash(
+                JSON.stringify(["upload", `uploads/${name}.md`]),
+              )}.md`,
+            ] as const
+          ),
+        ),
+      );
       const outputs = new Map<string, string>();
       const publishedChecksums = new Map<string, string>();
       const attempts: string[] = [];
@@ -4163,6 +4207,23 @@ describe("server/handlers/request/project-run-execute.handler", () => {
       };
       await withMockFetch(async (input, init) => {
         const url = input instanceof Request ? input.url : String(input);
+        if (new URL(url).pathname.endsWith("/knowledge/ingest-source")) {
+          assertEquals(new URL(url).searchParams.get("branch_id"), "branch-retained");
+          const request = requestJsonBody(init);
+          const resource = request?.resource;
+          const name = sources.find((source) => resource === `uploads/${source}.md`);
+          assertExists(name);
+          assertEquals(request?.source_key, JSON.stringify(["upload", `uploads/${name}.md`]));
+          const path = paths.get(name);
+          assertExists(path);
+          return Response.json(
+            outputs.has(path)
+              ? { status: "matched", path, version_id: canonicalKnowledgeFixtureReceipt.version_id }
+              : { status: "absent" },
+          );
+        }
+        const targetRead = knowledgeTargetReadResponse(url, outputs);
+        if (targetRead) return targetRead;
         const observation = respondObservation?.(url, init);
         if (observation) return observation;
         const indexed = canonicalKnowledgeIndexResponse(url, init, publishedChecksums);
@@ -4185,8 +4246,18 @@ describe("server/handlers/request/project-run-execute.handler", () => {
         assertEquals(destination.searchParams.get("branch_id"), "branch-retained", url);
         const path = decodeURIComponent(destination.pathname.split("/files/")[1] ?? "");
         assertStringIncludes(path, "knowledge/");
+        const publication = requestJsonBody(init);
+        if (outputs.has(path)) {
+          assertEquals(
+            publication?.required_version_id,
+            canonicalKnowledgeFixtureReceipt.version_id,
+          );
+          assertEquals(publication?.expected_version_id, undefined);
+        } else {
+          assertEquals(publication?.expected_absent, true);
+        }
         attempts.push(path);
-        if (firstAttempt && path.endsWith("second.md")) {
+        if (firstAttempt && path === paths.get("second")) {
           if (cancel) {
             const signal = observeFetchRequestInit(init).signal;
             assertExists(signal);
@@ -4215,7 +4286,11 @@ describe("server/handlers/request/project-run-execute.handler", () => {
         assertEquals(failed.success, false);
         if (cancel) {
           assertStringIncludes(failed.error, "Run cancelled");
-          assertEquals(attempts, ["knowledge/first.md", "knowledge/second.md"]);
+          const firstPath = paths.get("first");
+          const secondPath = paths.get("second");
+          assert(firstPath);
+          assert(secondPath);
+          assertEquals(attempts, [firstPath, secondPath]);
           assertEquals(outputs.size, 1);
           assertEquals(stoppedAcknowledgements, 1);
         } else {
@@ -4230,10 +4305,15 @@ describe("server/handlers/request/project-run-execute.handler", () => {
         assertEquals(retried.success, true, JSON.stringify(retried));
         assertEquals(retried.result.summary.ingested_count, 3);
         assertEquals(outputs.size, 3);
-        for (const [path, content] of previous) assertEquals(outputs.get(path), content);
+        // A retry rewrites the same document; only its ingest time moves.
+        const withoutIngestTime = (content?: string) =>
+          content?.replace(/^(timestamp|added): .*$/gm, "$1: <ingest time>");
+        for (const [path, content] of previous) {
+          assertEquals(withoutIngestTime(outputs.get(path)), withoutIngestTime(content));
+        }
         for (const name of sources) {
           assertStringIncludes(
-            outputs.get(`knowledge/${name}.md`) ?? "",
+            outputs.get(paths.get(name) ?? "") ?? "",
             `Retained source ${name}.`,
           );
         }
