@@ -65,7 +65,7 @@ export function buildNativeCoverageGroups() {
     {
       testFiles: TEST_FILES.filter((file) => file !== bootstrap),
       pattern: "",
-      expectedTests: 195,
+      expectedTests: 201,
     },
     ...executorBootstrapTestPatterns().map((pattern, index) => ({
       testFiles: [bootstrap],

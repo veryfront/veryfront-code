@@ -12,6 +12,10 @@ Hosted invocation preparation validates native body processing before it clones 
 
 The bounded body reader copies, measures and decodes body bytes with captured methods and returns them in null-prototype records. It checks `Promise.prototype.constructor` before it awaits each chunk read. The retained invocation copy is read with the same reader and is released on every exit.
 
+Every bounded body read uses this reader, not only runtime invocations. If `Promise.prototype.constructor` changes after framework initialization, each of those reads throws a TypeError that names `Promise.prototype.constructor`. When many unrelated routes start to reject request bodies with that message, look for code that replaced the promise constructor.
+
+The invocation contract reads invocation fields as own properties. It validates a copy of the parsed body made of arrays and null-prototype records, and returns the parsed invocation in null-prototype records. A field that the body leaves out is undefined for validation and for every later reader, whatever `Object.prototype` defines under that name. The copy that the schema validates carries a placeholder for each credential string, with the same length, UTF-8 size and visible-ASCII outcome. The parsed invocation carries the original values. The agent stream handler validates its stream request the same way.
+
 The framework captures the compared values when its modules load, so it must load before project code.
 
 ## Ownership and limits

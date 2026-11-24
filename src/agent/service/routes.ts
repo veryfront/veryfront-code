@@ -88,6 +88,7 @@ const ResponseStatusTextGet = Object.getOwnPropertyDescriptor(
   "statusText",
 )?.get;
 const ArrayIsArray = Array.isArray;
+const ObjectHasOwn = Object.hasOwn;
 const JsonParse = JSON.parse;
 const JsonStringify = JSON.stringify;
 
@@ -278,7 +279,10 @@ async function createRuntimeInvocationApplicationRequest(request: Request): Prom
   const text = await readBodyWithLimit(request, DEFAULT_MAX_BODY_SIZE_BYTES);
   assertNativeBodyProcessing();
   const payload = IntrinsicReflectApply(JsonParse, JSON, [text]) as Record<string, unknown>;
-  const credentials = payload.credentials;
+  // Read as an own property: a body that carries no credentials has none.
+  const credentials = IntrinsicReflectApply(ObjectHasOwn, Object, [payload, "credentials"])
+    ? payload.credentials
+    : undefined;
   const sanitizedPayload = isCredentialRecord(credentials)
     ? {
       ...payload,

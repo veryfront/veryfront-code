@@ -1,5 +1,12 @@
 import { types as utilTypes } from "node:util";
 import type { AgUiResumeValue } from "#veryfront/agent/ag-ui/tool-shared.ts";
+import { getInternalAgentStreamRequestSchema } from "#veryfront/internal-agents/schema.ts";
+import {
+  buildRuntimeAgentControlPlaneStreamRequestFromInvocation,
+  parseInvocationOwnData,
+  parseRuntimeAgentRunInvocationValue,
+  safeParseRuntimeAgentRunInvocationValue,
+} from "#veryfront/agent/runtime/agent-invocation-contract.ts";
 import type { HostedServiceAuthenticatedRequest } from "#veryfront/agent/service/auth.ts";
 import { createDetachedRunTracker } from "#veryfront/agent/service/detached-run-tracker.ts";
 import { createHostedAgentServiceRouteSet } from "#veryfront/agent/service/routes.ts";
@@ -964,6 +971,187 @@ it("preserves clean invocation semantics and withholds the body credential", asy
   assertEquals(payload.run.runId, "run-1");
   assertEquals(payload.credentials, { authToken: "control-plane-auth-token" });
   assertEquals(detachedRequest?.bodyUsed, true);
+});
+
+/** Optional invocation fields that the request body in these tests leaves out. */
+const absentInvocationFields = [
+  "sourceProject",
+  "agentEntrypoint",
+  "taskId",
+  "taskInput",
+  "allowDelegation",
+  "agentConfig",
+  "forwardedProps",
+  "serverResolvedProviderReplayCheckpoints",
+  "serverResolvedTrustedHostedHistoryMessageIds",
+  "resumeToolCall",
+  "sourceAuthToken",
+] as const;
+
+/** Define each field on `Object.prototype`; `read` supplies the inherited value. */
+function inheritFields(
+  fields: readonly string[],
+  read: (field: string, receiver: unknown) => unknown,
+): () => void {
+  for (const field of fields) {
+    Object.defineProperty(Object.prototype, field, {
+      configurable: true,
+      get(this: unknown) {
+        return read(field, this);
+      },
+      set(this: object, value: unknown) {
+        Object.defineProperty(this, field, {
+          configurable: true,
+          enumerable: true,
+          value,
+          writable: true,
+        });
+      },
+    });
+  }
+  return () => {
+    for (const field of fields) Reflect.deleteProperty(Object.prototype, field);
+  };
+}
+
+it("reads absent invocation fields as own properties", async () => {
+  const canary = "synthetic-own-property-canary";
+  const observed: string[] = [];
+  let reading = false;
+  let restore: (() => void) | undefined;
+  let detachedDispatches = 0;
+  let response: Response | undefined;
+  let failure: unknown;
+  const routeSet = createHostedAgentServiceRouteSet({
+    runtimeSource,
+    tracker: createDetachedRunTracker<AgUiResumeValue>(),
+    authenticateRequest: async (): Promise<HostedServiceAuthenticatedRequest> => {
+      restore ??= inheritFields(absentInvocationFields, (field, receiver) => {
+        if (reading) return undefined;
+        reading = true;
+        try {
+          if (containsBodyCanary(receiver, canary)) observed[observed.length] = field;
+        } finally {
+          reading = false;
+        }
+        return undefined;
+      });
+      return { authToken: "authenticated-user-token", userId: "user-1" };
+    },
+    verifyProjectAccess: async () => ({ success: true }),
+    verifyRunEventAppendToken: async () => true,
+    prepareExecution: async () => ({ executionId: "exec-1" }),
+    streamExecutionToAgUiResponse: () => new Response("streamed"),
+    startDetachedExecution: async () => {
+      detachedDispatches++;
+    },
+  });
+
+  try {
+    response = await routeSet.handleRuntimeAgentRunInvocationExecuteRequest({
+      request: createRuntimeInvocationRequest(canary, 0),
+      runId: "run-1",
+    });
+  } catch (error) {
+    failure = error;
+  } finally {
+    restore?.();
+  }
+
+  assertEquals(restore !== undefined, true, "the inherited fields were defined");
+  assertEquals(observed, [], "no inherited field is read from a record that holds the credential");
+  assertEquals(failure, undefined);
+  assertEquals(response?.status, 202);
+  assertEquals(detachedDispatches, 1);
+});
+
+const invocationParsers = [
+  ["parse", parseRuntimeAgentRunInvocationValue],
+  ["safe parse", (value: unknown) => {
+    const result = safeParseRuntimeAgentRunInvocationValue(value);
+    if (!result.success) throw result.error;
+    return result.data;
+  }],
+] as const;
+
+for (const [name, parse] of invocationParsers) {
+  it(`leaves absent invocation fields undefined when a value is inherited (${name})`, () => {
+    const inherited: Record<string, unknown> = {
+      taskId: "inherited-task",
+      allowDelegation: true,
+      parentRunId: "inherited-parent-run",
+      sourceAuthToken: "inherited-source-value",
+    };
+    const body = JSON.parse(createRuntimeInvocationBody("synthetic-inherited-value-canary"));
+    const restore = inheritFields(Object.keys(inherited), (field) => inherited[field]);
+    let fields: Record<string, unknown>;
+    try {
+      const invocation = parse(body);
+      fields = {
+        taskId: invocation.taskId,
+        allowDelegation: invocation.allowDelegation,
+        parentRunId: invocation.run.parentRunId,
+        sourceAuthToken: invocation.credentials?.sourceAuthToken,
+        authToken: invocation.credentials?.authToken,
+      };
+    } finally {
+      restore();
+    }
+
+    assertEquals(fields, {
+      taskId: undefined,
+      allowDelegation: undefined,
+      parentRunId: undefined,
+      sourceAuthToken: undefined,
+      authToken: "control-plane-auth-token",
+    });
+  });
+
+  it(`validates placeholders in place of credential values (${name})`, () => {
+    const canary = "synthetic-validation-canary";
+    // A value made only of characters outside visible ASCII.
+    const wideCanary = "\u00e9\u20ac \u0001\ud83d\ude00\u00e9\u20ac";
+    const body = JSON.parse(createRuntimeInvocationBody(canary));
+    body.credentials.authToken = wideCanary;
+    let observations = 0;
+    // A member the schema validator reads from the values it is given.
+    const restore = inheritFields(["aborted"], (_field, receiver) => {
+      if (containsBodyCanary(receiver, canary)) observations++;
+      if (containsBodyCanary(receiver, wideCanary)) observations++;
+      return undefined;
+    });
+    let credentials: unknown;
+    try {
+      credentials = parse(body).credentials;
+    } finally {
+      restore();
+    }
+
+    assertEquals(observations, 0, "validation never holds the credential value");
+    assertEquals(credentials, { authToken: wideCanary, inferenceAuthToken: canary });
+  });
+}
+
+it("validates a stream request without reading inherited optional fields", () => {
+  const invocation = parseRuntimeAgentRunInvocationValue(
+    JSON.parse(createRuntimeInvocationBody("synthetic-stream-request-value")),
+  );
+  const request = buildRuntimeAgentControlPlaneStreamRequestFromInvocation(invocation);
+  const inherited: Record<string, unknown> = {
+    sourceProject: invocation.run.project,
+    agentConfig: { id: "another-agent", tools: false },
+  };
+  const restore = inheritFields(Object.keys(inherited), (field) => inherited[field]);
+  let failure: unknown;
+  try {
+    parseInvocationOwnData(request, (input) => getInternalAgentStreamRequestSchema().parse(input));
+  } catch (error) {
+    failure = error;
+  } finally {
+    restore();
+  }
+
+  assertEquals(failure, undefined);
 });
 
 it("propagates host authentication error identity on the invocation route", async () => {
