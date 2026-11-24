@@ -3384,6 +3384,55 @@ describe("scheduled prune bound", () => {
     );
   });
 
+  it("should start maintenance a pass arms outside that pass's context", async () => {
+    // Arrange: a pass that arms a follow-up for another directory. When that
+    // follow-up fires it requests a promotion, which is shared maintenance
+    // rather than part of either pass.
+    const directory = `${persistedTestPrefix}context-parent`;
+    const followUpDirectory = `${persistedTestPrefix}context-child`;
+    const requestDirectory = dirname(await getPersistedJsxCachePruneRequestPath(directory));
+    const observed: Array<number | undefined> = [];
+    let followUpRan = false;
+    const localFs = getLocalFs();
+    const originalReadDir = localFs.readDir.bind(localFs);
+    (localFs as { readDir: unknown }).readDir = (path: string) => {
+      if (path === directory) {
+        scheduleJsxCachePruneRetry(followUpDirectory, 0);
+      } else if (path === followUpDirectory) {
+        followUpRan = true;
+      } else {
+        if (followUpRan && path === requestDirectory) {
+          observed.push(__jsxCacheInternals.activeJsxCachePruneGeneration());
+        }
+        return originalReadDir(path);
+      }
+      return (async function* () {})();
+    };
+
+    try {
+      // Act
+      await __jsxCacheInternals.revisitJsxCacheDirectory(
+        directory,
+        undefined,
+        __jsxCacheInternals.currentJsxCachePruneGeneration(),
+      );
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      await waitForJsxCacheMaintenance();
+
+      // Assert: the promotion must not inherit the parent pass's generation,
+      // or a later cancellation would fence retries that belong to live work.
+      assertEquals(followUpRan, true, "the follow-up pass must run");
+      assertNotEquals(observed.length, 0, "the follow-up must request a promotion");
+      assertEquals(
+        observed.every((generation) => generation === undefined),
+        true,
+        "maintenance started from a pass must not carry the pass generation",
+      );
+    } finally {
+      (localFs as { readDir: unknown }).readDir = originalReadDir;
+    }
+  });
+
   it("should leave no armed timer when cancellation lands mid-promotion", async () => {
     // Arrange: persisted work that a promotion pass will want to schedule.
     const directory = `${persistedTestPrefix}cancel-during-promotion`;

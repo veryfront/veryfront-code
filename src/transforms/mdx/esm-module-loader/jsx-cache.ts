@@ -1307,8 +1307,12 @@ function mayArmJsxCachePruneRetry(pruneGeneration: number | undefined): boolean 
  * The lease helpers are shared by the serve, refresh and write paths, so the
  * pass generation is carried with the async context rather than passed through
  * their signatures. Work outside a pass sees no generation and is never fenced.
+ *
+ * Timers and pumps are shared across passes and callers, so they start outside
+ * any pass context. Otherwise an async context would carry a retired pass's
+ * generation into later work and fence retries that belong to live work.
  */
-const activeJsxCachePruneGeneration = new AsyncLocalStorage<number>();
+const activeJsxCachePruneGeneration = new AsyncLocalStorage<number | undefined>();
 const AsyncLocalStorageGetStore = AsyncLocalStorage.prototype.getStore;
 const AsyncLocalStorageRun = AsyncLocalStorage.prototype.run;
 
@@ -1318,7 +1322,10 @@ function getActiveJsxCachePruneGeneration(): number | undefined {
     | undefined;
 }
 
-function runInJsxCachePruneGeneration<T>(pruneGeneration: number, operation: () => T): T {
+function runInJsxCachePruneGeneration<T>(
+  pruneGeneration: number | undefined,
+  operation: () => T,
+): T {
   return IntrinsicReflectApply(AsyncLocalStorageRun, activeJsxCachePruneGeneration, [
     pruneGeneration,
     operation,
@@ -1687,6 +1694,10 @@ async function promotePersistedJsxCachePruneRequest(
 }
 
 function pumpPersistedJsxCachePrunePromotions(): void {
+  if (getActiveJsxCachePruneGeneration() !== undefined) {
+    runInJsxCachePruneGeneration(undefined, pumpPersistedJsxCachePrunePromotions);
+    return;
+  }
   if (
     persistedJsxCachePrunePromotion !== undefined ||
     persistedJsxCachePrunePromotionRetry !== undefined
@@ -1754,6 +1765,10 @@ function requestPersistedJsxCachePrunePromotion(
 }
 
 function pumpJsxCachePersistence(): void {
+  if (getActiveJsxCachePruneGeneration() !== undefined) {
+    runInJsxCachePruneGeneration(undefined, pumpJsxCachePersistence);
+    return;
+  }
   if (jsxCachePersistencePump !== undefined || jsxCachePersistenceRetry !== undefined) return;
   const pump = (async () => {
     for (const entry of primordialArrayValues(mapEntries(pendingJsxCachePersistence))) {
@@ -1891,6 +1906,13 @@ function scheduleJsxCachePruneRetry(
   persistedGeneration?: string,
   requestDirectory = getPersistedJsxCachePruneRequestDirectory(),
 ): void {
+  if (getActiveJsxCachePruneGeneration() !== undefined) {
+    runInJsxCachePruneGeneration(
+      undefined,
+      () => scheduleJsxCachePruneRetry(esmCacheDir, delayMs, persistedGeneration, requestDirectory),
+    );
+    return;
+  }
   const pruneKey = getJsxCachePruneKey(esmCacheDir, requestDirectory);
   const fireAtMs = hostNow() + delayMs;
   const pending = mapGet(scheduledJsxCachePrunes, pruneKey);
@@ -2556,6 +2578,7 @@ export const __jsxCacheInternals = {
   runLazyJsxArtifactHeartbeat,
   revisitJsxCacheDirectory,
   currentJsxCachePruneGeneration: (): number => jsxCachePruneGeneration,
+  activeJsxCachePruneGeneration: getActiveJsxCachePruneGeneration,
   servedArtifactMemoSize: (): number => mapSize(servedArtifactTimestamps),
   withJsxArtifactRefreshSlot,
   waitForJsxCacheMaintenance,
