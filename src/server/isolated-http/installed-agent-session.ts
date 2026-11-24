@@ -88,26 +88,35 @@ export function createInstalledProjectAgentSessionResolver(
   const observeAttachment = options.observeAttachment?.bind(options);
   const requestTimeoutMs = options.requestTimeoutMs;
   const cleanupTimeoutMs = options.cleanupTimeoutMs;
-  return (executor: BrokerRuntimeAgentExecutorInput, signal: AbortSignal): Session => {
-    signal.throwIfAborted();
-    ownerSignal?.throwIfAborted();
-    const project = executor.sourceProject ?? executor.run.project;
-    const source = executor.agentSource;
-    if (executor.owner.scopeKind !== "project" || executor.owner.projectId !== project.projectId) {
-      throw new BrokerIngressError(403, "BROKER_INGRESS_SCOPE_DENIED");
-    }
+  const select = (input: {
+    sourceProject: BrokerRuntimeAgentExecutorInput["run"]["project"];
+    requestedSource: BrokerRuntimeAgentExecutorInput["agentSource"];
+  }) => {
+    const project = input.sourceProject, source = input.requestedSource;
     if (
       source.type !== "release" || project.runtimeTargetKind !== "environment" ||
       !project.runtimeTargetEnvironmentId ||
       (project.sourceTargetEnvironmentId &&
         project.sourceTargetEnvironmentId !== project.runtimeTargetEnvironmentId)
-    ) {
-      throw new BrokerIngressError(503, "BROKER_UNAVAILABLE");
-    }
+    ) return undefined;
     const image = registry.get(
       key(project.projectId, project.runtimeTargetEnvironmentId, source.releaseId),
     );
-    if (!image) throw new BrokerIngressError(503, "BROKER_UNAVAILABLE");
+    return image === undefined
+      ? undefined
+      : { image, source: { type: "release" as const, releaseId: source.releaseId } };
+  };
+  const resolveBoundSource = (input: Parameters<typeof select>[0]) => select(input)?.source;
+  const resolve = (executor: BrokerRuntimeAgentExecutorInput, signal: AbortSignal): Session => {
+    signal.throwIfAborted();
+    ownerSignal?.throwIfAborted();
+    const project = executor.sourceProject ?? executor.run.project;
+    if (executor.owner.scopeKind !== "project" || executor.owner.projectId !== project.projectId) {
+      throw new BrokerIngressError(403, "BROKER_INGRESS_SCOPE_DENIED");
+    }
+    const selection = select({ sourceProject: project, requestedSource: executor.agentSource });
+    if (!selection) throw new BrokerIngressError(503, "BROKER_UNAVAILABLE");
+    const { image, source } = selection;
     const now = Math.floor(clock.now());
     const deadline = executor.run.effectiveDeadlineAt === undefined
       ? now + lifetimeMs
@@ -140,4 +149,5 @@ export function createInstalledProjectAgentSessionResolver(
       ...(cleanupTimeoutMs === undefined ? {} : { cleanupTimeoutMs }),
     };
   };
+  return Object.freeze(Object.assign(resolve, { resolveBoundSource }));
 }

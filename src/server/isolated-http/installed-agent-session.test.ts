@@ -181,3 +181,44 @@ describe("installed project agent sessions", () => {
     assertThrows(() => createInstalledProjectAgentSessionResolver({ ...host(), lifetimeMs: 0 }));
   });
 });
+
+Deno.test("installed registry binds only exact source project environment and release tuples", async () => {
+  const resolve = createInstalledProjectAgentSessionResolver(
+    host([installed(), installed("release-2", image.replace("a".repeat(64), "b".repeat(64)))]),
+  );
+  const value = await executor();
+  const project = value.sourceProject!;
+  assertEquals(
+    resolve.resolveBoundSource({
+      sourceProject: project,
+      requestedSource: { type: "release", releaseId: "release-1" },
+    }),
+    { type: "release", releaseId: "release-1" },
+  );
+  assertEquals(
+    resolve.resolveBoundSource({
+      sourceProject: project,
+      requestedSource: { type: "release", releaseId: "release-2" },
+    }),
+    { type: "release", releaseId: "release-2" },
+  );
+  for (
+    const sourceProject of [{ ...project, projectId }, {
+      ...project,
+      runtimeTargetEnvironmentId: projectId,
+    }, { ...project, sourceTargetEnvironmentId: projectId }]
+  ) {
+    assertEquals(
+      resolve.resolveBoundSource({ sourceProject, requestedSource: value.agentSource }),
+      undefined,
+    );
+  }
+  assertEquals(
+    resolve.resolveBoundSource({
+      sourceProject: project,
+      requestedSource: { type: "release", releaseId: "not-installed" },
+    }),
+    undefined,
+  );
+  assertEquals(Object.isFrozen(resolve), true);
+});
