@@ -665,6 +665,11 @@ jobs:
           persist-credentials: false
       - uses: ./.github/actions/setup-deno
         timeout-minutes: 5
+      - name: Verify the shared host observer
+        run: python3 -m unittest discover -s scripts/ci -p test_observe_ci_host.py
+      - name: Observe source coverage host resources
+        id: host-resources-start
+        run: python3 scripts/ci/observe_ci_host.py start
       - name: Collect context ownership coverage from checked-out source
         env:
           DENO_COVERAGE_DIR: coverage-profiles/coverage-context-ownership
@@ -692,6 +697,18 @@ jobs:
             tests/integration/agent/managed-recovery
           deno run --config=scripts/test.deno.json --no-npm --allow-read --allow-write --allow-run --allow-env \
             scripts/test/coverage-ci.ts report coverage-profiles/coverage-context-ownership
+      - name: Finish source coverage host observations
+        if: always() && steps.host-resources-start.outcome == 'success'
+        run: python3 scripts/ci/observe_ci_host.py finish
+      - name: Preserve source coverage host observations
+        if: always() && steps.host-resources-start.outcome == 'success'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          archive: true
+          name: ci-source-coverage-host-${{ github.job }}-attempt-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/posture-host-observation/report.json
+          if-no-files-found: error
+          retention-days: 7
       - name: Bind source coverage to this run and attempt
         run: >-
           deno run --config=scripts/test.deno.json --no-npm --allow-read --allow-write
@@ -723,6 +740,11 @@ jobs:
           persist-credentials: false
       - uses: ./.github/actions/setup-deno
         timeout-minutes: 5
+      - name: Verify the shared host observer
+        run: python3 -m unittest discover -s scripts/ci -p test_observe_ci_host.py
+      - name: Observe source coverage host resources
+        id: host-resources-start
+        run: python3 scripts/ci/observe_ci_host.py start
       - name: Collect connected local CLI coverage from checked-out source
         env:
           DENO_COVERAGE_DIR: coverage-profiles/coverage-connected-local
@@ -751,6 +773,18 @@ jobs:
             tests/integration/agent/connected-platform-cleanup.test.ts
           deno run --config=scripts/test.deno.json --no-npm --allow-read --allow-write --allow-run --allow-env \
             scripts/test/coverage-ci.ts report coverage-profiles/coverage-connected-local
+      - name: Finish source coverage host observations
+        if: always() && steps.host-resources-start.outcome == 'success'
+        run: python3 scripts/ci/observe_ci_host.py finish
+      - name: Preserve source coverage host observations
+        if: always() && steps.host-resources-start.outcome == 'success'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          archive: true
+          name: ci-source-coverage-host-${{ github.job }}-attempt-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/posture-host-observation/report.json
+          if-no-files-found: error
+          retention-days: 7
       - name: Bind source coverage to this run and attempt
         run: >-
           deno run --config=scripts/test.deno.json --no-npm --allow-read --allow-write

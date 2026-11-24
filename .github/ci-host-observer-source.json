@@ -1,0 +1,17 @@
+{
+  "schema": 1,
+  "repository": "veryfront/veryfront-infrastructure",
+  "revision": "e1d89778c879fa0487f9c06ceb79574fd5e4fff7",
+  "files": [
+    {
+      "source_path": "scripts/observe_ci_host.py",
+      "target_path": "scripts/ci/observe_ci_host.py",
+      "sha256": "05b62523854a34dd1dae5c004a03107813b636cd7a5c329d53afbe4018f9e09b"
+    },
+    {
+      "source_path": "scripts/test_observe_ci_host.py",
+      "target_path": "scripts/ci/test_observe_ci_host.py",
+      "sha256": "81d1db1b1083f4aa1dc635dc436c9a20dafdf77225b04b54b5343bff51b7705c"
+    }
+  ]
+}

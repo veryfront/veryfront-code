@@ -857,6 +857,34 @@ done
       "source coverage producer",
     );
     assertEquals(sourceJob.needs, ["tested-run"]);
+    for (
+      const jobName of ["source-coverage-context-ownership", "source-coverage-connected-local"]
+    ) {
+      const job = asRecord(jobs[jobName], jobName);
+      assert(Array.isArray(job.steps));
+      const jobSteps = job.steps.map((step) => asRecord(step, "coverage producer step"));
+      const start = jobSteps.findIndex((step) => step.id === "host-resources-start");
+      const collect = jobSteps.findIndex((step) => String(step.name ?? "").startsWith("Collect "));
+      const finish = jobSteps.findIndex((step) =>
+        step.name === "Finish source coverage host observations"
+      );
+      const report = jobSteps.find((step) =>
+        step.name === "Preserve source coverage host observations"
+      );
+      assert(start >= 0 && start < collect && finish > collect);
+      assertEquals(
+        jobSteps[finish].if,
+        "always() && steps.host-resources-start.outcome == 'success'",
+      );
+      assert(report);
+      assertEquals(report.if, jobSteps[finish].if);
+      const upload = asRecord(report.with, "host report artifact");
+      assertEquals(upload.path, "${{ runner.temp }}/posture-host-observation/report.json");
+      assertEquals(upload.archive, true);
+      assertEquals(upload["if-no-files-found"], "error");
+      assertStringIncludes(String(upload.name), "ci-source-coverage-host-");
+    }
+
     assert(Array.isArray(sourceJob.steps));
     const sourceSteps = sourceJob.steps.map((step) => asRecord(step, "source coverage step"));
     const collectorIndex = sourceSteps.findIndex((step) =>
@@ -969,6 +997,26 @@ done
       steps.filter((step) => String(step.run ?? "").includes("coverage:ci:merge")).length,
       1,
     );
+  });
+
+  it("retains the reviewed shared host observer without source drift", async () => {
+    const provenance = JSON.parse(await readRepoFile(".github/ci-host-observer-source.json")) as {
+      revision: string;
+      files: { source_path: string; target_path: string; sha256: string }[];
+    };
+    assertEquals(provenance.revision, "e1d89778c879fa0487f9c06ceb79574fd5e4fff7");
+    assertEquals(provenance.files.map((file) => file.target_path), [
+      "scripts/ci/observe_ci_host.py",
+      "scripts/ci/test_observe_ci_host.py",
+    ]);
+    const results = await Promise.allSettled(provenance.files.map(async (file) => {
+      const bytes = new TextEncoder().encode(await readRepoFile(file.target_path));
+      const hash = await crypto.subtle.digest("SHA-256", bytes);
+      const digest = [...new Uint8Array(hash)].map((byte) => byte.toString(16).padStart(2, "0"))
+        .join("");
+      assertEquals(digest, file.sha256, file.target_path);
+    }));
+    for (const result of results) assertEquals(result.status, "fulfilled", String(result));
   });
 
   it("uploads raw shard reports so block ids are normalized only in the final merge", async () => {
