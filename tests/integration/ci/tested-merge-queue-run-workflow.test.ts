@@ -70,6 +70,7 @@ const KEPT = [
   "publish-public-release",
   "registry-validation-rc",
   "quality-gate-registry",
+  "publish-current-release",
   "update-homebrew",
   // Runs only on pull requests and the merge queue.
   "queue-tree-observation",
