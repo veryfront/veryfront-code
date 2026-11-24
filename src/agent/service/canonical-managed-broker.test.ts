@@ -1,3 +1,4 @@
+import { FakeTime } from "#std/testing/time";
 import "#veryfront/schemas/_test-setup.ts";
 import { assert, assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
@@ -50,6 +51,8 @@ async function fixture(input: {
   deadline?: string;
   now?: number;
   advanceDuringStatus?: number;
+  advanceDuringAdmission?: number;
+  observeAdmission?: (signal: AbortSignal) => void;
 } = {}) {
   const base = invocation();
   const body = invocation({
@@ -140,6 +143,8 @@ async function fixture(input: {
           return Promise.resolve(new Response(null, { status: input.admissionStatus ?? 409 }));
         }
         if (input.admission) input.admission.claimed = true;
+        now += input.advanceDuringAdmission ?? 0;
+        input.observeAdmission?.(init?.signal as AbortSignal);
         return Promise.resolve(
           Response.json({
             version: 1,
@@ -395,6 +400,28 @@ describe("canonical managed broker preparation", () => {
       }
     });
   }
+  it("bounds in-flight admission by the signed deadline and refuses a late receipt", async () => {
+    const now = Date.parse("2026-01-01T00:00:00Z");
+    using time = new FakeTime(now);
+    let admissionAborted = false;
+    const result = await fixture({
+      now,
+      deadline: new Date(now + 1000).toISOString(),
+      advanceDuringAdmission: 1001,
+      observeAdmission(signal) {
+        time.tick(1001);
+        admissionAborted = signal.aborted;
+      },
+    });
+    try {
+      assertEquals(admissionAborted, true);
+      assertEquals(result.response.status, 409);
+      assertEquals(result.prepared, 0);
+      assertEquals(result.started, undefined);
+    } finally {
+      await result.close();
+    }
+  });
   it("requires atomic API admission across independent broker replicas before preparation", async () => {
     const admission = { claimed: false };
     const replicas = await Promise.all([

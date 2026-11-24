@@ -129,10 +129,15 @@ export function createCanonicalManagedBrokerHandler<T>(
           canonicalRunId: cursor.canonicalRunId,
           latestEventId: cursor.latestEventId,
           latestExternalEventSequence: cursor.latestExternalEventSequence,
+          timeoutMs: run.effectiveDeadlineAt === undefined
+            ? undefined
+            : Math.max(0, Date.parse(run.effectiveDeadlineAt) - now()),
           signal,
           fetch: transport,
         });
+        assertLiveDeadline();
       } catch (error) {
+        assertLiveDeadline();
         try {
           onExecutionError?.(error, run.runId);
         } catch { /* Diagnostics cannot own admission. */ }

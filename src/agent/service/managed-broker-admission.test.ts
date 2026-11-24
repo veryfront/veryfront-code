@@ -70,6 +70,22 @@ describe("managed broker API admission", () => {
     });
     assertEquals(calls, 1);
   });
+  it("refuses exhausted and invalid admission budgets before making a request", async () => {
+    let calls = 0;
+    for (const timeoutMs of [0, -1, Number.NaN]) {
+      await assertRejects(() =>
+        claimManagedBrokerAdmission({
+          ...input(),
+          timeoutMs,
+          fetch: () => {
+            calls++;
+            return Promise.resolve(Response.json(receipt()));
+          },
+        })
+      );
+    }
+    assertEquals(calls, 0);
+  });
   for (const field of ["project", "run", "generation", "cursor"] as const) {
     it(`refuses an unbound ${field} receipt`, async () => {
       const value = receipt();
