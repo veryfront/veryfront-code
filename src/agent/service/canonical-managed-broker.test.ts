@@ -47,11 +47,15 @@ async function fixture(input: {
   admission?: { claimed: boolean };
   admissionStatus?: number;
   admissionMismatch?: boolean;
+  deadline?: string;
+  now?: number;
+  advanceDuringStatus?: number;
 } = {}) {
   const base = invocation();
   const body = invocation({
     run: {
       ...base.run,
+      ...(input.deadline === undefined ? {} : { effectiveDeadlineAt: input.deadline }),
       ...(input.cursor === false ? {} : {
         eventCursor: {
           canonicalRunId: canonicalId,
@@ -109,7 +113,9 @@ async function fixture(input: {
   let prepared = 0;
   let cleaned = 0;
   let started: ManagedExecutorStartInput | undefined;
+  let now = input.now ?? Date.now();
   const handler = createCanonicalManagedBrokerHandler({
+    clock: { now: () => now },
     apiUrl: "https://api.example.test",
     responseMode: input.stream ? "sse" : "detached",
     resolveProvider: () => "synthetic",
@@ -183,6 +189,7 @@ async function fixture(input: {
         );
       }
       if (url.pathname.startsWith("/runs/")) {
+        now += input.advanceDuringStatus ?? 0;
         return Promise.resolve(
           Response.json({ id: canonicalId, status: input.status ?? "running" }, {
             status: input.apiStatus ?? 200,
@@ -365,6 +372,29 @@ describe("canonical managed broker preparation", () => {
       await result.close();
     }
   });
+  for (const advanceDuringStatus of [0, 2000]) {
+    it(`rejects expired deadlines before consuming dispatch (status delay: ${advanceDuringStatus})`, async () => {
+      const now = Date.parse("2026-01-01T00:00:00Z");
+      const admission = { claimed: false };
+      const result = await fixture({
+        deadline: new Date(now + (advanceDuringStatus ? 1000 : -1)).toISOString(),
+        now,
+        advanceDuringStatus,
+        admission,
+      });
+      try {
+        assertEquals(admission.claimed, false);
+        assertEquals(result.response.status, 409);
+        assertEquals(result.prepared, 0);
+        assertEquals(
+          result.calls.some(({ url }) => url.pathname.endsWith("/runtime/admission")),
+          false,
+        );
+      } finally {
+        await result.close();
+      }
+    });
+  }
   it("requires atomic API admission across independent broker replicas before preparation", async () => {
     const admission = { claimed: false };
     const replicas = await Promise.all([

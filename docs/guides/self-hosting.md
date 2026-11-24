@@ -480,3 +480,52 @@ For production server options, see the
 For a deployment that supplies isolated HTTP executors, compose `createInstalledHttpBroker` and `createRuntimeSourceAuthorizer` from `veryfront/server/http-broker`. The host-owned registry binds each project, named environment and immutable release to its independently admitted source-built image digest and project configuration snapshot. The authorizer first checks the caller’s exact-release read grant, then checks the active environment through the existing project API with a host-owned read-only project credential. Both checks use the fixed HTTPS origin before allocation. Source credentials remain on the broker. They are never copied into executor configuration. Set the broker’s `requestLifetimeMs` to cover the configured host request timeout and supported response streams, including preparation. It defaults to 75 seconds and accepts 1 millisecond through 24 hours; allocator lifetime policy can impose a stricter limit.
 
 Pass the returned `hostedHttp` option to `startProductionServer` in proxy mode with host project execution disabled. Retire the production server and await the broker's shutdown and settlement when stopping the process. The deployment must supply the authenticated broker Pod identity, the existing scoped allocator client and authenticated executor transport. It must independently qualify image provenance and the selected runtime's isolation. Configuration or library tests alone do not establish deployed isolation.
+
+### Installed Production agents
+
+Use `createInstalledCanonicalAgentService` from `veryfront/server/http-broker` for
+API-signed agent runs backed by installed project releases. It composes dispatch
+admission, source discovery, model/tool policy, persistence and authenticated run
+control. A shared agent executes from its source project's selected Production
+release; the consuming project's identity still owns the conversation, billing
+and run records. Consumers do not receive source-project membership or credentials.
+
+Supply the same host-owned `installations`, allocator and authenticated transport
+used by the isolated HTTP broker. Each registry entry must bind a source project
+ID, environment ID and immutable release ID to a digest-pinned image. Names and
+slugs identify the namespace but cannot replace those bindings. The host must
+also supply API signature verification, fixed API/inference/MCP destinations and
+explicit model/tool budgets. Do not load those settings from agent metadata.
+
+For a deployment that already owns its model/tool composition, the lower-level
+`createInstalledProjectAgentSessionResolver` uses that same registry:
+
+```ts
+import {
+  createInstalledProjectAgentSessionResolver,
+  type InstalledProjectAgentSessionOptions,
+} from "veryfront/server/http-broker";
+
+function createSourceSessions(source: InstalledProjectAgentSessionOptions) {
+  return createInstalledProjectAgentSessionResolver({
+    ...source,
+    lifetimeMs: 300_000,
+    preparationMs: 30_000,
+  });
+}
+```
+
+The resolver exposes `resolveBoundSource` for the authenticated ingress metadata
+lookup. Call the resolver itself only with verified ingress after live dispatch
+admission. It returns session configuration, not permission to execute: the
+canonical authorizer must still validate the writer, terminal authority and
+consuming run. Missing, ambiguous or mismatched source bindings fail closed.
+HTTP application variables are not forwarded to the agent executor.
+
+The default allocation lifetime is five minutes and preparation defaults to thirty
+seconds. Both are bounded by the signed run deadline; preparation is also bounded
+by the whole allocation lifetime. Expired requests are rejected before dispatch
+admission. Retire the composed service with `close()` and await `settled` during
+shutdown. The API's publication and audience checks remain required; exposing this
+entry point alone does not enable account agents or prove a deployed image's
+isolation. Qualify matching source images and the real deployment before activation.

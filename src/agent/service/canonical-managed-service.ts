@@ -70,6 +70,7 @@ export function createCanonicalManagedBrokerService<T>(
   let closing: Promise<void> | undefined;
   const handler = createCanonicalManagedBrokerHandler({
     ...canonicalOptions,
+    clock,
     responseMode,
     maxActiveRuns,
     async prepareExecutor(input) {

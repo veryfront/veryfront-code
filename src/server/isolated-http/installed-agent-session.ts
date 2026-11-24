@@ -36,9 +36,14 @@ export type InstalledProjectAgentSessionOptions =
   };
 
 /**
- * Select a digest-pinned project release after canonical signature and live
- * dispatch admission. This selects session data, not execution authority.
+ * Resolve registered source metadata after signature verification, then select
+ * a digest-pinned session after live dispatch admission. This selects session
+ * data, not execution authority.
  * HTTP-app variables stay in the broker and are never part of the result.
+ *
+ * @param options Host-owned registry, scoped allocator and authenticated transport.
+ * @returns A session resolver with a signature-gated `resolveBoundSource` metadata lookup.
+ * See the self-hosting guide for canonical authorization, budgets and shutdown.
  */
 export function createInstalledProjectAgentSessionResolver(
   options: InstalledProjectAgentSessionOptions,
