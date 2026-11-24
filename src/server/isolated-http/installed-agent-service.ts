@@ -1,3 +1,5 @@
+import { createCanonicalCapabilitiesHandler } from "#veryfront/agent/service/canonical-capabilities.ts";
+import { resolveHostedRuntimeRequestConfig } from "#veryfront/agent/hosted/runtime-request-config.ts";
 import { extractLatestUserText } from "#veryfront/agent/artifacts/default-research-artifact-support.ts";
 import {
   convertAgentRuntimeMessagesToProviderMessages,
@@ -227,6 +229,15 @@ export function createInstalledCanonicalAgentService(options: {
           executionSignal.throwIfAborted();
           return { model, tools };
         });
+        const invocationConfig = resolveHostedRuntimeRequestConfig({
+          request: { forwardedProps: ingress.executor.input.forwardedProps },
+          agentConfig: source.definition,
+          resolveModelId: (modelId) => modelId,
+        });
+        const invocationToolNames =
+          invocationConfig.effectiveRuntimeOverrides?.allowedTools === undefined
+            ? undefined
+            : invocationConfig.requestedAllowedTools ?? [];
         const start: Omit<
           ManagedExecutorStartInput,
           "state" | "persistence" | "bindSessionOwnedWork"
@@ -290,6 +301,7 @@ export function createInstalledCanonicalAgentService(options: {
               : { maxOutputTokens: prepared.model.maxOutputTokens }),
             ...(prepared.model.thinking === undefined ? {} : { thinking: prepared.model.thinking }),
             providerToolNames: prepared.model.providerToolNames,
+            ...(invocationToolNames === undefined ? {} : { allowedToolNames: invocationToolNames }),
           },
         };
         const latestUserText = extractLatestUserText(ingress.executor.input.messages);
@@ -317,8 +329,17 @@ export function createInstalledCanonicalAgentService(options: {
       }
     },
   });
+  const capabilitySignal = AbortSignal.any([signal, broker.signal]);
+  const capabilities = createCanonicalCapabilitiesHandler({
+    ...ingressOptions,
+    signal: capabilitySignal,
+  });
   let closing: Promise<void> | undefined;
   return {
+    capabilities,
+    get ready() {
+      return !capabilitySignal.aborted;
+    },
     handle: service.handle,
     cancel: service.cancel,
     resume: service.resume,

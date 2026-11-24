@@ -1,3 +1,7 @@
+import {
+  getForwardedHostedRuntimeOverrides,
+  isHostedToolSelectionClosed,
+} from "../hosted/runtime-request-config.ts";
 import { readCanonicalSourceDefinition } from "./canonical-source-definition.ts";
 import type { RuntimeAgentMarkdownDefinition } from "../runtime/agent-definition.ts";
 import type { BrokerRuntimeAgentIngress } from "./broker-ingress.ts";
@@ -111,17 +115,23 @@ export async function prepareCanonicalBrokerTools(input: {
     return task;
   };
   try {
-    raw = createHostedProjectRemoteToolSources({
-      authToken: input.ingress.privateAuthority.apiAuthToken,
-      apiMcpUrl: input.apiMcpUrl,
-      studioMcpUrl: input.studioMcpUrl,
-      mcpServers: definition.mcpServers,
-      clientProfile: resolveRuntimeClientProfile(input.ingress.executor.input.forwardedProps),
-      getProjectId: () => identity.projectId,
-      defaultProjectId: () => identity.projectId,
-      conversationId: run.conversationId,
-      createRemoteToolSource: input.createRemoteToolSource,
-    });
+    raw = isHostedToolSelectionClosed(
+        definition.tools,
+        getForwardedHostedRuntimeOverrides(input.ingress.executor.input.forwardedProps)
+          ?.allowedTools,
+      )
+      ? []
+      : createHostedProjectRemoteToolSources({
+        authToken: input.ingress.privateAuthority.apiAuthToken,
+        apiMcpUrl: input.apiMcpUrl,
+        studioMcpUrl: input.studioMcpUrl,
+        mcpServers: definition.mcpServers,
+        clientProfile: resolveRuntimeClientProfile(input.ingress.executor.input.forwardedProps),
+        getProjectId: () => identity.projectId,
+        defaultProjectId: () => identity.projectId,
+        conversationId: run.conversationId,
+        createRemoteToolSource: input.createRemoteToolSource,
+      });
     const limits = executorToolLimits();
     const projectToolNames = [
       ...getServerResolvedProjectToolNames(input.ingress.executor.input.forwardedProps),

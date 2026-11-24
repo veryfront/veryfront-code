@@ -66,6 +66,7 @@ import {
 } from "#veryfront/agent/hosted/executor-discovery-schema.ts";
 import { verifyHostedRuntimeSourceBinding } from "#veryfront/agent/hosted/runtime-source-binding.ts";
 import {
+  isHostedToolSelectionClosed,
   resolveHostedRuntimeAllowedProviderTools,
   resolveHostedRuntimeAllowedTools,
 } from "#veryfront/agent/hosted/runtime-request-config.ts";
@@ -654,12 +655,15 @@ export function createRuntimePreparationCore(input: RuntimePreparationCoreOption
   function requireFacades(
     definition: RuntimeAgentMarkdownDefinition,
     effective: ExecutorRuntimeGrantData,
+    requestedToolNames?: readonly string[],
   ) {
     if (
       typeof facades.resolveModelRuntime !== "function" || typeof facades.cleanup !== "function"
     ) refuse("EXECUTOR_RUNTIME_CAPABILITY_UNAVAILABLE");
     requireGrantedSourceFacades(effective);
-    requireConfiguredServerFacades(definition, effective);
+    if (!isHostedToolSelectionClosed(definition.tools, requestedToolNames)) {
+      requireConfiguredServerFacades(definition, effective);
+    }
     if (
       (effective.execution.projectId !== null ||
         includes(effective.requiredCapabilities ?? [], "project-steering")) &&
@@ -739,7 +743,7 @@ export function createRuntimePreparationCore(input: RuntimePreparationCoreOption
       const { thinking, maxOutputTokens } = withServedFacts(() =>
         resolvePreparedOutput(request, definition, modelId, modelGrant.maxOutputTokens)
       );
-      requireFacades(definition, grant);
+      requireFacades(definition, grant, request.allowedToolNames);
       // Enroll only after agent.describe returns: a failed discovery operation
       // can await discovery.close(). No remaining preparation work awaits it.
       input.project.retainTask(preparation!);
@@ -814,7 +818,9 @@ export function createRuntimePreparationCore(input: RuntimePreparationCoreOption
         }
       };
       // A closed selector calls no tools, so no remote source is connected or listed.
-      if (definition.tools !== false) populateRemoteToolSources();
+      if (!isHostedToolSelectionClosed(definition.tools, request.allowedToolNames)) {
+        populateRemoteToolSources();
+      }
       if (remoteToolSources.length > 0) resourcesStarted = true;
       const resolveInitialToolSelection = () => {
         const sourceToolNames = resolveHostedRuntimeAllowedTools({

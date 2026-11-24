@@ -202,6 +202,14 @@ export function getForwardedHostedRuntimeOverrides(
   return Object.keys(overrides).length > 0 ? overrides : undefined;
 }
 
+/** An explicit closed function-tool selection needs no remote transports or facades. */
+export function isHostedToolSelectionClosed(
+  configuredTools: RuntimeAgentMarkdownDefinition["tools"],
+  requestedTools?: readonly string[],
+): boolean {
+  return configuredTools === false || requestedTools?.length === 0;
+}
+
 /** Resolves hosted runtime thinking override. */
 export function resolveHostedRuntimeThinkingOverride(input: {
   configuredThinking: RuntimeAgentThinkingConfig | undefined;

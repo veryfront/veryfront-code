@@ -1,3 +1,5 @@
+import { createControlPlaneSignature } from "#veryfront/server/handlers/request/internal-agent-run.test-helpers.ts";
+import { CONTROL_PLANE_RUNTIME_CAPABILITIES_PATH } from "#veryfront/channels/control-plane.ts";
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { createInstalledCanonicalAgentService } from "./installed-agent-service.ts";
@@ -134,4 +136,52 @@ Deno.test("installed canonical service validates terminal verification and execu
     TypeError,
   );
   assertEquals(f.counts(), { allocations: 0, requests: 0 });
+});
+
+Deno.test("composed capabilities authenticate exact source namespace and do no API or allocator work", async () => {
+  const path = CONTROL_PLANE_RUNTIME_CAPABILITIES_PATH;
+  const body = JSON.stringify({ requestId: "capabilities-test", projectId, surface: "studio" });
+  const signed = await createControlPlaneSignature(body, {
+    projectId,
+    audience: "demo-project",
+    requestId: "capabilities-test",
+    requestMethod: "POST",
+    requestPath: path,
+  });
+  const f = fixture(signed.publicKeyPem);
+  const service = createInstalledCanonicalAgentService(f.input);
+  const request = (value = body, signature = signed.jws) =>
+    new Request("https://broker.test" + path, {
+      method: "POST",
+      body: value,
+      headers: { "x-veryfront-control-plane-jws": signature },
+    });
+  try {
+    assertEquals(service.ready, true);
+    const response = await service.capabilities.handle(request());
+    assertEquals(response.status, 200);
+    assertEquals(await response.json(), {
+      project_id: projectId,
+      capabilities: { account_agent_publications: { version: 1 } },
+    });
+    assertEquals((await service.capabilities.handle(request(body, "invalid"))).status, 401);
+    assertEquals(
+      (await service.capabilities.handle(
+        request(body.replace("capabilities-test", "changed-subject")),
+      )).status,
+      401,
+    );
+    assertEquals(
+      (await service.capabilities.handle(request(body.replace(projectId, "foreign")))).status,
+      401,
+    );
+    assertEquals((await service.capabilities.handle(request("x".repeat(4097)))).status, 413);
+    assertEquals(f.counts(), { allocations: 0, requests: 0 });
+    await service.close();
+    assertEquals(service.ready, false);
+    assertEquals((await service.capabilities.handle(request())).status, 503);
+  } finally {
+    await service.close();
+    await service.settled;
+  }
 });

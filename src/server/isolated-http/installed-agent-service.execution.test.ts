@@ -39,6 +39,7 @@ const body = invocation({
  projectEventPersistence: { mode: "runtime-owned-v1", canonicalRunId: canonicalId, latestEventId: 0, latestExternalEventSequence: 0 }, platformToolDependencies: [],
 });
 if (data.omitEntrypoint) delete body.agentEntrypoint;
+if (data.emptyTools) body.forwardedProps.runtimeOverrides.allowedTools = [];
 const contract = await import("./src/agent/runtime/agent-invocation-contract.ts");
 const parsedBody = contract.safeParseRuntimeAgentRunInvocationValue(body);
 if (!parsedBody.success) throw new Error("Synthetic request schema: " + JSON.stringify(parsedBody.error.issues?.map(issue => ({ path: issue.path, message: issue.message }))));
@@ -60,7 +61,7 @@ const connectTransport = async ({ binding }) => {
  const inbound = new TransformStream();
  const installation = createExecutorRuntimeInstallation({ mode: "project-tools", binding, artifact: { version: 1, owner, source, root: "project" }, async install(input, signal, context) {
   const inspect = tool({ id: "inspect", description: "Inspect a claim", inputSchema: defineSchema(v => v.object({ query: v.string() }))(), execute: (args, call) => { executions++; assertEquals(args, { query: "approved" }); assertEquals(call.projectId, projectId); assertEquals(call.userId, userId); assertEquals(call.runId, "run-1"); return { ok: true }; } });
-  const discovery = createExecutorDiscovery({ binding, source, projectDir: "/synthetic-project", defaultAgentId: input.context.agentId, agentEntrypoint: input.agentEntrypoint, signal, backend: { load: async () => ({ agents: new Map([["builder", agent({ id: "builder", model: "veryfront-cloud/openai/synthetic", system: "Use inspect then answer", tools: { inspect: true }, skills: false, mcpServers: [] })]]), tools: new Map([["inspect", inspect]]), skills: new Map(), prompts: new Map(), resources: new Map(), workflows: new Map(), tasks: new Map(), schedules: new Map(), webhooks: new Map(), evals: new Map(), errors: [], sourceIntegrationPolicy: { schemaVersion: 1, mode: "unrestricted" } }), cleanup: async () => {} } });
+  const discovery = createExecutorDiscovery({ binding, source, projectDir: "/synthetic-project", defaultAgentId: input.context.agentId, agentEntrypoint: input.agentEntrypoint, signal, backend: { load: async () => ({ agents: new Map([["builder", agent({ id: "builder", model: "veryfront-cloud/openai/synthetic", system: "Use inspect then answer", tools: data.disableTools ? false : { inspect: true }, skills: false, ...(data.explicitMcp ? { mcpServers: [{ kind: "veryfront-api", id: "unneeded" }] } : data.disableTools ? {} : { mcpServers: [] }) })]]), tools: new Map([["inspect", inspect]]), skills: new Map(), prompts: new Map(), resources: new Map(), workflows: new Map(), tasks: new Map(), schedules: new Map(), webhooks: new Map(), evals: new Map(), errors: [], sourceIntegrationPolicy: { schemaVersion: 1, mode: "unrestricted" } }), cleanup: async () => {} } });
   return await createExecutorProjectToolRuntime({ input, discovery, signal, deadline: context.deadline });
  } });
  peer = createExecutorChannel({ binding, operations: installation.operations, transport: { readable: outbound.readable, writable: inbound.writable } });
@@ -85,21 +86,23 @@ const transport = async (value, init) => {
  assertEquals(request.headers.get("x-veryfront-project-slug"), "demo-project");
  if (url.pathname.endsWith("/ai/models")) return Response.json({ models: [{ id: "synthetic", modelId: "openai/synthetic", provider: "openai", aliases: [], surface: "openai", operations: ["chat-completions"], transport: "chat-completions", supportedProviderTools: [], capabilities: { limit: { output: 4096 } } }] });
  assert(url.pathname.endsWith("/chat/completions"));
+ const inference = await request.json();
+ if (data.emptyTools || data.disableTools) assertEquals(inference.tools === undefined || inference.tools.length === 0, true);
  modelCalls++;
- const delta = modelCalls === 1 ? { role: "assistant", tool_calls: [{ index: 0, id: "inspect-call", type: "function", function: { name: "inspect", arguments: JSON.stringify({ query: "approved" }) } }] } : { role: "assistant", content: "Claim inspected" };
- const chunks = [{ id: "response-" + modelCalls, object: "chat.completion.chunk", model: "synthetic", choices: [{ index: 0, delta, finish_reason: null }] }, { id: "response-" + modelCalls, object: "chat.completion.chunk", model: "synthetic", choices: [{ index: 0, delta: {}, finish_reason: modelCalls === 1 ? "tool_calls" : "stop" }], usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 } }];
+ const delta = data.emptyTools || data.disableTools ? { role: "assistant", content: "Tool-free reply" } : modelCalls === 1 ? { role: "assistant", tool_calls: [{ index: 0, id: "inspect-call", type: "function", function: { name: "inspect", arguments: JSON.stringify({ query: "approved" }) } }] } : { role: "assistant", content: "Claim inspected" };
+ const chunks = [{ id: "response-" + modelCalls, object: "chat.completion.chunk", model: "synthetic", choices: [{ index: 0, delta, finish_reason: null }] }, { id: "response-" + modelCalls, object: "chat.completion.chunk", model: "synthetic", choices: [{ index: 0, delta: {}, finish_reason: (data.emptyTools || data.disableTools) ? "stop" : modelCalls === 1 ? "tool_calls" : "stop" }], usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 } }];
  return new Response(chunks.map(chunk => "data: " + JSON.stringify(chunk) + "\\n\\n").join("") + "data: [DONE]\\n\\n", { headers: { "content-type": "text/event-stream" } });
 };
 await __runWithOutboundFetchTransportForTests({ fetch: transport, pinnedFetch: (url, _addresses, init) => transport(url, init), resolveHost: async () => ["93.184.216.34"] }, async () => {
- const service = createInstalledCanonicalAgentService({ source: { installations: [{ image, configuration: { projectId: sourceId, projectSlug: "private-source", environmentId, environmentName: "production", releaseId: "release-1", configurationId: "config-1", variables: { PRIVATE: "never-forward" } } }], expectedBrokerInstanceId: "broker-test", allocator, connectTransport }, ingress: { publicKeyPem: signed.publicKeyPem, audience: "private-source", projectId: sourceId, expectedSurface: "studio" }, auth, apiUrl, inferenceApiBaseUrl: apiUrl, apiMcpUrl: apiUrl + "/mcp", modelLimits: { maxCalls: 10, maxConcurrentCalls: 1, maxOutputTokens: 4096, maxSteps: 10 }, toolLimits: { maxCalls: 20, maxConcurrent: 2 }, maxActive: 1, fetch: rest, resolveProvider: () => "openai", onExecutionError: error => console.error("COMPOSITION_ERROR", error) });
+ const service = createInstalledCanonicalAgentService({ source: { installations: [{ image, configuration: { projectId: sourceId, projectSlug: "private-source", environmentId, environmentName: "production", releaseId: "release-1", configurationId: "config-1", variables: { PRIVATE: "never-forward" } } }], expectedBrokerInstanceId: "broker-test", allocator, connectTransport }, ingress: { publicKeyPem: signed.publicKeyPem, audience: "private-source", projectId: sourceId, expectedSurface: "studio" }, auth, apiUrl, inferenceApiBaseUrl: apiUrl, apiMcpUrl: apiUrl + "/mcp", modelLimits: { maxCalls: 10, maxConcurrentCalls: 1, maxOutputTokens: 4096, maxSteps: 10 }, toolLimits: { maxCalls: 20, maxConcurrent: 2 }, maxActive: 1, fetch: rest, resolveProvider: () => "openai", createRemoteToolSource: () => { throw new Error("Tool-free execution must not construct MCP sources"); }, onExecutionError: error => console.error("COMPOSITION_ERROR", error) });
  try {
   const response = await service.handle(signed.request);
   const text = await response.text();
   assertEquals(response.status, 200, text);
-  assertStringIncludes(text, "Claim inspected");
+  assertStringIncludes(text, data.emptyTools || data.disableTools ? "Tool-free reply" : "Claim inspected");
   assertEquals(allocations, 1);
-  assertEquals(executions, 1);
-  assertEquals(modelCalls, 2);
+  assertEquals(executions, data.emptyTools || data.disableTools ? 0 : 1);
+  assertEquals(modelCalls, data.emptyTools || data.disableTools ? 1 : 2);
   assert(events.length > 0);
   for (const secret of ["api-auth-token", "source-read-token", "inference-token", "never-forward", data.token]) assertEquals(wire.includes(secret), false);
  } finally { await service.close(); await service.settled; await peerCleanup; }
@@ -107,14 +110,37 @@ await __runWithOutboundFetchTransportForTests({ fetch: transport, pinnedFetch: (
 console.log("installed-canonical-execution-qualified");
 `;
 
-for (const omitEntrypoint of [false, true]) {
-  Deno.test(
-    omitEntrypoint
-      ? "installed canonical execution omits an absent entrypoint from bounded protocol data"
-      : "installed canonical service executes the selected code agent and native tool with one source allocation",
-    async () => {
-      const output = await runCanonicalWriterProgram(program, { omitEntrypoint });
-      assertEquals(output.split("\n").at(-1), "installed-canonical-execution-qualified");
+for (
+  const scenario of [
+    {
+      name:
+        "installed canonical service executes the selected code agent and native tool with one source allocation",
+      input: {},
     },
-  );
+    {
+      name: "installed canonical execution omits an absent entrypoint from bounded protocol data",
+      input: { omitEntrypoint: true },
+    },
+    {
+      name: "installed canonical execution preserves an explicit empty invocation tool allowlist",
+      input: { emptyTools: true },
+    },
+    {
+      name: "installed canonical tool-free agents start without constructing remote sources",
+      input: { disableTools: true },
+    },
+    {
+      name: "closed source tools do not require an unused explicitly configured MCP facade",
+      input: { disableTools: true, explicitMcp: true },
+    },
+    {
+      name: "empty invocation tools do not connect or require an unused configured MCP facade",
+      input: { emptyTools: true, explicitMcp: true },
+    },
+  ]
+) {
+  Deno.test(scenario.name, async () => {
+    const output = await runCanonicalWriterProgram(program, scenario.input);
+    assertEquals(output.split("\n").at(-1), "installed-canonical-execution-qualified");
+  });
 }
