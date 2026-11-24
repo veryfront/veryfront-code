@@ -1,0 +1,183 @@
+import "#veryfront/schemas/_test-setup.ts";
+import { assert, assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
+import { describe, it } from "#veryfront/testing/bdd.ts";
+import {
+  BrokerIngressError,
+  parseBrokerRuntimeAgentIngress,
+} from "#veryfront/agent/service/broker-ingress.ts";
+import {
+  invocation,
+  options,
+  projectId,
+  signedRequest,
+} from "#veryfront/agent/service/broker-ingress.test-helpers.ts";
+import {
+  createInstalledProjectAgentSessionResolver,
+  type InstalledProjectAgentSessionOptions,
+} from "./installed-agent-session.ts";
+
+const sourceId = "00000000-0000-4000-8000-000000000099";
+const environmentId = "00000000-0000-4000-8000-000000000098";
+const image = `ghcr.io/veryfront/tenant-source@sha256:${"a".repeat(64)}`;
+function installed(releaseId = "release-1", selectedImage = image) {
+  return {
+    image: selectedImage,
+    configuration: {
+      projectId: sourceId,
+      projectSlug: "private-source",
+      environmentId,
+      environmentName: "production",
+      releaseId,
+      configurationId: "config-1",
+      variables: { SOURCE_SECRET: "must-not-reach-agent-session" },
+    },
+  };
+}
+function host(installations = [installed()]): InstalledProjectAgentSessionOptions {
+  return {
+    installations,
+    expectedBrokerInstanceId: "broker-a",
+    allocator: {
+      allocate() {
+        throw new Error("Selector must not allocate");
+      },
+    } as unknown as InstalledProjectAgentSessionOptions["allocator"],
+    connectTransport() {
+      throw new Error("Selector must not connect");
+    },
+    clock: {
+      now: () => 1000,
+      schedule() {
+        throw new Error("Selector must not schedule work");
+      },
+      cancel() {},
+    },
+  };
+}
+async function executor(deadline?: number) {
+  const base = invocation();
+  const signed = await signedRequest(
+    invocation({
+      run: {
+        ...base.run,
+        project: { ...base.run.project, runtimeTargetBranchName: "main" },
+        ...(deadline === undefined
+          ? {}
+          : { effectiveDeadlineAt: new Date(deadline).toISOString() }),
+      },
+      sourceProject: {
+        projectId: sourceId,
+        projectSlug: "private-source",
+        runtimeTargetKind: "environment",
+        runtimeTargetEnvironmentId: environmentId,
+        runtimeTargetEnvironmentName: "Production",
+      },
+      agentEntrypoint: { path: "agents/selected.ts" },
+    }),
+    { projectId: sourceId, audience: "private-source" },
+  );
+  return (await parseBrokerRuntimeAgentIngress(signed.request, {
+    ...options(signed.publicKeyPem),
+    projectId: sourceId,
+    audience: "private-source",
+    expectedOwner: { scopeKind: "project", projectId: sourceId },
+  })).executor;
+}
+
+describe("installed project agent sessions", () => {
+  it("selects the source image independently of the consuming project and excludes app variables", async () => {
+    const input = await executor(1500);
+    const resolve = createInstalledProjectAgentSessionResolver(host());
+    const session = resolve(input, new AbortController().signal);
+    assertEquals(input.run.project.projectId, projectId);
+    assertEquals(session.request.owner, { scopeKind: "project", projectId: sourceId });
+    assertEquals(session.request.source, { type: "release", releaseId: "release-1" });
+    assertEquals(session.request.executionProfile, "project-tools");
+    assertEquals(session.expectedImage, image);
+    assertEquals(session.request.prepareDeadlineAt, 1500);
+    assertEquals(session.request.hardDeadlineAt, 1500);
+    assertEquals("configuration" in session, false);
+    assertEquals(JSON.stringify(session.request).includes("must-not-reach-agent-session"), false);
+  });
+  it("retains captured releases, tolerates renamed display labels and snapshots the registry", async () => {
+    const old = installed(),
+      newer = installed("release-2", image.replace("a".repeat(64), "b".repeat(64)));
+    const renamed = installed();
+    renamed.configuration.projectSlug = "renamed";
+    renamed.configuration.environmentName = "Renamed production";
+    const resolve = createInstalledProjectAgentSessionResolver(host([newer, old, renamed]));
+    old.image = newer.image;
+    const result = resolve(await executor(), new AbortController().signal);
+    assertEquals(result.expectedImage, image);
+  });
+  it("clamps preparation to the host budget even when the signed deadline is later", async () => {
+    const resolve = createInstalledProjectAgentSessionResolver({
+      ...host(),
+      lifetimeMs: 300,
+      preparationMs: 500,
+    });
+    const session = resolve(await executor(1500), new AbortController().signal);
+    assertEquals(session.request.requestedAt, 1000);
+    assertEquals(session.request.hardDeadlineAt, 1300);
+    assertEquals(session.request.prepareDeadlineAt, 1300);
+  });
+  for (const mismatch of ["owner", "project", "environment", "release", "branch"] as const) {
+    it(`refuses an uninstalled ${mismatch} before allocation`, async () => {
+      const input = await executor();
+      const changed = {
+        ...input,
+        ...(mismatch === "owner" ? { owner: { scopeKind: "project" as const, projectId } } : {}),
+        ...(mismatch === "project"
+          ? { sourceProject: { ...input.sourceProject!, projectId } }
+          : {}),
+        ...(mismatch === "environment"
+          ? { sourceProject: { ...input.sourceProject!, runtimeTargetEnvironmentId: projectId } }
+          : {}),
+        ...(mismatch === "release"
+          ? { agentSource: { type: "release" as const, releaseId: "unknown-release" } }
+          : {}),
+        ...(mismatch === "branch"
+          ? { agentSource: { type: "branch" as const, branch: "main" } }
+          : {}),
+      };
+      const resolve = createInstalledProjectAgentSessionResolver(host());
+      const error = assertThrows(
+        () => resolve(changed, new AbortController().signal),
+        BrokerIngressError,
+      );
+      assert(error instanceof BrokerIngressError);
+      assertEquals(error.status, mismatch === "owner" || mismatch === "project" ? 403 : 503);
+    });
+  }
+  it("refuses expired runs and cancelled preparation or process ownership", async () => {
+    const resolve = createInstalledProjectAgentSessionResolver(host());
+    const expired = await executor(1000), input = await executor();
+    const expiredError = assertThrows(
+      () => resolve(expired, new AbortController().signal),
+      BrokerIngressError,
+    );
+    assert(expiredError instanceof BrokerIngressError);
+    assertEquals(expiredError.status, 409);
+    const cancelled = new AbortController();
+    cancelled.abort();
+    assertThrows(() => resolve(input, cancelled.signal));
+    const owned = createInstalledProjectAgentSessionResolver({
+      ...host(),
+      ownerSignal: cancelled.signal,
+    });
+    assertThrows(() => owned(input, new AbortController().signal));
+  });
+  it("rejects ambiguous images, mutable image tags and invalid budgets at startup", () => {
+    assertThrows(() =>
+      createInstalledProjectAgentSessionResolver(
+        host([installed(), installed("release-1", image.replace("a".repeat(64), "b".repeat(64)))]),
+      )
+    );
+    assertThrows(() =>
+      createInstalledProjectAgentSessionResolver(
+        host([installed("release-1", "ghcr.io/veryfront/tenant-source:latest")]),
+      )
+    );
+    assertThrows(() => createInstalledProjectAgentSessionResolver({ ...host(), lifetimeMs: 0 }));
+  });
+});
