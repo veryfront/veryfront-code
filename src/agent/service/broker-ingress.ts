@@ -1,4 +1,8 @@
 import {
+  getProjectEventPersistenceSchema,
+  type ProjectEventPersistence,
+} from "../hosted/event-persistence-contract.ts";
+import {
   createRunBoundAgentManualPause,
   registerHostedAgentPauseFactory,
 } from "../hosted/manual-pause-credential.ts";
@@ -6,6 +10,7 @@ import { resolveHostOwnedSourceApiBaseUrl } from "#veryfront/config/host-api-bas
 import {
   INGRESS_RUN_STOP_TOKEN_HEADER,
   INGRESS_RUN_TERMINAL_TOKEN_HEADER,
+  readIngressCredential,
 } from "#veryfront/security/http/ingress-credentials.ts";
 import { MAX_ROOT_RUN_EVENT_WRITER_TOKEN_BYTES } from "../conversation/run-event-limits.ts";
 import { parseBrokerSignedRunPath } from "./broker-run-route.ts";
@@ -46,6 +51,7 @@ const BROKER_INGRESS_MAX_BODY_BYTES = DEFAULT_MAX_BODY_SIZE_BYTES;
 const RUN_EVENT_APPEND_TOKEN_HEADER = "x-veryfront-run-event-token";
 const DEFAULT_BODY_READ_TIMEOUT_MS = 30_000;
 const MAX_BODY_READ_TIMEOUT_MS = 60_000;
+const ownDescriptor = Object.getOwnPropertyDescriptor;
 const fatalDecoder = new TextDecoder("utf-8", { fatal: true });
 const forbiddenForwardedAuthorityFields = new Set([
   "authorization",
@@ -69,6 +75,8 @@ export type BrokerIngressErrorCode =
   | "BROKER_INGRESS_SCOPE_DENIED"
   | "BROKER_INGRESS_SCOPE_FAILED"
   | "BROKER_INGRESS_TARGET_MISMATCH"
+  | "BROKER_RUN_NOT_ACTIVE"
+  | "BROKER_UNAVAILABLE"
   | "CONTROL_PLANE_RUN_ID_MISMATCH"
   | "CONTROL_PLANE_AGENT_SOURCE_UNBOUND"
   | "CONTROL_PLANE_AGENT_SOURCE_UNSUPPORTED"
@@ -112,6 +120,8 @@ export interface BrokerRuntimeAgentPrivateAuthority<TAuthorization> {
   readonly terminalAuthToken?: string;
   readonly authorization: TAuthorization;
   readonly rawBody: string;
+  /** Signed API negotiation; never part of executor data. */
+  readonly projectEventPersistence?: Readonly<ProjectEventPersistence>;
 }
 
 /** Signed identity and credentials supplied to the trusted scope verifier. */
@@ -161,11 +171,11 @@ export async function parseBrokerRuntimeAgentIngress<TAuthorization>(
   if (request.method !== "POST" || parseBrokerSignedRunPath(actualPath) !== expectedRunId) {
     throw new BrokerIngressError(400, "BROKER_INGRESS_TARGET_MISMATCH");
   }
-  const inboundAuthorization = request.headers.get("authorization");
+  const inboundAuthorization = readIngressCredential(request, "authorization");
   const signature = request.headers.get(CONTROL_PLANE_JWS_HEADER);
-  const runEventToken = request.headers.get(RUN_EVENT_APPEND_TOKEN_HEADER);
-  const stopToken = request.headers.get(INGRESS_RUN_STOP_TOKEN_HEADER);
-  const terminalAuthToken = request.headers.get(INGRESS_RUN_TERMINAL_TOKEN_HEADER);
+  const runEventToken = readIngressCredential(request, RUN_EVENT_APPEND_TOKEN_HEADER);
+  const stopToken = readIngressCredential(request, INGRESS_RUN_STOP_TOKEN_HEADER);
+  const terminalAuthToken = readIngressCredential(request, INGRESS_RUN_TERMINAL_TOKEN_HEADER);
   if (
     (stopToken && stopToken.length > 16 * 1024) ||
     (terminalAuthToken && terminalAuthToken.length > 16 * 1024)
@@ -240,6 +250,27 @@ export async function parseBrokerRuntimeAgentIngress<TAuthorization>(
     throw new BrokerIngressError(400, "BROKER_INGRESS_INVALID_BODY");
   }
   const invocation = invocationResult.data;
+  // These are operator-signed transport fields, not forwarded project properties.
+  if (ownDescriptor(bodyValue as object, "managedRecoveryAdmission")?.value !== undefined) {
+    // This broker does not implement durable native recovery ownership.
+    throw new BrokerIngressError(503, "BROKER_UNAVAILABLE");
+  }
+  const negotiation = ownDescriptor(bodyValue as object, "projectEventPersistence");
+  let projectEventPersistence: Readonly<ProjectEventPersistence> | undefined;
+  if (negotiation) {
+    const parsed = getProjectEventPersistenceSchema().safeParse(negotiation.value);
+    if (!parsed.success) throw new BrokerIngressError(400, "BROKER_INGRESS_INVALID_BODY");
+    const cursor = invocation.run.eventCursor;
+    if (
+      cursor && (
+        parsed.data.canonicalRunId.toLowerCase() !== cursor.canonicalRunId.toLowerCase() ||
+        parsed.data.latestEventId < cursor.latestEventId ||
+        parsed.data.latestExternalEventSequence < cursor.latestExternalEventSequence
+      )
+    ) throw new BrokerIngressError(403, "BROKER_INGRESS_SCOPE_DENIED");
+    projectEventPersistence = Object.freeze(parsed.data);
+  }
+
   if (invocation.run.runId !== expectedRunId) {
     throw new BrokerIngressError(400, "CONTROL_PLANE_RUN_ID_MISMATCH");
   }
@@ -327,6 +358,7 @@ export async function parseBrokerRuntimeAgentIngress<TAuthorization>(
       ...(terminalAuthToken ? { terminalAuthToken } : {}),
       authorization,
       rawBody,
+      ...(projectEventPersistence ? { projectEventPersistence } : {}),
     }),
     executor: executorValue,
   };

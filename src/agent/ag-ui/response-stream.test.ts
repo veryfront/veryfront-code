@@ -87,6 +87,76 @@ describe("agent/ag-ui-response-stream", () => {
     );
   });
 
+  it("fails closed when the trusted error formatter throws", async () => {
+    const original = new Error("private execution detail");
+    let recorded: unknown;
+    const stream = createAgUiResponseStream({
+      agUiInput: { runId: "run-1", threadId: "thread-1", state: {}, messages: [] },
+      agentId: "assistant-1",
+      execution: {
+        agentUIStream: {
+          [Symbol.asyncIterator]() {
+            return { next: () => Promise.reject(original) };
+          },
+        },
+        fail: async (error) => {
+          recorded = error;
+        },
+        waitForFinish: async () => {},
+        formatError: () => {
+          throw new Error("private formatter detail");
+        },
+      },
+      encoder: { encode: () => [], finalize: () => [] },
+      initialState: {},
+    });
+    const frames = parseSseFrames(await collectStreamText(stream));
+    assertEquals(recorded, original);
+    const failure = frames.find((frame) => frame.event === "RunError")?.data;
+    assertEquals(failure?.code, "STREAM_ERROR");
+    assertEquals(failure?.message, "Stream failed");
+  });
+
+  it("retains one failed terminal when final cleanup also rejects", async () => {
+    const cleanupError = new Error("private cleanup diagnostic");
+    let observed: unknown;
+    const stream = createAgUiResponseStream({
+      agUiInput: { runId: "run-1", threadId: "thread-1", state: {}, messages: [] },
+      agentId: "assistant-1",
+      execution: {
+        agentUIStream: {
+          async *[Symbol.asyncIterator]() {
+            yield {};
+          },
+        },
+        fail: async (error) => {
+          observed = error;
+        },
+        waitForFinish: () => Promise.reject(cleanupError),
+      },
+      encoder: {
+        encode: (): AgUiSseEvent[] => [{
+          event: "RunError",
+          payload: { code: "INSUFFICIENT_CREDITS", message: "Insufficient credits" },
+        }],
+        finalize: () => {
+          throw new Error("Failed execution cannot finalize successfully");
+        },
+      },
+      initialState: {},
+    });
+    const body = await collectStreamText(stream);
+    const frames = parseSseFrames(body);
+    assertEquals(frames.filter((frame) => frame.event === "RunError").length, 1);
+    assertEquals(frames.filter((frame) => frame.event === "RunFinished").length, 0);
+    assertEquals(
+      frames.find((frame) => frame.event === "RunError")?.data.code,
+      "INSUFFICIENT_CREDITS",
+    );
+    assertEquals(body.includes("private cleanup diagnostic"), false);
+    assertEquals(observed, cleanupError);
+  });
+
   it("shares the chunk encoder timing anchor with bootstrap and final events", async () => {
     let now = 100;
     const chunkEncoder = createAgUiChunkEncoderBridge<{ messageId: string }>({

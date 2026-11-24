@@ -1,3 +1,9 @@
+import { createManagedBrokerHandler } from "#veryfront/agent/service/managed-broker-handler.ts";
+import { BrokerIngressError } from "#veryfront/agent/service/broker-ingress.ts";
+import {
+  options as brokerOptions,
+  signedRequest,
+} from "#veryfront/agent/service/broker-ingress.test-helpers.ts";
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { isDeno } from "#veryfront/platform/compat/runtime.ts";
@@ -21,6 +27,147 @@ function createBootstrap(adapter: RuntimeAdapter): BootstrapResult {
 }
 
 describe("production server ingress", () => {
+  it("passes deployment-owned managed routes through the production listener", async () => {
+    const signed = await signedRequest();
+    const adapter = createMockAdapter();
+    let served: Parameters<RuntimeAdapter["serve"]>[0] | undefined;
+    adapter.serve = (handler, options) => {
+      served = handler;
+      options.onListen?.({ hostname: "127.0.0.1", port: options.port ?? 0 });
+      return Promise.resolve({
+        stop: () => Promise.resolve(),
+        addr: { hostname: "127.0.0.1", port: options.port ?? 0 },
+      });
+    };
+    let prepared = false;
+    let brokerReady = false;
+    const broker = createManagedBrokerHandler({
+      responseMode: "sse",
+      broker: { start: () => Promise.reject(new Error("Must not allocate")) },
+      resolveIngressOptions: () => brokerOptions(signed.publicKeyPem),
+      prepare: () => {
+        prepared = true;
+        return Promise.reject(new BrokerIngressError(503, "BROKER_UNAVAILABLE"));
+      },
+    });
+    const server = await startProductionServerWithDependencies({
+      projectDir: "/production-agent-broker",
+      port: 0,
+      adapter,
+      bootstrapResult: createBootstrap(adapter),
+      unhandledRejectionGuard: false,
+      managedAgents: {
+        handlers: {
+          signedStream: broker,
+          durableStart: broker,
+          agUi: broker,
+          cancel: broker,
+          resume: broker,
+        },
+        readiness: () => brokerReady,
+      },
+    }, { bootstrap: () => Promise.reject(new Error("Unexpected bootstrap")) });
+    try {
+      await server.ready;
+      if (!served) throw new Error("Production listener was not installed");
+      const response = await served(signed.request);
+      if (!(response instanceof Response)) throw new Error("Expected a response");
+      assertEquals(response.status, 503);
+      assertEquals(await response.json(), { errorCode: "BROKER_UNAVAILABLE" });
+      assertEquals(prepared, true);
+      const probe = (path: string) => served!(new Request(`http://localhost${path}`));
+      assertEquals((await probe("/readyz") as Response).status, 503);
+      assertEquals((await probe("/healthz") as Response).status, 200);
+      brokerReady = true;
+      assertEquals((await probe("/readyz") as Response).status, 200);
+      brokerReady = false;
+      assertEquals((await probe("/readyz") as Response).status, 503);
+    } finally {
+      await broker.close();
+      await server.stop();
+    }
+  });
+
+  it("joins each managed handler once before production stop resolves", async () => {
+    const adapter = createMockAdapter();
+    let served: Parameters<RuntimeAdapter["serve"]>[0] | undefined;
+    let listenerStops = 0;
+    adapter.serve = (handler, options) => {
+      served = handler;
+      options.onListen?.({ hostname: "127.0.0.1", port: options.port ?? 0 });
+      return Promise.resolve({
+        stop: () => {
+          listenerStops++;
+          return Promise.resolve();
+        },
+        addr: { hostname: "127.0.0.1", port: options.port ?? 0 },
+      });
+    };
+    const entered = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    let closes = 0;
+    const owned = {
+      handle: () => new Response("accepted", { status: 202 }),
+      close() {
+        closes++;
+        entered.resolve();
+        return release.promise;
+      },
+    };
+    const server = await startProductionServerWithDependencies({
+      projectDir: "/production-agent-shutdown",
+      port: 0,
+      adapter,
+      bootstrapResult: createBootstrap(adapter),
+      unhandledRejectionGuard: false,
+      managedAgents: {
+        handlers: {
+          signedStream: owned,
+          durableStart: owned,
+          agUi: owned,
+          cancel: owned,
+          resume: owned,
+        },
+        readiness: () => true,
+      },
+    }, { bootstrap: () => Promise.reject(new Error("Unexpected bootstrap")) });
+    let stopped = false;
+    try {
+      await server.ready;
+      const pending = server.stop().then(() => {
+        stopped = true;
+      });
+      // An absent close hook invocation fails promptly rather than hanging this proof.
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      try {
+        await Promise.race([
+          entered.promise,
+          new Promise((_, reject) => {
+            timer = setTimeout(() => reject(new Error("Managed handlers were not closed")), 500);
+          }),
+        ]);
+      } finally {
+        clearTimeout(timer);
+      }
+      assertEquals(stopped, false);
+      assertEquals(closes, 1);
+      assertEquals(
+        (await served!(
+          new Request("http://localhost/api/control-plane/runs/run-1/stream", { method: "POST" }),
+        ) as Response).status,
+        503,
+      );
+      release.resolve();
+      await pending;
+      await server.stop();
+      assertEquals(closes, 1);
+      assertEquals(listenerStops, 1);
+    } finally {
+      release.resolve();
+      await server.stop();
+    }
+  });
+
   // The probes pin what Deno 2.7.7 calls through the live prototypes.
   it("takes run credentials off the request before the combined-mode interceptor", {
     ignore: !isDeno,

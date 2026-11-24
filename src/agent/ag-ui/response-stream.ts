@@ -31,6 +31,8 @@ export interface AgUiResponseExecution<TChunk> {
   agentUIStream: AsyncIterable<TChunk>;
   fail: (error: unknown) => Promise<void>;
   waitForFinish: () => Promise<void>;
+  /** Trusted host projection; never return private diagnostics here. */
+  formatError?: (error: unknown) => { code: string; message: string };
 }
 
 /** Public API contract for AG-UI response encoder. */
@@ -45,6 +47,8 @@ export interface AgUiResponseEncoder<TChunk> {
 export interface CreateAgUiResponseStreamInput<TChunk, TState> {
   agUiInput: AgUiResponseRequestState;
   agentId: string;
+  /** True only for a trusted resumed invocation, not client state. */
+  resumed?: boolean;
   execution: AgUiResponseExecution<TChunk>;
   encoder: AgUiResponseEncoder<TChunk>;
   initialState: TState;
@@ -66,6 +70,7 @@ export function createAgUiResponseStream<TChunk, TState>(
 ): ReadableStream<Uint8Array> {
   let streamClosed = false;
   let nextEventId = 1;
+  let terminalWritten = false;
 
   return new ReadableStream<Uint8Array>({
     start(controller) {
@@ -75,9 +80,14 @@ export function createAgUiResponseStream<TChunk, TState>(
           return false;
         }
 
+        const terminal = event.event === "RunError" || event.event === "RunFinished";
+        // Keep draining execution and cleanup after the first terminal event.
+        if (terminal && terminalWritten) return true;
+
         try {
           const [timed] = stampAgUiEventTiming(timingState, [event]);
           controller.enqueue(formatAgUiSseEventWithId(timed ?? event, nextEventId));
+          if (terminal) terminalWritten = true;
           nextEventId += 1;
           return true;
         } catch {
@@ -111,6 +121,7 @@ export function createAgUiResponseStream<TChunk, TState>(
                 runId: input.agUiInput.runId,
                 threadId: input.agUiInput.threadId,
                 agentId: input.agentId,
+                ...(input.resumed ? { metadata: { resumed: true } } : {}),
               },
             })
           ) {
@@ -166,13 +177,22 @@ export function createAgUiResponseStream<TChunk, TState>(
           }
         } catch (error) {
           await invokeFailWithoutLeaking(input.execution.fail, error);
-          writeEvent({
-            event: "RunError",
-            payload: {
-              code: "STREAM_ERROR",
-              message: error instanceof Error ? error.message : String(error),
-            },
-          });
+          let failure = {
+            code: "STREAM_ERROR",
+            message: error instanceof Error ? error.message : String(error),
+          };
+          try {
+            const format = input.execution.formatError;
+            if (format) {
+              const projected = format(error);
+              failure = typeof projected?.code === "string" && typeof projected.message === "string"
+                ? projected
+                : { code: "STREAM_ERROR", message: "Stream failed" };
+            }
+          } catch {
+            failure = { code: "STREAM_ERROR", message: "Stream failed" };
+          }
+          writeEvent({ event: "RunError", payload: failure });
         } finally {
           closeStream();
         }

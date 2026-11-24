@@ -124,6 +124,8 @@ export interface ManagedExecutorRuntime {
   readonly runtimeKind: "framework";
   readonly agent: HostedChatRuntimeAgent;
   readonly settled: Promise<void>;
+  /** Session lifetime, including lease expiry and broker shutdown. */
+  readonly signal: AbortSignal;
   readonly accepted: boolean;
   /** Broker-only work; must not await this runtime's close or settled promise. */
   runOwned<T>(operation: () => Promise<T>): Promise<T>;
@@ -423,6 +425,7 @@ export function createManagedExecutorBroker(
         runtimeKind: prepared.value.runtimeKind,
         agent,
         settled,
+        signal: session.signal,
         runOwned: session.runOwned.bind(session),
         get accepted() {
           return session.accepted;

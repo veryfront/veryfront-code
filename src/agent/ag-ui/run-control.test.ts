@@ -717,6 +717,35 @@ describe("agent/ag-ui-run-control", () => {
       assertEquals(startRefused(sessionManager, 20), false, "a start at the fence is accepted");
     });
 
+    it("does not let body stop confirmation borrow a newer generation receipt", async () => {
+      const sessionManager = new RunResumeSessionManager<{ ok: boolean }>();
+      const signal = sessionManager.startRun({
+        runId: "run_1",
+        threadId: crypto.randomUUID(),
+        startedFromEventId: 30,
+      });
+      const handler = createAgUiCancelHandler({
+        sessionManager,
+        authorizeRunControl: allowRunControl,
+        hasPendingExecution: () => true,
+        hasSettledExecution: () => true,
+      });
+      const response = await handler(
+        new Request(
+          "https://example.com/api/runs/run_1?started_before_event_id=20",
+          {
+            method: "DELETE",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ confirmStopped: true }),
+          },
+        ),
+      );
+      assertEquals(response.status, 204);
+      assertEquals(signal.aborted, false);
+      assertEquals(sessionManager.getRunStatus("run_1"), "running");
+      sessionManager.completeRun("run_1", signal);
+    });
+
     it("does not report a newer start as the stopped execution", async () => {
       const sessionManager = new RunResumeSessionManager<{ ok: boolean }>();
       sessionManager.startRun({

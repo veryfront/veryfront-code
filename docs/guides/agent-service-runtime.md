@@ -416,6 +416,10 @@ Services that use Veryfront Cloud project steering can reuse
 
 Managed brokers can use `createManagedBrokerProjectState()` from
 `veryfront/agent/managed-broker` for project instructions and skill catalogs.
+Release-bound reads use immutable release-file routes with the source credential;
+they do not use draft file routes with a release query parameter.
+Directory prefixes remain literal even when their names contain glob characters.
+The client filters release results exactly while preserving page, byte and entry bounds.
 The executor sends its effective tool selection on each steering refresh. The
 broker validates that selection against the installed grant before constructing
 instructions, and includes skills only when `veryfront__load_skill` remains available.
@@ -744,6 +748,27 @@ direct `POST /api/ag-ui` requests with request-owned SSE. Its ingress must suppl
 project requests return HTTP 403 before preparation or allocation; projectless
 requests can still proceed.
 
+For signed canonical project runs, `createCanonicalManagedBrokerHandler` combines
+the signed ingress with API lifecycle reads, exact-run persistence, and immutable
+project steering. It requires the admission's signed canonical UUID and append
+cursors and an independent terminal credential. Missing admission state and
+terminal runs are refused before executor preparation. Source reads use the
+source credential and captured release; event and completion writes use the
+consuming run's separate authority. Tool-call admission and runtime observations
+remain explicit deployment opt-ins.
+
+The deployment must still supply `prepareExecutor` with its trusted executor
+image, allocator, model and tool grants, initial checkpoints and execution
+lifetime. The adapter checks source owner, selected entrypoint, agent, run,
+conversation, message, project and actor bindings before allocation. It preserves
+the signed resume decision and owns persistence cleanup. This adapter alone does
+not register a serving process, advertise the publication protocol or enable
+account-chat execution.
+SSE output is persisted before forwarding each chunk, and its terminal event
+waits for canonical finalization. Persistence failures cannot acknowledge success.
+Terminal ownership is reserved before request acceptance and retained through
+cancellation or executor expiry, so retirement cannot skip finalization.
+
 Configure each direct
 adapter's owner in trusted service configuration; project owners reject requests
 for other projects before preparation or allocation. Their `prepare` callbacks
@@ -827,6 +852,41 @@ Project-controlled hooks use synthetic credential canaries with positive
 controls. The npm smoke jobs run the suite on the minimum supported Node version
 and the current CI version. These checks use local synthetic services. Verify
 the deployed artifact and isolation configuration separately before traffic cutover.
+
+## Mount managed agents in the production proxy
+
+`startProductionServer` accepts a deployment-owned `managedAgents` option with
+`signedStream`, `durableStart`, `agUi`, `cancel`, and `resume` handlers plus a
+readiness callback. Its optional `capabilities` handler must verify the signed
+metadata request and advertise only a qualified execution profile. Omitting
+that handler refuses capability requests; mounting routes does not enable
+account chat or advertise a protocol.
+
+This option requires proxy mode with host project execution disabled. It handles
+only the fixed managed-agent routes, before application proxy source resolution.
+Each handler retains its own authentication and exact-run authorization. Request
+credentials remain in the private ingress credential store, not restored to
+headers or passed to project code. Application HTTP and health routes retain
+their existing handlers. Agent response bodies remain in the server shutdown
+drain until consumption or cancellation; the deployment still owns broker
+shutdown and settlement.
+
+Use `createCanonicalManagedBrokerService` when mounting canonical execution and
+its control handlers together. Its canonical `handle`, `cancel` and `resume`
+handlers share one bounded run owner. Construct the service once per deployment,
+not once per request. The preparation callback receives the owned signal and a
+host-only `waitForToolResult` callback; neither belongs in executor JSON. Service
+cleanup retires that exact owner, so a stale callback cannot attach to a resumed
+run. Stop confirmation is withheld until persistence and executor cleanup settle.
+The API's JSON `confirmStopped` flag and the legacy query flag use the same stop
+receipt contract. Call service `close` during process shutdown, and retain the
+allocator-pool shutdown and settlement described above.
+
+The option supplies routing, not deployment policy. Configure the canonical
+preparation handler, trusted immutable image selection, allocator, model and tool
+authority, cancellation/resume handlers and their lifecycle before enabling
+traffic. The separate signed project `execute` path also needs its own serving
+qualification; it is not converted into an agent stream by this mount.
 
 ## Verify it worked
 

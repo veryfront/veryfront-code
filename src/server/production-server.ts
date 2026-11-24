@@ -1,3 +1,4 @@
+import type { ManagedAgentBrokerIngressOptions } from "#veryfront/agent/service/managed-broker-ingress.ts";
 import type { HostedHttpIngressOptions } from "./isolated-http/hosted-http-ingress.ts";
 import {
   HOSTED_HTTP_ISOLATION_ENV,
@@ -181,6 +182,8 @@ export interface ServerHandle {
 
 /** Options accepted by start production server. */
 export interface StartProductionServerOptions extends ServerOptions {
+  /** Host-owned managed agent routes. Requires proxy isolation; caller owns broker shutdown. */
+  managedAgents?: ManagedAgentBrokerIngressOptions;
   /** Host-owned immutable-release ingress. Requires proxy mode without a shared host-execution grant; the caller owns broker shutdown. */
   hostedHttp?: HostedHttpIngressOptions;
   debug?: boolean;
@@ -330,6 +333,7 @@ export function startProductionServerWithDependencies(
         ? undefined
         : installUnhandledRejectionGuard();
 
+      let closeRuntimeHandler: (() => Promise<void>) | undefined;
       try {
         // Use pre-computed bootstrap result if provided, otherwise bootstrap here
         const bootstrap = suppliedBootstrap ??
@@ -356,7 +360,7 @@ export function startProductionServerWithDependencies(
         }
 
         if (
-          options.hostedHttp && (
+          (options.hostedHttp || options.managedAgents) && (
             bootstrap.config.fs?.veryfront?.proxyMode !== true ||
             isHostProjectExecutionOverrideEnabled() || options.localProjects !== undefined ||
             options.discoveryConfig !== undefined
@@ -367,7 +371,7 @@ export function startProductionServerWithDependencies(
           );
         }
 
-        if (!options.hostedHttp) {
+        if (!options.hostedHttp && !options.managedAgents) {
           await prewarmLocalProductionCSSArtifacts(bootstrap.adapter, {
             projectDir,
             defaultProjectSlug,
@@ -450,9 +454,11 @@ export function startProductionServerWithDependencies(
           localProjects,
           allowHostProjectCodeExecution,
           hostedHttp: options.hostedHttp,
+          managedAgents: options.managedAgents,
         });
 
         const coreHandler = baseHandler;
+        closeRuntimeHandler = coreHandler.close.bind(coreHandler);
 
         // Wrap handler with interceptor if provided (for combined mode)
         // WebSocket upgrade requests MUST NOT be intercepted because the interceptor
@@ -508,22 +514,45 @@ export function startProductionServerWithDependencies(
           },
         });
 
-        const stop = async (): Promise<void> => {
-          setServerInitialized(false);
-          if (ownsMemoryMonitoring) stopMemoryMonitoring();
-          eventLoopStallDetector.stop();
-          rejectionGuard?.dispose();
-
-          try {
-            await server.stop();
-          } catch (error) {
-            logger.debug("Server stop failed", { error });
-          }
-          await disposeOwnedBootstrap();
-        };
+        let stopping: Promise<void> | undefined;
+        const stop = (): Promise<void> =>
+          stopping ??= (async () => {
+            setServerInitialized(false);
+            if (ownsMemoryMonitoring) stopMemoryMonitoring();
+            eventLoopStallDetector.stop();
+            rejectionGuard?.dispose();
+            // Stop managed admission and join detached work as well as HTTP requests.
+            const results = await Promise.allSettled([
+              Promise.resolve().then(() => server.stop()),
+              coreHandler.close(),
+            ]);
+            const errors = results.flatMap((result) =>
+              result.status === "rejected" ? [result.reason] : []
+            );
+            try {
+              await disposeOwnedBootstrap();
+            } catch (error) {
+              errors.push(error);
+            }
+            if (errors.length === 1) throw errors[0];
+            if (errors.length > 1) {
+              throw new AggregateError(errors, "Production server retirement failed");
+            }
+          })();
 
         return { ready, stop };
       } catch (error) {
+        try {
+          await awaitBeforeDeadline(
+            closeRuntimeHandler?.() ?? Promise.resolve(),
+            Date.now() +
+              parseShutdownCleanupTimeoutMs(baseAdapter.env.get("SHUTDOWN_CLEANUP_TIMEOUT_MS")),
+          );
+        } catch (closeError) {
+          logger.warn("Failed to retire managed handlers after startup error", {
+            error: closeError,
+          });
+        }
         if (ownsMemoryMonitoring) stopMemoryMonitoring();
         eventLoopStallDetector.stop();
         rejectionGuard?.dispose();

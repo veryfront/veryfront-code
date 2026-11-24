@@ -1,4 +1,11 @@
+export { createCanonicalManagedBrokerService } from "./canonical-managed-service.ts";
+export { createCanonicalBrokerAuthorizer } from "./canonical-broker-authorization.ts";
+export {
+  createManagedAgentBrokerIngress,
+  type ManagedAgentBrokerIngressOptions,
+} from "./managed-broker-ingress.ts";
 /** Managed broker composition without project runtime or application imports. */
+export { createCanonicalManagedBrokerHandler } from "./canonical-managed-broker.ts";
 export {
   createManagedExecutorBroker,
   type ManagedExecutorBrokerOptions,

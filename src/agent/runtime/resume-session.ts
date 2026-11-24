@@ -229,14 +229,14 @@ export class RunResumeSessionManager<T> {
     if (this.sessionTtlMs === null) return;
     this.clearSessionTimeout(session);
     session.sessionTimeoutId = this.setTimeoutFn(() => {
-      this.cancelRun(session.runId);
+      this.cancelRun(session.runId, session.abortController.signal);
     }, this.sessionTtlMs);
   }
 
   private scheduleWaitingTimeout(session: RunSession<T>): void {
     this.clearWaitingTimeout(session);
     session.waitingTimeoutId = this.setTimeoutFn(() => {
-      this.cancelRun(session.runId);
+      this.cancelRun(session.runId, session.abortController.signal);
     }, this.waitingTtlMs);
   }
 
@@ -479,8 +479,11 @@ export class RunResumeSessionManager<T> {
    * start that has not happened yet, so an unknown run id must never reach it
    * without verified authority. Remote control goes through
    * `cancelRunWithAuthority`.
+   * Pass the signal returned by `startRun` when canceling one owned execution;
+   * a later session that reuses the run id must remain unaffected.
    */
-  cancelRun(runId: string): boolean {
+  cancelRun(runId: string, signal?: AbortSignal): boolean {
+    if (signal && !this.getOwnedSession(runId, signal)) return false;
     return this.cancelRunById(runId, {});
   }
 

@@ -139,12 +139,18 @@ export function createManagedBrokerTerminal(input: {
   apiUrl: string;
   completionAuthToken: string;
   terminalAuthToken: string;
+  /** Trusted negotiated lifecycle owner; defaults to runtime-owned standalone execution. */
+  terminalOwner?: "runtime" | "api";
   run: ConversationRunProjection | ManagedBrokerRunSnapshot;
   modelId: string;
   resolveProvider(modelId: string): string;
   fetch?: typeof globalThis.fetch;
 }): ManagedBrokerTerminal {
   const run = readManagedBrokerRunSnapshot(input.run);
+  const terminalOwner = input.terminalOwner ?? "runtime";
+  if (terminalOwner !== "runtime" && terminalOwner !== "api") {
+    throw new TypeError("Invalid terminal owner");
+  }
   if (typeof input.completionAuthToken !== "string" || !input.completionAuthToken.trim()) {
     throw new TypeError("Managed broker requires completion authorization");
   }
@@ -157,7 +163,7 @@ export function createManagedBrokerTerminal(input: {
   const adapter = createConversationHostedTerminalAdapter({
     apiUrl: input.apiUrl,
     authToken: input.completionAuthToken,
-    run,
+    run: terminalOwner === "api" ? null : run,
     fallbackModelId: input.modelId,
     finalize: (value) =>
       finalizeConversationAgentRun({
@@ -190,6 +196,8 @@ export function createManagedBrokerPersistence(input: {
   /** Application authority accepted by the API completion route, never the append token. */
   completionAuthToken: string;
   terminalAuthToken: string;
+  /** Trusted negotiated lifecycle owner; defaults to runtime-owned standalone execution. */
+  terminalOwner?: "runtime" | "api";
   run: ConversationRunProjection | ManagedBrokerRunSnapshot;
   modelId: string;
   resolveProvider(modelId: string): string;

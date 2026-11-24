@@ -738,3 +738,38 @@ describe("agent/runtime/resume-session", () => {
     assertEquals(manager.getRunStatus("run_waiting"), null);
   });
 });
+
+describe("owned session cancellation", () => {
+  it("ignores an old queued timeout after a newer session reuses the run id", () => {
+    const timers = createManualTimers();
+    const manager = new RunResumeSessionManager<{ ok: boolean }>({
+      sessionTtlMs: 1,
+      setTimeoutFn: timers.setTimeoutFn,
+      clearTimeoutFn: timers.clearTimeoutFn,
+    });
+    try {
+      const old = manager.startRun({ runId: "reused", threadId: "old" });
+      manager.completeRun("reused", old);
+      const current = manager.startRun({ runId: "reused", threadId: "new" });
+      timers.callbacks[0]?.();
+      assertEquals(current.aborted, false);
+      assertEquals(manager.getRunStatus("reused"), "running");
+    } finally {
+      manager.reset();
+    }
+  });
+  it("does not let a retired signal cancel a newer session with the same run id", () => {
+    const manager = new RunResumeSessionManager<{ ok: boolean }>();
+    try {
+      const old = manager.startRun({ runId: "reused", threadId: "old" });
+      manager.completeRun("reused", old);
+      const current = manager.startRun({ runId: "reused", threadId: "new" });
+      assertEquals(manager.cancelRun("reused", old), false);
+      assertEquals(current.aborted, false);
+      assertEquals(manager.cancelRun("reused", current), true);
+      assertEquals(current.aborted, true);
+    } finally {
+      manager.reset();
+    }
+  });
+});

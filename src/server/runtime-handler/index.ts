@@ -1,3 +1,8 @@
+import { isManagedAgentBrokerRequest } from "#veryfront/agent/service/managed-broker-route.ts";
+import {
+  createManagedAgentBrokerIngress,
+  type ManagedAgentBrokerIngressOptions,
+} from "#veryfront/agent/service/managed-broker-ingress.ts";
 import {
   createHostedHttpIngress,
   type HostedHttpIngressOptions,
@@ -595,6 +600,8 @@ export function createHandlerRegistry(
 }
 
 export interface RuntimeHandlerOptions {
+  /** Deployment-owned agent execution; absent by default, never loaded from project configuration. */
+  managedAgents?: ManagedAgentBrokerIngressOptions;
   /** Host-owned immutable-release ingress, admitted before project adapter/configuration loading. */
   hostedHttp?: HostedHttpIngressOptions;
   projectDir: string;
@@ -624,7 +631,7 @@ export function createVeryfrontHandler(
   projectDir: string,
   adapter: RuntimeAdapter,
   opts: RuntimeHandlerOptions = { projectDir },
-): ((req: Request) => Promise<Response>) & { ready?: Promise<void> } {
+): ((req: Request) => Promise<Response>) & { ready?: Promise<void>; close(): Promise<void> } {
   const installedProject = opts.installedProject === undefined
     ? undefined
     : snapshotInstalledProjectHttpBinding(opts.installedProject);
@@ -644,6 +651,15 @@ export function createVeryfrontHandler(
       opts.localProjects !== undefined || opts.allowHostProjectCodeExecution === true
     )
   ) throw new TypeError("Hosted HTTP ingress requires a proxy without host project execution");
+  if (
+    opts.managedAgents && (
+      installedProject || opts.config?.fs?.veryfront?.proxyMode !== true ||
+      opts.localProjects !== undefined || opts.allowHostProjectCodeExecution === true
+    )
+  ) throw new TypeError("Managed agents require a proxy without host project execution");
+  const managedAgents = opts.managedAgents
+    ? createManagedAgentBrokerIngress(opts.managedAgents)
+    : undefined;
   const hostedHttp = opts.hostedHttp ? createHostedHttpIngress(opts.hostedHttp) : undefined;
   const handleApplicationAuthRequest = createApplicationAuthRequestHandler();
   const isDebugEnabled = (): boolean => {
@@ -758,6 +774,16 @@ export function createVeryfrontHandler(
         await readyPromise;
         if (!isProxyMode) await securityLoader.ensureLoaded();
 
+        if (url.pathname === "/readyz" && managedAgents && req.method !== "OPTIONS") {
+          let ready = false;
+          try {
+            ready = await managedAgents.readiness();
+          } catch (error) {
+            logger.warn("Managed broker readiness failed", { error: getErrorMessage(error) });
+          }
+          if (!ready) return new Response("not-ready", { status: 503 });
+        }
+
         // Monitoring endpoints are always framework-owned; their browser
         // preflights stay public without project or application auth.
         const isFrameworkOwnedMonitoringPreflight = req.method.toUpperCase() === "OPTIONS" &&
@@ -810,6 +836,44 @@ export function createVeryfrontHandler(
       } finally {
         endRequestLifecycle(lifecycle);
       }
+    }
+
+    // Agent authority is carried by its authenticated admission, not the application
+    // proxy's source credential. Never resolve a project or borrow x-token here.
+    if (managedAgents && isManagedAgentBrokerRequest(req.method, url.pathname)) {
+      const trackingKey = startRequestTracking(
+        lifecycle.requestId,
+        undefined,
+        url.pathname,
+        req.method,
+        undefined,
+        undefined,
+        opts.defaultEnvironment === "production",
+      );
+      const spanInfo = startRequestTracing(req, url.pathname);
+      let response: Response;
+      try {
+        await readyPromise;
+        response = isServerShuttingDown()
+          ? buildRuntimeShuttingDownResponse()
+          : await managedAgents(req) ??
+            Response.json({ errorCode: "BROKER_UNAVAILABLE" }, { status: 503 });
+      } catch {
+        // Do not expose handler/credential details or fall through to project code.
+        logger.error("Managed agent ingress failed");
+        response = Response.json({ errorCode: "BROKER_UNAVAILABLE" }, { status: 503 });
+      } finally {
+        endRequestLifecycle(lifecycle);
+      }
+      endRequestTracing(spanInfo.span, response.status);
+      return completeRequestTrackingOnResponseEnd(
+        trackingKey,
+        response,
+        false,
+        undefined,
+        undefined,
+        true,
+      );
     }
 
     const preparedRequest = await prepareProjectRequest({
@@ -1234,6 +1298,7 @@ export function createVeryfrontHandler(
   };
 
   handler.ready = readyPromise;
+  handler.close = () => managedAgents?.close() ?? Promise.resolve();
 
   return handler;
 }

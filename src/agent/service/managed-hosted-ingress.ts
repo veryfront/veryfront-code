@@ -1,4 +1,9 @@
 import {
+  INGRESS_INFERENCE_TOKEN_HEADER,
+  INGRESS_RUN_EVENT_TOKEN_HEADER,
+  readIngressCredential,
+} from "#veryfront/security/http/ingress-credentials.ts";
+import {
   hostedAcceptedChildEvidence,
   hostedInheritedRunAdmitter,
   hostedTerminalCanonicalRunId,
@@ -20,11 +25,9 @@ import {
   type HostedRunEventWriterCapability,
 } from "../hosted/child-run-event-writer-token.ts";
 import {
-  INFERENCE_TOKEN_HEADER,
   type ParsedHostedChatRequest,
   parseHostedChatRequestFromRequest,
   type ParseHostedChatRequestOptions,
-  RUN_EVENT_APPEND_TOKEN_HEADER,
 } from "../hosted/chat-request-parser.ts";
 import { createHostedInferenceModelResolver } from "../hosted/inference-credential.ts";
 import type { AgentModelRuntimeResolver } from "../runtime/model-transport.ts";
@@ -197,9 +200,9 @@ function createBrokerAuthority<TRequest extends ParsedHostedChatRequest>(
 
 function requestCredentials(request: Request): (string | null)[] {
   return [
-    request.headers.get("authorization"),
-    request.headers.get(RUN_EVENT_APPEND_TOKEN_HEADER),
-    request.headers.get(INFERENCE_TOKEN_HEADER),
+    readIngressCredential(request, "authorization"),
+    readIngressCredential(request, INGRESS_RUN_EVENT_TOKEN_HEADER),
+    readIngressCredential(request, INGRESS_INFERENCE_TOKEN_HEADER),
   ];
 }
 

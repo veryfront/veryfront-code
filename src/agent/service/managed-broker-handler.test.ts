@@ -1,3 +1,6 @@
+import { sealIngressCredentials } from "#veryfront/security/http/ingress-credentials.ts";
+import { BrokerIngressError } from "./broker-ingress.ts";
+import type { ManagedAgentIngressResult } from "./managed-hosted-ingress.ts";
 import { managedStart } from "../../../tests/fixtures/managed-executor-start.ts";
 import {
   createRunBoundAgentManualPause,
@@ -32,6 +35,84 @@ import { agUiSseEventTypes, parseAgUiSseResponse } from "../ag-ui/sse-parser.ts"
 const projectId = "00000000-0000-4000-8000-000000000005";
 const userId = "00000000-0000-4000-8000-000000000006";
 const path = "/api/control-plane/runs/run-1/stream";
+
+describe("sealed direct broker admission", () => {
+  for (const kind of ["durable", "ag-ui"] as const) {
+    for (const reflected of [false, true]) {
+      it(`retains ${kind} private credentials through its request copy (reflected=${reflected})`, async () => {
+        let prepared = 0;
+        const config = {
+          owner: { scopeKind: "project" as const, projectId },
+          broker: { start: () => Promise.reject(new Error("Must not allocate")) },
+          ingress: {
+            authenticate: () => Promise.resolve({ userId, authToken: "private-auth" }),
+            verifyProjectAccess: () => Promise.resolve({ success: true as const }),
+            verifyRunEventAppendToken: async (input: { token: string }) => {
+              assertEquals(input.token, "private-event-token");
+              return true;
+            },
+          },
+          prepare: ({ ingress }: { ingress: ManagedAgentIngressResult }) => {
+            prepared++;
+            if (kind === "durable") {
+              assertEquals(
+                typeof ingress.broker.createInferenceModelResolver({
+                  apiBaseUrl: "https://api.example.test",
+                }),
+                "function",
+              );
+              assertEquals("inferenceAuthToken" in ingress.broker.getParsedRequest(), false);
+              assertEquals(
+                JSON.stringify(ingress.executor).includes("private-inference-token"),
+                false,
+              );
+            }
+            return Promise.reject(new BrokerIngressError(503, "BROKER_UNAVAILABLE"));
+          },
+        };
+        const managed = kind === "durable"
+          ? createManagedDurableBrokerHandler(config)
+          : createManagedAgUiBrokerHandler({ ...config, defaultAgentId: "builder" });
+        const text = reflected ? "private-event-token" : "Hello";
+        const body = kind === "durable"
+          ? {
+            messages: [{ id: "m", role: "user", parts: [{ type: "text", text }] }],
+            context: {
+              projectId,
+              branchId: "branch-1",
+              conversationId: "00000000-0000-4000-8000-000000000001",
+            },
+            durableRootRun: { runId: "run-1", messageId: "00000000-0000-4000-8000-000000000002" },
+          }
+          : {
+            threadId: "00000000-0000-4000-8000-000000000001",
+            runId: "run-1",
+            messages: [{ id: "m", role: "user", content: text }],
+            tools: [],
+            context: [{ description: "veryfront.projectId", value: JSON.stringify(projectId) }],
+          };
+        try {
+          const request = sealIngressCredentials(
+            new Request(`https://broker.test/api/${kind === "durable" ? "runs" : "ag-ui"}`, {
+              method: "POST",
+              headers: {
+                "content-type": "application/json",
+                "x-veryfront-run-event-token": "private-event-token",
+                "x-veryfront-inference-token": "private-inference-token",
+              },
+              body: JSON.stringify(body),
+            }),
+          );
+          const response = await managed.handle(request);
+          assertEquals(response.status, reflected ? 403 : 503);
+          assertEquals(prepared, reflected ? 0 : 1);
+        } finally {
+          await managed.close();
+        }
+      });
+    }
+  }
+});
 
 describe("broker-owned inference dispatch", () => {
   for (const kind of ["durable", "ag-ui"] as const) {
@@ -938,13 +1019,13 @@ describe("managed durable broker handler", () => {
   }
 });
 
-async function request(signal?: AbortSignal, requestPath = path) {
+async function request(signal?: AbortSignal, requestPath = path, runId = "run-1") {
   const body = JSON.stringify({
     run: {
       agentServiceId: "service-1",
       agentId: "builder",
       conversationId: "00000000-0000-4000-8000-000000000001",
-      runId: "run-1",
+      runId,
       messageId: "00000000-0000-4000-8000-000000000002",
       inputAnchorMessageId: "00000000-0000-4000-8000-000000000003",
       requestedByUserId: userId,
@@ -959,7 +1040,7 @@ async function request(signal?: AbortSignal, requestPath = path) {
   const signed = await createControlPlaneSignature(body, {
     audience: "demo-project",
     projectId,
-    requestId: "run-1",
+    requestId: runId,
     requestPath,
   });
   return {
@@ -979,8 +1060,17 @@ async function request(signal?: AbortSignal, requestPath = path) {
 
 function runtimeFixture(
   streamFailure = false,
-  terminalChunk?: "error" | "coded-error" | "empty-response-error" | "finish-error",
+  terminalChunk?:
+    | "error"
+    | "coded-error"
+    | "empty-response-error"
+    | "finish-error"
+    | "partial-finish-error"
+    | "error-then-throw"
+    | "legacy-coded-error",
   finishWithUsage?: true,
+  streamOpenFailure = false,
+  streamOpenQuota = false,
 ) {
   const release = Promise.withResolvers<void>();
   const settled = Promise.withResolvers<void>();
@@ -991,6 +1081,7 @@ function runtimeFixture(
     definition: { id: "builder", name: "Builder", description: "Builds", instructions: "Work" },
     modelId: "veryfront-cloud/openai/synthetic",
     runtimeKind: "framework",
+    signal: new AbortController().signal,
     accepted: false,
     settled: settled.promise,
     runOwned: (operation) => operation(),
@@ -1006,6 +1097,8 @@ function runtimeFixture(
     agent: {
       async stream() {
         streamCalls++;
+        if (streamOpenQuota) throw new ExecutorAgentError("INSUFFICIENT_CREDITS");
+        if (streamOpenFailure) throw new Error("synthetic stream setup failed");
         return {
           steps: Promise.resolve([]),
           toUIMessageStream(streamOptions = {}) {
@@ -1016,6 +1109,10 @@ function runtimeFixture(
                 yield { type: "error", errorText: "ordinary stream error" } as const;
                 return;
               }
+              if (terminalChunk === "legacy-coded-error") {
+                yield { type: "error", errorText: "INSUFFICIENT_CREDITS" } as const;
+                return;
+              }
               if (terminalChunk === "coded-error") {
                 yield {
                   type: "error",
@@ -1023,6 +1120,14 @@ function runtimeFixture(
                   code: "INSUFFICIENT_CREDITS",
                 } as const;
                 return;
+              }
+              if (terminalChunk === "error-then-throw") {
+                yield {
+                  type: "error",
+                  errorText: "private callback detail",
+                  code: "EMPTY_RESPONSE",
+                } as const;
+                throw new Error("private stream cleanup detail");
               }
               if (terminalChunk === "empty-response-error") {
                 yield {
@@ -1032,7 +1137,10 @@ function runtimeFixture(
                 } as const;
                 return;
               }
-              if (terminalChunk === "finish-error") {
+              if (terminalChunk === "finish-error" || terminalChunk === "partial-finish-error") {
+                if (terminalChunk === "partial-finish-error") {
+                  yield { type: "text-delta", id: "text-1", delta: "partial response" } as const;
+                }
                 yield { type: "finish", finishReason: "error" } as const;
                 return;
               }
@@ -1077,6 +1185,7 @@ async function handler(
   options: {
     signal?: AbortSignal;
     serviceSignal?: AbortSignal;
+    maxActiveRuns?: number;
     requestPath?: string;
     failStart?: boolean;
     admitBeforeFailure?: boolean;
@@ -1085,11 +1194,22 @@ async function handler(
     waitForAuthorization?: boolean;
     throwingObserver?: boolean;
     streamFailure?: boolean;
-    terminalChunk?: "error" | "coded-error" | "empty-response-error" | "finish-error";
+    streamOpenFailure?: boolean;
+    streamOpenQuota?: boolean;
+    terminalChunk?:
+      | "error"
+      | "coded-error"
+      | "empty-response-error"
+      | "finish-error"
+      | "partial-finish-error"
+      | "error-then-throw"
+      | "legacy-coded-error";
     finishWithUsage?: true;
     missingOutput?: boolean;
+    negotiatedWriter?: boolean;
     waitForOutput?: boolean;
     outputFailure?: boolean;
+    writeFailure?: boolean;
     cleanupFailure?: boolean;
     startError?: Error;
   } = {},
@@ -1099,16 +1219,21 @@ async function handler(
     options.streamFailure,
     options.terminalChunk,
     options.finishWithUsage,
+    options.streamOpenFailure,
+    options.streamOpenQuota,
   );
   let prepareCalls = 0;
   let brokerStarts = 0;
   let cleanupCalls = 0;
   const outputChunks: string[] = [];
+  const outputErrorTexts: string[] = [];
   const outputFinishes: boolean[] = [];
   const outputPauses: (true | undefined)[] = [];
   const outputFinishErrors: unknown[] = [];
   const outputFinishMetadata: unknown[] = [];
+  const executionErrors: unknown[] = [];
   const outputRelease = Promise.withResolvers<void>();
+  const outputEntered = Promise.withResolvers<void>();
   let prepareSignal: AbortSignal | undefined;
   const prepareEntered = Promise.withResolvers<void>();
   const prepareRelease = Promise.withResolvers<void>();
@@ -1116,8 +1241,10 @@ async function handler(
   const authorizationRelease = Promise.withResolvers<void>();
   const admitted = Promise.withResolvers<void>();
   const executionController = new AbortController();
+  const additionalKeys = new Map<string, string>();
   const managed = createManagedBrokerHandler({
     responseMode: mode,
+    maxActiveRuns: options.maxActiveRuns,
     signal: options.serviceSignal,
     broker: {
       start: (start, lifecycle) => {
@@ -1129,8 +1256,8 @@ async function handler(
           : Promise.resolve(fixture.runtime);
       },
     },
-    resolveIngressOptions: () => ({
-      publicKeyPem: first.publicKeyPem,
+    resolveIngressOptions: ({ runId }) => ({
+      publicKeyPem: additionalKeys.get(runId) ?? first.publicKeyPem,
       audience: "demo-project",
       projectId,
       expectedSurface: "studio",
@@ -1157,9 +1284,13 @@ async function handler(
         start: managedStart({ agentId: "builder" }),
         messages: [],
         executionSignal: executionController.signal,
+        cancelExecution: () => executionController.abort(),
+        ...(options.negotiatedWriter ? { eventPersistence: "runtime-owned-v1" as const } : {}),
         output: options.missingOutput ? undefined : {
-          async write(chunk: { type: string }) {
+          async write(chunk: { type: string; errorText?: string }) {
             outputChunks.push(chunk.type);
+            if (typeof chunk.errorText === "string") outputErrorTexts.push(chunk.errorText);
+            if (options.writeFailure) throw new Error("SSE output write failed");
           },
           async finish(
             outcome: { completed: boolean; paused?: true; error?: unknown; metadata?: unknown },
@@ -1168,6 +1299,7 @@ async function handler(
             outputPauses.push(outcome.paused);
             outputFinishErrors.push(outcome.error);
             outputFinishMetadata.push(outcome.metadata);
+            outputEntered.resolve();
             if (options.outputFailure) throw new Error("Output flush failed");
             if (options.waitForOutput) await outputRelease.promise;
           },
@@ -1178,11 +1310,10 @@ async function handler(
         },
       };
     },
-    onExecutionError: options.throwingObserver
-      ? () => {
-        throw new Error("observer");
-      }
-      : undefined,
+    onExecutionError: (error) => {
+      executionErrors.push(error);
+      if (options.throwingObserver) throw new Error("observer");
+    },
   });
   return {
     first,
@@ -1194,12 +1325,20 @@ async function handler(
     authorizationEntered: authorizationEntered.promise,
     releaseAuthorization: authorizationRelease.resolve,
     outputChunks,
+    outputErrorTexts,
     outputFinishes,
     outputPauses,
     outputFinishErrors,
     outputFinishMetadata,
+    executionErrors,
     releaseOutput: outputRelease.resolve,
+    outputEntered: outputEntered.promise,
     abortExecution: () => executionController.abort(),
+    async nextRequest(runId: string) {
+      const next = await request(undefined, `/api/control-plane/runs/${runId}/stream`, runId);
+      additionalKeys.set(runId, next.publicKeyPem);
+      return next.request;
+    },
     get prepareCalls() {
       return prepareCalls;
     },
@@ -1216,6 +1355,329 @@ async function handler(
 }
 
 describe("managed broker handler", () => {
+  it("cleans prepared ownership when negotiated output is unavailable", async () => {
+    const f = await handler("sse", { missingOutput: true, negotiatedWriter: true });
+    try {
+      assertEquals((await f.managed.handle(f.first.request)).status, 500);
+      assertEquals(f.brokerStarts, 0);
+      assertEquals(f.cleanupCalls, 1);
+    } finally {
+      await f.managed.close();
+    }
+  });
+
+  it("preserves a safe execution error code for the API-owned terminal decision", async () => {
+    const f = await handler("sse", { streamOpenQuota: true });
+    try {
+      const parsed = await parseAgUiSseResponse(await f.managed.handle(f.first.request));
+      const error = parsed.events.find((event) => event.type === agUiSseEventTypes.runError);
+      assertEquals((error as { code?: string })?.code, "INSUFFICIENT_CREDITS");
+      assert(f.outputFinishErrors[0] instanceof ExecutorAgentError);
+    } finally {
+      await f.managed.close();
+    }
+  });
+
+  for (
+    const [option, diagnostic] of [
+      ["writeFailure", "SSE output write failed"],
+      ["outputFailure", "Output flush failed"],
+      ["streamOpenFailure", "synthetic stream setup failed"],
+      ["streamFailure", "synthetic stream failure"],
+    ] as const
+  ) {
+    it(`redacts ${option} from public SSE while preserving broker diagnostics`, async () => {
+      const f = await handler("sse", { [option]: true });
+      try {
+        const response = await f.managed.handle(f.first.request);
+        f.fixture.release();
+        const wire = await response.text();
+        assert(wire.includes("event: RunError"));
+        assert(!wire.includes(diagnostic));
+        assert(wire.includes("EXECUTOR_AGENT_STREAM_FAILED"));
+        assert(
+          f.executionErrors.some((error) => error instanceof Error && error.message === diagnostic),
+        );
+        if (option !== "outputFailure") {
+          assert(
+            f.outputFinishErrors.some((error) =>
+              error instanceof Error && error.message === diagnostic
+            ),
+          );
+        }
+      } finally {
+        f.fixture.release();
+        await f.managed.close();
+      }
+    });
+  }
+
+  for (
+    const terminalChunk of [
+      "error",
+      "coded-error",
+      "finish-error",
+      "partial-finish-error",
+      "error-then-throw",
+    ] as const
+  ) {
+    it(`emits one failed SSE terminal without success for ${terminalChunk}`, async () => {
+      const f = await handler("sse", { terminalChunk });
+      try {
+        const response = await f.managed.handle(f.first.request);
+        f.fixture.release();
+        const parsed = await parseAgUiSseResponse(response);
+        assertEquals(
+          parsed.events.filter((event) => event.type === agUiSseEventTypes.runError).length,
+          1,
+        );
+        assertEquals(
+          parsed.events.filter((event) => event.type === agUiSseEventTypes.runFinished).length,
+          0,
+        );
+        if (terminalChunk === "partial-finish-error") {
+          assert(
+            parsed.events.some((event) =>
+              event.type === agUiSseEventTypes.textMessageContent &&
+              (event as { delta?: string }).delta === "partial response"
+            ),
+          );
+        }
+        assertEquals(f.outputFinishes, [false]);
+        assert(f.outputFinishErrors[0] instanceof Error);
+        assertEquals(f.fixture.closeReasons, ["canceled"]);
+      } finally {
+        f.fixture.release();
+        await f.managed.close();
+      }
+    });
+  }
+
+  it("retains exact known codes from older errorText-only producers", async () => {
+    const f = await handler("sse", { terminalChunk: "legacy-coded-error" });
+    try {
+      const response = await f.managed.handle(f.first.request);
+      f.fixture.release();
+      const parsed = await parseAgUiSseResponse(response);
+      const error = parsed.events.find((event) => event.type === agUiSseEventTypes.runError);
+      assertEquals((error as { code?: string })?.code, "INSUFFICIENT_CREDITS");
+      assertEquals(f.outputErrorTexts, ["INSUFFICIENT_CREDITS"]);
+      assertEquals((f.outputFinishErrors[0] as ExecutorAgentError).code, "INSUFFICIENT_CREDITS");
+    } finally {
+      f.fixture.release();
+      await f.managed.close();
+    }
+  });
+
+  it("redacts explicit error chunks while retaining their private diagnostic and public code", async () => {
+    const f = await handler("sse", { terminalChunk: "empty-response-error" });
+    try {
+      const response = await f.managed.handle(f.first.request);
+      f.fixture.release();
+      const wire = await response.text();
+      assert(!wire.includes("private executor empty-response detail"));
+      assert(wire.includes("EMPTY_RESPONSE"));
+      assertEquals(f.outputErrorTexts, ["EMPTY_RESPONSE"]);
+      assertEquals((f.outputFinishErrors[0] as Error).cause instanceof Error, true);
+      assertEquals(
+        ((f.outputFinishErrors[0] as Error).cause as Error).message,
+        "private executor empty-response detail",
+      );
+      assert(
+        f.executionErrors.some((error) =>
+          error instanceof Error && error.message === "private executor empty-response detail"
+        ),
+      );
+    } finally {
+      f.fixture.release();
+      await f.managed.close();
+    }
+  });
+
+  it("retains the first failed terminal when output finalization also fails", async () => {
+    const f = await handler("sse", { terminalChunk: "empty-response-error", outputFailure: true });
+    try {
+      const response = await f.managed.handle(f.first.request);
+      f.fixture.release();
+      const wire = await response.text();
+      assertEquals(wire.match(/event: RunError/g)?.length, 1);
+      assert(!wire.includes("event: RunFinished"));
+      assert(wire.includes("EMPTY_RESPONSE"));
+      assert(!wire.includes("Output flush failed"));
+      assert(!wire.includes("private executor empty-response detail"));
+      assert(
+        f.executionErrors.some((error) =>
+          error instanceof Error && error.message === "Output flush failed"
+        ),
+      );
+    } finally {
+      f.fixture.release();
+      await f.managed.close();
+    }
+  });
+
+  it("persists SSE output and usage before acknowledging canonical completion", async () => {
+    const f = await handler("sse", { finishWithUsage: true });
+    try {
+      const response = await f.managed.handle(f.first.request);
+      f.fixture.release();
+      const parsed = await parseAgUiSseResponse(response);
+      assert(parsed.events.some((event) => event.type === agUiSseEventTypes.runFinished));
+      assertEquals(f.outputChunks, ["text-delta", "finish"]);
+      assertEquals(f.outputFinishes, [true]);
+      assertEquals(f.outputFinishMetadata, [{
+        modelId: f.fixture.runtime.modelId,
+        usage: { inputTokens: 12, outputTokens: 7 },
+        usageCaptureStatus: "complete",
+      }]);
+    } finally {
+      f.fixture.release();
+      await f.managed.close();
+    }
+  });
+
+  it("holds capacity for canceled executions until their output and cleanup settle", async () => {
+    const f = await handler("sse", { maxActiveRuns: 1, waitForOutput: true });
+    let reading: Promise<string> | undefined;
+    let next: Response | undefined;
+    try {
+      const response = await f.managed.handle(f.first.request);
+      reading = response.text();
+      f.fixture.release();
+      await f.outputEntered;
+      f.abortExecution();
+      next = await f.managed.handle(await f.nextRequest("run-2"));
+      assertEquals(next.status, 503);
+      assertEquals(f.prepareCalls, 1);
+      assertEquals(f.brokerStarts, 1);
+      assertEquals(f.managed.active, 1);
+      f.releaseOutput();
+      await reading;
+      assertEquals(f.managed.active, 0);
+    } finally {
+      f.releaseOutput();
+      f.fixture.release();
+      await next?.body?.cancel();
+      await f.managed.close();
+      await reading;
+    }
+  });
+
+  it("retains SSE admission until canonical finalization acknowledges its write", async () => {
+    const f = await handler("sse", { waitForOutput: true });
+    try {
+      const response = await f.managed.handle(f.first.request);
+      let finished = false;
+      const body = response.text().then((value) => {
+        finished = true;
+        return value;
+      });
+      f.fixture.release();
+      let deadline: ReturnType<typeof setTimeout> | undefined;
+      try {
+        await Promise.race([
+          f.outputEntered,
+          new Promise((_, reject) => {
+            deadline = setTimeout(() => reject(new Error("SSE did not finalize output")), 1000);
+          }),
+        ]);
+      } finally {
+        clearTimeout(deadline);
+      }
+      assertEquals(finished, false);
+      assertEquals(f.managed.active, 1);
+      f.releaseOutput();
+      await body;
+    } finally {
+      f.releaseOutput();
+      f.fixture.release();
+      await f.managed.close();
+    }
+  });
+
+  for (const abortSource of ["session", "request"] as const) {
+    it(`refuses SSE success when ${abortSource} cancellation arrives during final persistence`, async () => {
+      const controller = new AbortController();
+      const f = await handler("sse", {
+        waitForOutput: true,
+        ...(abortSource === "request" ? { signal: controller.signal } : {}),
+      });
+      if (abortSource === "session") {
+        Object.defineProperty(f.fixture.runtime, "signal", { value: controller.signal });
+      }
+      try {
+        const response = await f.managed.handle(f.first.request);
+        const body = response.text();
+        f.fixture.release();
+        await f.outputEntered;
+        controller.abort(new Error("synthetic late cancellation"));
+        f.releaseOutput();
+        const wire = await body;
+        assertEquals(wire.includes("event: RunFinished"), false);
+        assertEquals(f.fixture.closeReasons, ["canceled"]);
+      } finally {
+        f.releaseOutput();
+        f.fixture.release();
+        await f.managed.close();
+      }
+    });
+  }
+
+  it("finalizes SSE executor errors as failures instead of completed runs", async () => {
+    const f = await handler("sse", { terminalChunk: "coded-error" });
+    try {
+      const response = await f.managed.handle(f.first.request);
+      f.fixture.release();
+      await response.text();
+      assertEquals(f.outputFinishes, [false]);
+      assert(f.outputFinishErrors[0] instanceof ExecutorAgentError);
+      assertEquals(f.outputFinishErrors[0].code, "INSUFFICIENT_CREDITS");
+    } finally {
+      f.fixture.release();
+      await f.managed.close();
+    }
+  });
+
+  for (const failure of ["writeFailure", "outputFailure"] as const) {
+    it(`does not acknowledge SSE completion after ${failure} and retires the executor`, async () => {
+      const f = await handler("sse", { [failure]: true });
+      try {
+        const response = await f.managed.handle(f.first.request);
+        f.fixture.release();
+        const parsed = await parseAgUiSseResponse(response);
+        assertEquals(
+          parsed.events.some((event) => event.type === agUiSseEventTypes.runFinished),
+          false,
+        );
+        assert(parsed.events.some((event) => event.type === agUiSseEventTypes.runError));
+        assertEquals(f.outputFinishes.length, 1);
+      } finally {
+        f.fixture.release();
+        await f.managed.close();
+      }
+      assertEquals(f.fixture.closeReasons, ["canceled"]);
+      assertEquals(f.cleanupCalls, 1);
+    });
+  }
+
+  it("finalizes an SSE stream setup failure before retiring its canonical output", async () => {
+    const f = await handler("sse", { streamOpenFailure: true });
+    try {
+      const response = await f.managed.handle(f.first.request);
+      const parsed = await parseAgUiSseResponse(response);
+      assert(parsed.events.some((event) => event.type === agUiSseEventTypes.runError));
+      assertEquals(
+        parsed.events.some((event) => event.type === agUiSseEventTypes.runFinished),
+        false,
+      );
+      assertEquals(f.outputFinishes, [false]);
+      assert(f.outputFinishErrors[0] instanceof Error);
+    } finally {
+      await f.managed.close();
+    }
+    assertEquals(f.cleanupCalls, 1);
+  });
+
   it("binds signed broker authority to trusted managed hosted knowledge", async () => {
     const first = await request();
     const fixture = runtimeFixture();
@@ -1879,6 +2341,7 @@ describe("managed broker handler", () => {
       assertEquals(f.fixture.closeReasons, ["canceled"]);
       assertEquals(f.managed.active, 0);
       assertEquals(f.cleanupCalls, 1);
+      assertEquals(f.outputFinishes, [false]);
     } finally {
       f.fixture.release();
       await closing;

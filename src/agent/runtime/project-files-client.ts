@@ -35,6 +35,7 @@ const MAX_PROJECT_FILES_PAGE_LIMIT = 100;
 // Project paths and pagination cursors cross a remote trust boundary and are
 // retained in memory by the hosted Skill catalog.
 const MAX_PROJECT_FILE_PATH_CHARACTERS = 4_096;
+const MAX_RELEASE_FILE_PATTERN_CHARACTERS = 1_024;
 const MAX_PROJECT_FILES_CURSOR_CHARACTERS = 4_096;
 const MAX_PROJECT_FILES_PER_PAGE = MAX_PROJECT_FILES_PAGE_LIMIT;
 /** Maximum aggregate file records returned by one project listing. */
@@ -211,7 +212,7 @@ export type RuntimeProjectFilesApiOptions = {
   releaseId?: string | null;
   /** Stop pagination before retaining more than this many entries. */
   maximumEntries?: number;
-  /** Restrict the API listing to this bounded server-side path prefix. */
+  /** Literal directory prefix. Release listings enforce it locally even when API globs cannot quote it. */
   pathPrefix?: string;
   /** Shared bounded-listing budget used when one catalog spans several prefixes. */
   listingBudget?: RuntimeProjectFileListingBudget;
@@ -712,6 +713,11 @@ export async function getRuntimeProjectFiles(
     );
   }
 
+  const pathPrefix = options.pathPrefix;
+  const releasePrefix = source.releaseId !== undefined && source.releaseId !== null && pathPrefix
+    ? `${pathPrefix}/`
+    : undefined;
+  const maximumEntries = options.maximumEntries;
   return withRuntimeProjectFilesRequestSignal(
     options,
     (signal) =>
@@ -727,6 +733,7 @@ export async function getRuntimeProjectFiles(
           const url = createRuntimeProjectFileUrl({
             ...options,
             ...source,
+            pathPrefix,
             fields: "(path)",
             cursor,
           });
@@ -773,15 +780,18 @@ export async function getRuntimeProjectFiles(
             );
           }
 
+          const matching = releasePrefix
+            ? parsed.data.data.filter((file) => file.path.startsWith(releasePrefix))
+            : parsed.data.data;
           if (
-            options.maximumEntries !== undefined &&
-            files.length + parsed.data.data.length > options.maximumEntries
+            maximumEntries !== undefined &&
+            files.length + matching.length > maximumEntries
           ) {
             throw new RangeError(
-              `Project file listing may contain at most ${options.maximumEntries} entries`,
+              `Project file listing may contain at most ${maximumEntries} entries`,
             );
           }
-          files.push(...parsed.data.data);
+          files.push(...matching);
           cursor = parsed.data.page_info.next;
           if (cursor !== null && seenCursors.has(cursor)) {
             throw new RangeError("Project file listing returned a repeated pagination cursor");
@@ -804,6 +814,10 @@ export async function getStrictRuntimeProjectFiles(
   const source = snapshotRuntimeProjectSource(options);
   validateRuntimeProjectFilesClientOptions(options);
   validateRuntimeProjectFilesApiOptions(options);
+  const pathPrefix = options.pathPrefix;
+  const releasePrefix = source.releaseId !== undefined && source.releaseId !== null && pathPrefix
+    ? `${pathPrefix}/`
+    : undefined;
   const callerScope = createStrictProjectFilesCallerSignalScope(options);
   const pageLimit = resolveProjectFilesPageLimit(options.pageLimit);
   const maximumEntries = Math.min(
@@ -844,17 +858,18 @@ export async function getStrictRuntimeProjectFiles(
             listingBudget.consumePage();
 
             const remainingEntries = maximumEntries - files.length;
-            if (remainingEntries <= 0) {
+            if (remainingEntries <= 0 && !releasePrefix) {
               throw createProjectFilesListLimitError(
                 options.projectId,
                 `file count exceeds ${maximumEntries}`,
               );
             }
-            const requestPageLimit = Math.min(pageLimit, remainingEntries);
+            const requestPageLimit = Math.min(pageLimit, Math.max(1, remainingEntries));
 
             const url = createStrictRuntimeProjectFileUrl({
               ...options,
               ...source,
+              pathPrefix,
               fields: "(path)",
               cursor,
               pageLimit: requestPageLimit,
@@ -912,8 +927,11 @@ export async function getStrictRuntimeProjectFiles(
                 `page returned more than the requested ${requestPageLimit} files`,
               );
             }
+            const matching = releasePrefix
+              ? page.data.filter((file) => file.path.startsWith(releasePrefix))
+              : page.data;
             if (
-              files.length + page.data.length > maximumEntries
+              files.length + matching.length > maximumEntries
             ) {
               throw createProjectFilesListLimitError(
                 options.projectId,
@@ -923,15 +941,15 @@ export async function getStrictRuntimeProjectFiles(
 
             const nextCursor = page.page_info.next;
             if (
-              nextCursor !== null &&
-              files.length + page.data.length >= maximumEntries
+              !releasePrefix && nextCursor !== null &&
+              files.length + matching.length >= maximumEntries
             ) {
               throw createProjectFilesListLimitError(
                 options.projectId,
                 `file count exceeds ${maximumEntries}`,
               );
             }
-            files.push(...page.data);
+            files.push(...matching);
             if (nextCursor !== null) {
               if (seenCursors.has(nextCursor)) {
                 throw createProjectFilesListLimitError(
@@ -1005,6 +1023,21 @@ function snapshotRuntimeProjectSource(input: RuntimeProjectSource): RuntimeProje
   return { branchId, releaseId };
 }
 
+/** API globs cannot quote literal metacharacters; query a safe ancestor and filter locally. */
+function releaseDirectoryPattern(pathPrefix: string): string | undefined {
+  let prefix = pathPrefix;
+  for (let index = 0; index < prefix.length; index++) {
+    if ("*?[]{}()!+@".includes(prefix[index]!)) {
+      prefix = prefix.slice(0, Math.max(0, prefix.lastIndexOf("/", index)));
+      break;
+    }
+  }
+  while (prefix.length + 3 > MAX_RELEASE_FILE_PATTERN_CHARACTERS) {
+    prefix = prefix.slice(0, Math.max(0, prefix.lastIndexOf("/")));
+  }
+  return prefix ? `${prefix}/**` : undefined;
+}
+
 function createRuntimeProjectFileUrl(input: {
   apiUrl: string | URL;
   projectId: string;
@@ -1019,22 +1052,26 @@ function createRuntimeProjectFileUrl(input: {
 }): URL {
   const apiUrl = new URL(input.apiUrl);
   const encodedProjectId = encodeURIComponent(input.projectId);
-  const pathname = input.path
-    ? `/projects/${encodedProjectId}/files/${encodeURIComponent(input.path)}`
+  const filesPath = input.releaseId !== undefined && input.releaseId !== null
+    ? `/projects/${encodedProjectId}/releases/${encodeURIComponent(input.releaseId)}/files`
     : `/projects/${encodedProjectId}/files`;
+  const pathname = input.path ? `${filesPath}/${encodeURIComponent(input.path)}` : filesPath;
   const url = new URL(pathname, apiUrl.origin);
 
   url.searchParams.set("fields", input.fields);
-  if (input.releaseId !== undefined && input.releaseId !== null) {
-    url.searchParams.set("ref", `release:${input.releaseId}`);
-  } else if (input.branchId) {
+  if (input.branchId) {
     url.searchParams.set("ref", `branch:${input.branchId}`);
   }
   if (input.cursor) {
     url.searchParams.set("cursor", input.cursor);
   }
   if (input.pathPrefix) {
-    url.searchParams.set("path", input.pathPrefix);
+    if (input.releaseId !== undefined && input.releaseId !== null) {
+      const pattern = releaseDirectoryPattern(input.pathPrefix);
+      if (pattern) url.searchParams.set("pattern", pattern);
+    } else {
+      url.searchParams.set("path", input.pathPrefix);
+    }
   }
   if (!input.path) {
     url.searchParams.set("limit", String(input.pageLimit ?? DEFAULT_PROJECT_FILES_PAGE_LIMIT));
@@ -1057,22 +1094,26 @@ function createStrictRuntimeProjectFileUrl(input: {
 }): URL {
   const apiUrl = new URL(input.apiUrl);
   const encodedProjectId = encodeURIComponent(input.projectId);
-  const pathname = input.path
-    ? `/projects/${encodedProjectId}/files/${encodeURIComponent(input.path)}`
+  const filesPath = input.releaseId !== undefined && input.releaseId !== null
+    ? `/projects/${encodedProjectId}/releases/${encodeURIComponent(input.releaseId)}/files`
     : `/projects/${encodedProjectId}/files`;
+  const pathname = input.path ? `${filesPath}/${encodeURIComponent(input.path)}` : filesPath;
   const url = new URL(pathname, apiUrl.origin);
 
   url.searchParams.set("fields", input.fields);
-  if (input.releaseId !== undefined && input.releaseId !== null) {
-    url.searchParams.set("ref", `release:${input.releaseId}`);
-  } else if (input.branchId) {
+  if (input.branchId) {
     url.searchParams.set("ref", `branch:${input.branchId}`);
   }
   if (input.cursor) {
     url.searchParams.set("cursor", input.cursor);
   }
   if (input.pathPrefix) {
-    url.searchParams.set("path", input.pathPrefix);
+    if (input.releaseId !== undefined && input.releaseId !== null) {
+      const pattern = releaseDirectoryPattern(input.pathPrefix);
+      if (pattern) url.searchParams.set("pattern", pattern);
+    } else {
+      url.searchParams.set("path", input.pathPrefix);
+    }
   }
   if (!input.path) {
     url.searchParams.set("limit", String(resolveProjectFilesPageLimit(input.pageLimit)));
