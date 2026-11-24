@@ -183,7 +183,7 @@ jobs:
       - name: Include CLI, dependency history, and runtime security integration coverage
         if: inputs.shard == 1
         run: |
-          rm -rf coverage-history coverage-cli
+          rm -rf coverage-history coverage-cli coverage-canonical
           deno task test:file --coverage=coverage-history \
             tests/integration/semantic-unit-boundary/src/platform/adapters/fs/veryfront/dependency-metadata-history.test.ts \
             tests/integration/semantic-unit-boundary/src/platform/adapters/veryfront-api-client/dependency-metadata-history.test.ts \
@@ -206,6 +206,17 @@ jobs:
             tests/integration/semantic-unit-boundary/server/handlers/request/project-run-runtime-ownership-index-probe.test.ts \
             tests/integration/semantic-unit-boundary/server/handlers/request/project-run-runtime-ownership-okf-inspector.test.ts \
             tests/integration/semantic-unit-boundary/cli/commands/knowledge/indexing.test.ts
+          # This workflow runs from main while checking PR source. Keep the
+          # measured protocol tests opt-in until their feature branch lands.
+          if [[ -f tests/integration/agent/canonical-tool-policy.test.ts || -f tests/integration/agent/installed-agent-service.execution.test.ts ]]; then
+            test -f tests/integration/agent/canonical-tool-policy.test.ts
+            test -f tests/integration/agent/installed-agent-service.execution.test.ts
+            DENO_COVERAGE_DIR="$PWD/coverage-canonical" deno task test:file --coverage=coverage-canonical \
+              tests/integration/agent/canonical-tool-policy.test.ts \
+              tests/integration/agent/installed-agent-service.execution.test.ts
+            mkdir -p coverage-shard-1/canonical
+            deno coverage coverage-canonical --include=src/ --exclude=/tests/ --exclude=/__tests__/ --lcov > coverage-shard-1/canonical/lcov.info
+          fi
           # The CLI regression changes cwd, so give it a separate process.
           deno task test:file --coverage=coverage-cli \
             tests/integration/cli/merge-preview.integration.test.ts \
