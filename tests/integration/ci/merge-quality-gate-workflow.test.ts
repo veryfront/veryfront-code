@@ -41,7 +41,7 @@ const SONAR_REQUIRED_CONDITION =
   "(github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && (github.event_name != 'pull_request' || github.event.pull_request.user.login != 'dependabot[bot]')";
 const SONAR_REQUIRED_EXPRESSION = `\${{ ${SONAR_REQUIRED_CONDITION} }}`;
 const SONAR_COVERAGE_JOB_EXPRESSION =
-  `\${{ !cancelled() && (needs.tested-run.outputs.reuse != 'true' || needs.version-check.outputs.is_stable != 'false') && (needs.tested-run.outputs.reuse == 'true' || (needs.coverage-shards.result == 'success' && needs.coverage-node-executor.result == 'success' && needs.coverage-integration-client.result == 'success')) && (${SONAR_REQUIRED_CONDITION}) }}`;
+  `\${{ !cancelled() && (needs.tested-run.outputs.reuse != 'true' || needs.version-check.outputs.is_stable != 'false') && (needs.tested-run.outputs.reuse == 'true' || (needs.coverage-shards.result == 'success' && needs.coverage-node-executor.result == 'success' && needs.coverage-integration-client.result == 'success')) && needs.source-coverage-context-ownership.result == 'success' && needs.source-coverage-connected-local.result == 'success' && (${SONAR_REQUIRED_CONDITION}) }}`;
 const SONAR_JOB_EXPRESSION =
   `\${{ !cancelled() && (needs.tested-run.outputs.reuse != 'true' || needs.version-check.outputs.is_stable != 'false') && needs.sonar-coverage.result == 'success' && (${SONAR_REQUIRED_CONDITION}) }}`;
 const MAIN = "github.ref == 'refs/heads/main'";
@@ -488,6 +488,8 @@ describe("merge quality gate workflow", () => {
       "coverage-shards",
       "coverage-node-executor",
       "coverage-integration-client",
+      "source-coverage-context-ownership",
+      "source-coverage-connected-local",
     ]);
     assert(
       downloadIndex >= 0,
@@ -850,17 +852,24 @@ done
     const sonar = asRecord(jobs["sonar-coverage"], "Sonar coverage");
     assert(Array.isArray(sonar.steps));
     const steps = sonar.steps.map((step) => asRecord(step, "Sonar coverage step"));
-    const collectorIndex = steps.findIndex((step) =>
+    const sourceJob = asRecord(
+      jobs["source-coverage-context-ownership"],
+      "source coverage producer",
+    );
+    assertEquals(sourceJob.needs, ["tested-run"]);
+    assert(Array.isArray(sourceJob.steps));
+    const sourceSteps = sourceJob.steps.map((step) => asRecord(step, "source coverage step"));
+    const collectorIndex = sourceSteps.findIndex((step) =>
       step.name === "Collect context ownership coverage from checked-out source"
     );
     const mergeIndex = steps.findIndex((step) =>
       step.name === "Merge coverage reports for SonarQube"
     );
     assert(
-      collectorIndex >= 0 && collectorIndex < mergeIndex,
-      "Head-owned tests must produce raw coverage before the final merge",
+      collectorIndex >= 0 && mergeIndex >= 0,
+      "Independent head-owned tests must produce coverage for the final merge",
     );
-    const collector = steps[collectorIndex];
+    const collector = sourceSteps[collectorIndex];
     const merge = steps[mergeIndex];
     assert(collector);
     assert(merge);
@@ -890,9 +899,15 @@ done
       String(merge.run),
       "coverage-profiles/coverage-context-ownership",
     );
-    const onboarding = steps.find((step) =>
-      step.name === "Collect connected local CLI coverage from checked-out source"
+    const localJob = asRecord(
+      jobs["source-coverage-connected-local"],
+      "local source coverage producer",
     );
+    assertEquals(localJob.needs, ["tested-run"]);
+    assert(Array.isArray(localJob.steps));
+    const onboarding = localJob.steps.map((step) => asRecord(step, "local coverage step")).find((
+      step,
+    ) => step.name === "Collect connected local CLI coverage from checked-out source");
     assert(onboarding, "Relocated onboarding tests must contribute to the Sonar report");
     assertStringIncludes(String(onboarding.run), "--coverage-raw-data-only");
     assertEquals(
@@ -923,6 +938,33 @@ done
       "scripts/test/coverage-ci.ts report coverage-profiles/coverage-connected-local",
     );
     assertStringIncludes(String(merge.run), "coverage-profiles/coverage-connected-local");
+    const selection = steps.findIndex((step) =>
+      step.name === "Verify and select current-source coverage receipts"
+    );
+    assert(
+      selection >= 0 && selection < mergeIndex,
+      "Both receipts must verify before merging coverage",
+    );
+    const sourceDownload = steps.find((step) =>
+      step.name === "Download current-source coverage receipts from this run"
+    );
+    assert(sourceDownload);
+    assertEquals(asRecord(sourceDownload.with, "source receipt download"), {
+      pattern: "coverage-source-*-attempt-*",
+      path: "source-coverage-receipts",
+    });
+    for (const name of ["sonar-coverage", "sonar-coverage-main"]) {
+      const consumer = asRecord(jobs[name], name);
+      assert(Array.isArray(consumer.needs));
+      for (const label of ["context-ownership", "connected-local"]) {
+        assert(consumer.needs.includes(`source-coverage-${label}`));
+        assertStringIncludes(
+          String(consumer.if),
+          `needs.source-coverage-${label}.result == 'success'`,
+        );
+      }
+    }
+
     assertEquals(
       steps.filter((step) => String(step.run ?? "").includes("coverage:ci:merge")).length,
       1,

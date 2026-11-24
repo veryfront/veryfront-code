@@ -650,6 +650,123 @@ jobs:
   # Merges every coverage report into the one LCOV file Sonar reads. Merging
   # runs repository code (`deno task coverage:ci:merge`), so it happens here,
   # in a job with no secrets, and hands the scan job only the finished report.
+  # These producers run checked-out source, not the public pool's main definition.
+  source-coverage-context-ownership:
+    name: Source coverage (context-ownership)
+    runs-on: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.ubuntu26 == true && 'ubuntu-26.04' || 'ubuntu-latest' }}
+    needs: [tested-run]
+    if: ${{ !cancelled() && needs.tested-run.result == 'success' && ((github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && (github.event_name != 'pull_request' || github.event.pull_request.user.login != 'dependabot[bot]')) }}
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-deno
+        timeout-minutes: 5
+      - name: Collect context ownership coverage from checked-out source
+        env:
+          DENO_COVERAGE_DIR: coverage-profiles/coverage-context-ownership
+        run: |
+          deno task test:file --coverage=coverage-profiles/coverage-context-ownership \
+            tests/integration/semantic-unit-boundary/cli/commands/pull/binary-preflight.test.ts \
+            tests/integration/semantic-unit-boundary/server/handlers/request/project-run-runtime-ownership-probe.test.ts \
+            tests/integration/semantic-unit-boundary/src/agent/service/agent-worker-runtime-ownership-probe.test.ts \
+            tests/integration/semantic-unit-boundary/src/channels/control-plane-signatures.test.ts \
+            tests/integration/semantic-unit-boundary/src/agent/service/runtime-attribution-intrinsics.test.ts \
+            tests/integration/semantic-unit-boundary/src/utils/header-identity-intrinsics.test.ts \
+            tests/integration/semantic-unit-boundary/server/handlers/request/response-cleanup-intrinsics.test.ts \
+            tests/integration/semantic-unit-boundary/src/agent/service/runtime-identity-startup.test.ts \
+            tests/integration/semantic-unit-boundary/src/agent/service/runtime-identity-process-target-startup.test.ts \
+            tests/integration/semantic-unit-boundary/src/agent/service/runtime-identity-env-file-startup.test.ts \
+            tests/integration/semantic-unit-boundary/server/handlers/request/project-run-runtime-ownership-index-probe.test.ts \
+            tests/integration/semantic-unit-boundary/server/handlers/request/project-run-runtime-ownership-okf-inspector.test.ts \
+            tests/integration/semantic-unit-boundary/cli/commands/knowledge/indexing.test.ts \
+            tests/integration/semantic-unit-boundary/cli/commands/knowledge/binary-assets.test.ts \
+            tests/integration/semantic-unit-boundary/agent/service/auth.test.ts \
+            tests/integration/internal-agents/control-plane-platform-dependencies.test.ts \
+            tests/integration/internal-agents/run-stream-platform-dependencies.test.ts \
+            tests/integration/server/agent-stream.programmatic-platform.test.ts \
+            tests/integration/server/agent-stream.project-event-persistence.test.ts \
+            tests/integration/agent/managed-recovery
+          deno run --config=scripts/test.deno.json --no-npm --allow-read --allow-write --allow-run --allow-env \
+            scripts/test/coverage-ci.ts report coverage-profiles/coverage-context-ownership
+      - name: Bind source coverage to this run and attempt
+        run: >-
+          deno run --config=scripts/test.deno.json --no-npm --allow-read --allow-write
+          --allow-env=GITHUB_SHA,GITHUB_RUN_ID,GITHUB_RUN_ATTEMPT
+          scripts/ci/source-coverage-artifacts.ts record context-ownership
+          coverage-profiles/coverage-context-ownership
+      - name: Upload current-source coverage receipt
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: coverage-source-context-ownership-attempt-${{ github.run_attempt }}
+          path: |
+            coverage-profiles/coverage-context-ownership/lcov.info
+            coverage-profiles/coverage-context-ownership/source-coverage.json
+          if-no-files-found: error
+          retention-days: 1
+
+  # These producers run checked-out source, not the public pool's main definition.
+  source-coverage-connected-local:
+    name: Source coverage (connected-local)
+    runs-on: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.ubuntu26 == true && 'ubuntu-26.04' || 'ubuntu-latest' }}
+    needs: [tested-run]
+    if: ${{ !cancelled() && needs.tested-run.result == 'success' && ((github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && (github.event_name != 'pull_request' || github.event.pull_request.user.login != 'dependabot[bot]')) }}
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-deno
+        timeout-minutes: 5
+      - name: Collect connected local CLI coverage from checked-out source
+        env:
+          DENO_COVERAGE_DIR: coverage-profiles/coverage-connected-local
+        run: |
+          deno task test:file --coverage=coverage-profiles/coverage-connected-local --coverage-raw-data-only \
+            tests/integration/docs/docs-command.test.ts \
+            tests/integration/docs/copy-public-docs.test.ts \
+            tests/integration/docs/package-public-docs.test.ts \
+            tests/integration/docs/release-inputs.test.ts \
+            tests/integration/cli/mcp-startup-output.test.ts \
+            tests/integration/cli/mcp/notification-transport.test.ts \
+            tests/integration/cli/dev/proxy-mode.test.ts \
+            tests/integration/cli/dev/display-options.test.ts \
+            tests/integration/cli/pull/project-bootstrap.test.ts \
+            tests/integration/cli/shared/cloud-project.test.ts \
+            tests/integration/semantic-unit-boundary/cli/commands/dev/connected-dev.test.ts \
+            tests/integration/semantic-unit-boundary/src/agent/ag-ui/connected-local-runtime-security.test.ts \
+            tests/integration/semantic-unit-boundary/src/agent/service/external-worker-client.test.ts \
+            tests/integration/agent/connected-local-inference.test.ts \
+            tests/integration/agent/connected-local-tools.test.ts \
+            tests/integration/agent/connected-local-platform-boundary.test.ts \
+            tests/integration/agent/inherited-local-platform-scope.test.ts \
+            tests/integration/agent/run-stream-project-observation.test.ts \
+            tests/integration/agent/connected-writer-verifier.test.ts \
+            tests/integration/agent/connected-local-setup-cleanup.test.ts \
+            tests/integration/agent/connected-platform-cleanup.test.ts
+          deno run --config=scripts/test.deno.json --no-npm --allow-read --allow-write --allow-run --allow-env \
+            scripts/test/coverage-ci.ts report coverage-profiles/coverage-connected-local
+      - name: Bind source coverage to this run and attempt
+        run: >-
+          deno run --config=scripts/test.deno.json --no-npm --allow-read --allow-write
+          --allow-env=GITHUB_SHA,GITHUB_RUN_ID,GITHUB_RUN_ATTEMPT
+          scripts/ci/source-coverage-artifacts.ts record connected-local
+          coverage-profiles/coverage-connected-local
+      - name: Upload current-source coverage receipt
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: coverage-source-connected-local-attempt-${{ github.run_attempt }}
+          path: |
+            coverage-profiles/coverage-connected-local/lcov.info
+            coverage-profiles/coverage-connected-local/source-coverage.json
+          if-no-files-found: error
+          retention-days: 1
+
   sonar-coverage:
     runs-on: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.ubuntu26 == true && 'ubuntu-26.04' || 'ubuntu-latest' }}
     timeout-minutes: 10
@@ -660,8 +777,10 @@ jobs:
       coverage-shards,
       coverage-node-executor,
       coverage-integration-client,
+      source-coverage-context-ownership,
+      source-coverage-connected-local,
     ]
-    if: ${{ !cancelled() && (needs.tested-run.outputs.reuse != 'true' || needs.version-check.outputs.is_stable != 'false') && (needs.tested-run.outputs.reuse == 'true' || (needs.coverage-shards.result == 'success' && needs.coverage-node-executor.result == 'success' && needs.coverage-integration-client.result == 'success')) && ((github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && (github.event_name != 'pull_request' || github.event.pull_request.user.login != 'dependabot[bot]')) }}
+    if: ${{ !cancelled() && (needs.tested-run.outputs.reuse != 'true' || needs.version-check.outputs.is_stable != 'false') && (needs.tested-run.outputs.reuse == 'true' || (needs.coverage-shards.result == 'success' && needs.coverage-node-executor.result == 'success' && needs.coverage-integration-client.result == 'success')) && needs.source-coverage-context-ownership.result == 'success' && needs.source-coverage-connected-local.result == 'success' && ((github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && (github.event_name != 'pull_request' || github.event.pull_request.user.login != 'dependabot[bot]')) }}
     permissions:
       actions: read
       contents: read
@@ -693,63 +812,16 @@ jobs:
           github-token: ${{ github.token }}
       - uses: ./.github/actions/setup-deno
         timeout-minutes: 5
-      # The public pool runs its trusted main definition, so PR-only collector
-      # additions must execute here against the checked-out source.
-      - name: Collect context ownership coverage from checked-out source
-        env:
-          DENO_COVERAGE_DIR: coverage-profiles/coverage-context-ownership
-        run: |
-          deno task test:file --coverage=coverage-profiles/coverage-context-ownership \
-            tests/integration/semantic-unit-boundary/cli/commands/pull/binary-preflight.test.ts \
-            tests/integration/semantic-unit-boundary/server/handlers/request/project-run-runtime-ownership-probe.test.ts \
-            tests/integration/semantic-unit-boundary/src/agent/service/agent-worker-runtime-ownership-probe.test.ts \
-            tests/integration/semantic-unit-boundary/src/channels/control-plane-signatures.test.ts \
-            tests/integration/semantic-unit-boundary/src/agent/service/runtime-attribution-intrinsics.test.ts \
-            tests/integration/semantic-unit-boundary/src/utils/header-identity-intrinsics.test.ts \
-            tests/integration/semantic-unit-boundary/server/handlers/request/response-cleanup-intrinsics.test.ts \
-            tests/integration/semantic-unit-boundary/src/agent/service/runtime-identity-startup.test.ts \
-            tests/integration/semantic-unit-boundary/src/agent/service/runtime-identity-process-target-startup.test.ts \
-            tests/integration/semantic-unit-boundary/src/agent/service/runtime-identity-env-file-startup.test.ts \
-            tests/integration/semantic-unit-boundary/server/handlers/request/project-run-runtime-ownership-index-probe.test.ts \
-            tests/integration/semantic-unit-boundary/server/handlers/request/project-run-runtime-ownership-okf-inspector.test.ts \
-            tests/integration/semantic-unit-boundary/cli/commands/knowledge/indexing.test.ts \
-            tests/integration/semantic-unit-boundary/cli/commands/knowledge/binary-assets.test.ts \
-            tests/integration/semantic-unit-boundary/agent/service/auth.test.ts \
-            tests/integration/internal-agents/control-plane-platform-dependencies.test.ts \
-            tests/integration/internal-agents/run-stream-platform-dependencies.test.ts \
-            tests/integration/server/agent-stream.programmatic-platform.test.ts \
-            tests/integration/server/agent-stream.project-event-persistence.test.ts \
-            tests/integration/agent/managed-recovery
-          deno run --config=scripts/test.deno.json --no-npm --allow-read --allow-write --allow-run --allow-env \
-            scripts/test/coverage-ci.ts report coverage-profiles/coverage-context-ownership
-      - name: Collect connected local CLI coverage from checked-out source
-        env:
-          DENO_COVERAGE_DIR: coverage-profiles/coverage-connected-local
-        run: |
-          deno task test:file --coverage=coverage-profiles/coverage-connected-local --coverage-raw-data-only \
-            tests/integration/docs/docs-command.test.ts \
-            tests/integration/docs/copy-public-docs.test.ts \
-            tests/integration/docs/package-public-docs.test.ts \
-            tests/integration/docs/release-inputs.test.ts \
-            tests/integration/cli/mcp-startup-output.test.ts \
-            tests/integration/cli/mcp/notification-transport.test.ts \
-            tests/integration/cli/dev/proxy-mode.test.ts \
-            tests/integration/cli/dev/display-options.test.ts \
-            tests/integration/cli/pull/project-bootstrap.test.ts \
-            tests/integration/cli/shared/cloud-project.test.ts \
-            tests/integration/semantic-unit-boundary/cli/commands/dev/connected-dev.test.ts \
-            tests/integration/semantic-unit-boundary/src/agent/ag-ui/connected-local-runtime-security.test.ts \
-            tests/integration/semantic-unit-boundary/src/agent/service/external-worker-client.test.ts \
-            tests/integration/agent/connected-local-inference.test.ts \
-            tests/integration/agent/connected-local-tools.test.ts \
-            tests/integration/agent/connected-local-platform-boundary.test.ts \
-            tests/integration/agent/inherited-local-platform-scope.test.ts \
-            tests/integration/agent/run-stream-project-observation.test.ts \
-            tests/integration/agent/connected-writer-verifier.test.ts \
-            tests/integration/agent/connected-local-setup-cleanup.test.ts \
-            tests/integration/agent/connected-platform-cleanup.test.ts
-          deno run --config=scripts/test.deno.json --no-npm --allow-read --allow-write --allow-run --allow-env \
-            scripts/test/coverage-ci.ts report coverage-profiles/coverage-connected-local
+      - name: Download current-source coverage receipts from this run
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: coverage-source-*-attempt-*
+          path: source-coverage-receipts
+      - name: Verify and select current-source coverage receipts
+        run: >-
+          deno run --config=scripts/test.deno.json --no-npm --allow-read --allow-write
+          --allow-env=GITHUB_SHA,GITHUB_RUN_ID,GITHUB_RUN_ATTEMPT
+          scripts/ci/source-coverage-artifacts.ts select source-coverage-receipts coverage-profiles
       - name: Merge coverage reports for SonarQube
         run: |
           deno task coverage:ci:merge -- --threshold=0 \
@@ -769,8 +841,8 @@ jobs:
     runs-on: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.ubuntu26 == true && 'ubuntu-26.04' || 'ubuntu-latest' }}
     timeout-minutes: 10
     name: Reused main Sonar coverage report
-    needs: [tested-run, version-check]
-    if: ${{ !cancelled() && needs.tested-run.result == 'success' && needs.tested-run.outputs.reuse == 'true' && needs.version-check.outputs.is_stable == 'false' && ((github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && (github.event_name != 'pull_request' || github.event.pull_request.user.login != 'dependabot[bot]')) }}
+    needs: [tested-run, version-check, source-coverage-context-ownership, source-coverage-connected-local]
+    if: ${{ !cancelled() && needs.tested-run.result == 'success' && needs.tested-run.outputs.reuse == 'true' && needs.version-check.outputs.is_stable == 'false' && needs.source-coverage-context-ownership.result == 'success' && needs.source-coverage-connected-local.result == 'success' && ((github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && (github.event_name != 'pull_request' || github.event.pull_request.user.login != 'dependabot[bot]')) }}
     permissions:
       actions: read
       contents: read
@@ -1135,6 +1207,20 @@ jobs:
 
   cancel-after-sonar:
     needs: [sonar]
+    if: ${{ failure() && github.event_name == 'merge_group' }}
+    permissions:
+      actions: write
+    uses: veryfront/veryfront-code/.github/workflows/cancel-failed-merge-group.yml@03903775fbf92852f23cccc1ba6243192042ff64
+
+  cancel-after-source-coverage-context-ownership:
+    needs: [source-coverage-context-ownership]
+    if: ${{ failure() && github.event_name == 'merge_group' }}
+    permissions:
+      actions: write
+    uses: veryfront/veryfront-code/.github/workflows/cancel-failed-merge-group.yml@03903775fbf92852f23cccc1ba6243192042ff64
+
+  cancel-after-source-coverage-connected-local:
+    needs: [source-coverage-connected-local]
     if: ${{ failure() && github.event_name == 'merge_group' }}
     permissions:
       actions: write
