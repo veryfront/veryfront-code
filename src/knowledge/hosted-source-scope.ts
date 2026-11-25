@@ -13,6 +13,7 @@
  */
 import { AsyncLocalStorage } from "node:async_hooks";
 import { createPrivateWeakStore } from "#veryfront/security/private-weak-store.ts";
+import type { CreateSearchKnowledgeToolOptions } from "./index.ts";
 
 /** The pinned source release and its run-bound read credential. */
 export interface HostedKnowledgeSourceScope {
@@ -23,7 +24,7 @@ export interface HostedKnowledgeSourceScope {
 }
 
 const sourceScopeStorage = new AsyncLocalStorage<Readonly<HostedKnowledgeSourceScope>>();
-const frameworkKnowledgeOptions = createPrivateWeakStore<object, true>();
+const frameworkKnowledgeOptions = createPrivateWeakStore<CreateSearchKnowledgeToolOptions, true>();
 const apply = Reflect.apply;
 const freeze = Object.freeze;
 const run = AsyncLocalStorage.prototype.run;
@@ -53,12 +54,14 @@ export function getHostedKnowledgeSource(): Readonly<HostedKnowledgeSourceScope>
 }
 
 /** Mark tool options as framework-owned, so the tool may use the source binding. */
-export function markFrameworkKnowledgeOptions<T extends object>(options: T): T {
+export function markFrameworkKnowledgeOptions<T extends CreateSearchKnowledgeToolOptions>(
+  options: T,
+): T {
   frameworkKnowledgeOptions.set(options, true);
   return options;
 }
 
 /** Whether these tool options came from the framework, not project code. */
-export function isFrameworkKnowledgeOptions(options: object): boolean {
+export function isFrameworkKnowledgeOptions(options: CreateSearchKnowledgeToolOptions): boolean {
   return frameworkKnowledgeOptions.get(options) === true;
 }

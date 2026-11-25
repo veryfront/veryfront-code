@@ -6,8 +6,8 @@ import { runWithRuntimeRequestContext } from "#veryfront/platform/runtime-reques
 import { createAgentKnowledgeTool } from "#veryfront/agent/runtime/knowledge-tools.ts";
 import type { AgentConfig } from "#veryfront/agent/types.ts";
 import type { ToolExecutionContext } from "#veryfront/tool/types.ts";
-import { createSearchKnowledgeTool } from "./index.ts";
-import { runWithHostedKnowledgeSource } from "./hosted-source-scope.ts";
+import { createSearchKnowledgeTool } from "#veryfront/knowledge/index.ts";
+import { runWithHostedKnowledgeSource } from "#veryfront/knowledge/hosted-source-scope.ts";
 
 const SOURCE_RELEASE_FILES = "/projects/support-source/releases/release-1/files";
 const HOME_ENVIRONMENT_FILES = "/projects/account-home/environments/Production/files";
