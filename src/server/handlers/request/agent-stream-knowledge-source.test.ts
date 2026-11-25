@@ -1,7 +1,6 @@
 import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { resolveHostOwnedSourceApiBaseUrl } from "#veryfront/config/host-api-base.ts";
 import { sharedAgentKnowledgeSource } from "./agent-stream.handler.ts";
 
 type Payload = Parameters<typeof sharedAgentKnowledgeSource>[0];
@@ -23,13 +22,12 @@ function payload(fields: Record<string, unknown>): Payload {
 
 describe("sharedAgentKnowledgeSource", () => {
   it("binds a shared agent's knowledge to its pinned source release", () => {
-    assertEquals(sharedAgentKnowledgeSource(payload({}), "source-read-token"), {
-      ...sourceProject,
-      releaseId: "release-1",
-      authToken: "source-read-token",
-      apiUrl: resolveHostOwnedSourceApiBaseUrl(),
-      knowledge: ["knowledge/returns-policy.md"],
-    });
+    const binding = sharedAgentKnowledgeSource(payload({}), "source-read-token");
+    assertEquals(binding?.releaseId, "release-1");
+    assertEquals(binding?.knowledge, ["knowledge/returns-policy.md"]);
+    assertEquals(typeof binding?.listKnowledgeFiles, "function");
+    // The binding itself never carries the credential.
+    assertEquals(JSON.stringify(binding).includes("source-read-token"), false);
     assertEquals(
       sharedAgentKnowledgeSource(
         payload({

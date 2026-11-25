@@ -5,13 +5,13 @@
  * different project. Its runtime identity belongs to that execution project,
  * so the knowledge tool would otherwise read the execution project's files.
  * This binding points only the framework knowledge tool back at the agent's
- * pinned source release, using the source-read credential the control plane
- * minted for that run.
+ * pinned source release.
  *
- * The binding's reader and the framework-ownership marker are each handed out
- * once, to the framework modules that claim them when they load. Code loaded
- * later gets neither, and the signed knowledge selector caps whatever the
- * binding returns.
+ * The binding carries no credential: the host builds its file lister around
+ * the run's source-read credential. The binding's reader and the
+ * framework-ownership marker are each handed out once, to the framework
+ * modules that claim them when they load, and the signed knowledge selector
+ * caps whatever the binding returns.
  *
  * @module knowledge/hosted-source-scope
  * @internal
@@ -20,16 +20,19 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { createPrivateWeakStore } from "#veryfront/security/private-weak-store.ts";
 import type { CreateSearchKnowledgeToolOptions, ProjectKnowledgeScopeSelector } from "./index.ts";
 
-/** The pinned source release, its run-bound read credential and the signed knowledge selector. */
+/** One file of the pinned source release's knowledge folder. */
+export interface SourceReleaseKnowledgeFile {
+  readonly path: string;
+  readonly content?: unknown;
+}
+
+/** The pinned source release a shared agent's knowledge is read from. */
 export interface HostedKnowledgeSourceScope {
-  readonly projectId: string;
-  readonly projectSlug: string;
   readonly releaseId: string;
-  readonly authToken: string;
-  /** Host-owned API base URL; the source credential is never sent anywhere else. */
-  readonly apiUrl: string;
   /** The signed agent's knowledge selector; reads never exceed it. */
   readonly knowledge: ProjectKnowledgeScopeSelector;
+  /** Lists the release's knowledge folder; the host binds its credential. */
+  readonly listKnowledgeFiles: () => Promise<readonly SourceReleaseKnowledgeFile[]>;
 }
 
 type MarkFrameworkKnowledgeOptions = <T extends CreateSearchKnowledgeToolOptions>(options: T) => T;
@@ -51,12 +54,9 @@ export function runWithHostedKnowledgeSource<T>(
 ): T {
   return apply(run, sourceScopeStorage, [
     freeze({
-      projectId: scope.projectId,
-      projectSlug: scope.projectSlug,
       releaseId: scope.releaseId,
-      authToken: scope.authToken,
-      apiUrl: scope.apiUrl,
       knowledge: scope.knowledge,
+      listKnowledgeFiles: scope.listKnowledgeFiles,
     }),
     fn,
   ]) as T;

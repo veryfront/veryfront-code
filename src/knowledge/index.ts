@@ -41,6 +41,7 @@ import {
   claimHostedKnowledgeSourceReader,
   type HostedKnowledgeSourceScope,
   isFrameworkKnowledgeOptions,
+  type SourceReleaseKnowledgeFile,
 } from "./hosted-source-scope.ts";
 import { VeryfrontApiClient } from "#veryfront/platform/adapters/veryfront-api-client/client.ts";
 import { tool } from "#veryfront/tool/factory.ts";
@@ -1008,11 +1009,10 @@ function scoreEntry(
 
 async function getProjectKnowledgeManifest(
   config: ProjectKnowledgeConfig,
-  context: ToolExecutionContext | undefined,
-  frameworkOwned: boolean,
+  context?: ToolExecutionContext,
 ): Promise<ProjectKnowledgeManifestEntry[]> {
   if (!config.projectDir) {
-    const hostedManifest = await getHostedProjectKnowledgeManifest(config, context, frameworkOwned);
+    const hostedManifest = await getHostedProjectKnowledgeManifest(config, context);
     if (hostedManifest) return hostedManifest;
   }
 
@@ -1051,38 +1051,7 @@ async function getProjectKnowledgeManifest(
   return manifest;
 }
 
-const readHostedKnowledgeSource = claimHostedKnowledgeSourceReader();
-
-/** The bound source release, for framework-owned knowledge only. */
-function getFrameworkKnowledgeSource(
-  frameworkOwned: boolean,
-): Readonly<HostedKnowledgeSourceScope> | undefined {
-  return frameworkOwned ? readHostedKnowledgeSource() : undefined;
-}
-
-function getHostedKnowledgeContext(
-  context: ToolExecutionContext | undefined,
-  frameworkOwned: boolean,
-): HostedKnowledgeContext | null {
-  // A shared agent runs in another project; its own knowledge lives in the
-  // pinned source release, read with that run's source credential.
-  const source = getFrameworkKnowledgeSource(frameworkOwned);
-  if (source) {
-    // The source credential is host-private, so it only ever goes to the
-    // host-owned API base the binding carries, never to a tool-context URL.
-    return {
-      projectRef: source.projectSlug,
-      projectSlug: source.projectSlug,
-      projectId: source.projectId,
-      authToken: source.authToken,
-      apiUrl: source.apiUrl,
-      productionMode: true,
-      releaseId: source.releaseId,
-      branch: null,
-      environmentName: null,
-    };
-  }
-
+function getHostedKnowledgeContext(context?: ToolExecutionContext): HostedKnowledgeContext | null {
   const requestContext = getRuntimeRequestContext();
   const authToken = typeof context?.authToken === "string" && context.authToken
     ? context.authToken
@@ -1150,10 +1119,9 @@ function createHostedKnowledgeClient(hostedContext: HostedKnowledgeContext): Ver
 
 async function getHostedProjectKnowledgeManifest(
   config: ProjectKnowledgeConfig,
-  context: ToolExecutionContext | undefined,
-  frameworkOwned: boolean,
+  context?: ToolExecutionContext,
 ): Promise<ProjectKnowledgeManifestEntry[] | null> {
-  const hostedContext = getHostedKnowledgeContext(context, frameworkOwned);
+  const hostedContext = getHostedKnowledgeContext(context);
   if (!hostedContext) return null;
 
   const contentDir = config.contentDir ?? DEFAULT_CONTENT_DIR;
@@ -1165,6 +1133,13 @@ async function getHostedProjectKnowledgeManifest(
     sortOrder: "asc",
   });
 
+  return buildHostedKnowledgeManifest(contentDir, files);
+}
+
+function buildHostedKnowledgeManifest(
+  contentDir: string,
+  files: readonly { path: string; content?: unknown }[],
+): ProjectKnowledgeManifestEntry[] {
   const manifest: ProjectKnowledgeManifestEntry[] = [];
   for (const file of files) {
     const manifestPath = buildHostedManifestPath(contentDir, file.path);
@@ -1352,39 +1327,38 @@ export async function searchProjectKnowledge(
   config: ProjectKnowledgeConfig = {},
   context?: ToolExecutionContext,
 ): Promise<ProjectKnowledgeLookupOutput> {
-  return await searchKnowledgeManifest(input, config, context, false);
-}
-
-async function searchKnowledgeManifest(
-  input: ProjectKnowledgeLookupInput,
-  config: ProjectKnowledgeConfig,
-  context: ToolExecutionContext | undefined,
-  frameworkOwned: boolean,
-): Promise<ProjectKnowledgeLookupOutput> {
-  const source = getFrameworkKnowledgeSource(frameworkOwned);
-  if (source) {
-    // The signed agent's selection and the default folder bound every read of
-    // the source release, whatever the tool's own configuration says.
-    if (
-      !projectKnowledgeScopeSelectorGrantsAnyPath(source.knowledge) ||
-      !projectKnowledgeScopeSelectorGrantsAnyPath(config.scope)
-    ) {
-      return lookupKnowledgeManifest([], input);
-    }
-    const sourceManifest = await getHostedProjectKnowledgeManifest({}, context, frameworkOwned) ??
-      [];
-    return lookupKnowledgeManifest(
-      applyKnowledgeScope(applyKnowledgeScope(sourceManifest, source.knowledge), config.scope),
-      input,
-    );
-  }
-
   if (!projectKnowledgeScopeSelectorGrantsAnyPath(config.scope)) {
     return lookupKnowledgeManifest([], input);
   }
 
-  const manifest = await getProjectKnowledgeManifest(config, context, frameworkOwned);
+  const manifest = await getProjectKnowledgeManifest(config, context);
   return lookupKnowledgeManifest(applyKnowledgeScope(manifest, config.scope), input);
+}
+
+const readHostedKnowledgeSource = claimHostedKnowledgeSourceReader();
+
+/**
+ * Search a shared agent's pinned source release. The signed agent's selection
+ * and the default folder bound every read, whatever the tool's own scope says.
+ */
+async function searchSourceReleaseKnowledge(
+  input: ProjectKnowledgeLookupInput,
+  config: ProjectKnowledgeConfig,
+  source: Readonly<HostedKnowledgeSourceScope>,
+): Promise<ProjectKnowledgeLookupOutput> {
+  if (
+    !projectKnowledgeScopeSelectorGrantsAnyPath(source.knowledge) ||
+    !projectKnowledgeScopeSelectorGrantsAnyPath(config.scope)
+  ) {
+    return lookupKnowledgeManifest([], input);
+  }
+
+  const files: readonly SourceReleaseKnowledgeFile[] = await source.listKnowledgeFiles();
+  const manifest = buildHostedKnowledgeManifest(DEFAULT_CONTENT_DIR, files);
+  return lookupKnowledgeManifest(
+    applyKnowledgeScope(applyKnowledgeScope(manifest, source.knowledge), config.scope),
+    input,
+  );
 }
 
 /** Create a project-authored knowledge tool with a configurable ID and hosted-compatible response shape. */
@@ -1399,8 +1373,14 @@ export function createSearchKnowledgeTool(
     description: description ??
       "Retrieve a compact, cursor-based slice of project knowledge, or a specific document by lookup target.",
     inputSchema: SEARCH_KNOWLEDGE_INPUT_SCHEMA,
-    execute: (input, context) =>
-      searchKnowledgeManifest(coerceSearchKnowledgeInput(input), config, context, frameworkOwned),
+    execute: (input, context) => {
+      const lookup = coerceSearchKnowledgeInput(input);
+      // Only the framework's own tool may read a shared agent's source release.
+      const source = frameworkOwned ? readHostedKnowledgeSource() : undefined;
+      return source
+        ? searchSourceReleaseKnowledge(lookup, config, source)
+        : searchProjectKnowledge(lookup, config, context);
+    },
   });
 }
 

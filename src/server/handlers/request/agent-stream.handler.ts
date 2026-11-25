@@ -199,6 +199,7 @@ import {
   type HostedKnowledgeSourceScope,
   runWithHostedKnowledgeSource,
 } from "#veryfront/knowledge/hosted-source-scope.ts";
+import { createSourceReleaseKnowledgeLister } from "#veryfront/knowledge/source-release-files.ts";
 import type {
   SourceSnapshotFingerprintOptions,
   SourceSnapshotFreshnessOptions,
@@ -1553,12 +1554,15 @@ export function sharedAgentKnowledgeSource(
   if (!payload.sourceProject || !payload.agentEntrypoint || !sourceAuthToken) return undefined;
   if (source.type === "branch" || knowledge === undefined) return undefined;
   return {
-    projectId: payload.sourceProject.projectId,
-    projectSlug: payload.sourceProject.projectSlug,
     releaseId: source.releaseId,
-    authToken: sourceAuthToken,
-    apiUrl: resolveHostOwnedSourceApiBaseUrl(),
     knowledge,
+    listKnowledgeFiles: createSourceReleaseKnowledgeLister({
+      projectId: payload.sourceProject.projectId,
+      projectSlug: payload.sourceProject.projectSlug,
+      releaseId: source.releaseId,
+      authToken: sourceAuthToken,
+      apiUrl: resolveHostOwnedSourceApiBaseUrl(),
+    }),
   };
 }
 
