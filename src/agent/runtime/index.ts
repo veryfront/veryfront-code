@@ -1,5 +1,11 @@
 import { MAX_RUNTIME_PROVIDER_STREAM_RETRIES } from "./provider-stream-retry-policy.ts";
 import {
+  normalizeRunStepCount,
+  planRunStepBudget,
+  RUN_STEP_BUDGET_FINISH_REASON,
+  stepEndFrame,
+} from "./run-step-budget.ts";
+import {
   introduceToolCallOccurrence,
   runWithToolCallOccurrenceDispatch,
 } from "#veryfront/runtime/tool-call-occurrence.ts";
@@ -3577,8 +3583,8 @@ export class AgentRuntime {
       ? undefined
       : parseAgentPauseCheckpoint(internalOptions.recoveryContinuation);
     this.#resumeToolCall = internalOptions.resumeToolCall;
-    this.#runStepsUsed = normalizeRunStepsUsed(internalOptions.runStepsUsed);
-    this.#runStepsFinished = normalizeRunStepsUsed(internalOptions.runStepsFinished);
+    this.#runStepsUsed = normalizeRunStepCount(internalOptions.runStepsUsed);
+    this.#runStepsFinished = normalizeRunStepCount(internalOptions.runStepsFinished);
     this.#runtimeObservationCapability = internalOptions.runtimeObservationCapability;
     this.#modelResolverState = internalOptions.resolveModelRuntime
       ? { status: "available", resolver: internalOptions.resolveModelRuntime }
@@ -4754,10 +4760,15 @@ export class AgentRuntime {
     return withSpan("agent.execution_loop", async (loopSpan) => {
       const { maxAgentSteps } = getPlatformCapabilities();
       const runMaxSteps = this.computeMaxSteps(maxAgentSteps);
-      const maxSteps = remainingRunSteps(
+      const { maxSteps } = planRunStepBudget({
         runMaxSteps,
-        priorRunSteps(this.#runStepsUsed, this.#runStepsFinished, 0),
-      );
+        runStepsUsed: this.#runStepsUsed,
+        runStepsFinished: this.#runStepsFinished,
+        startStep: 0,
+        completed: false,
+        hasContinuation: false,
+        owesResumeToolCall: false,
+      });
       const effectiveModel = resolveRuntimeModel(modelString || this.config.model);
       const languageModel = resolvedModel ?? resolveModel(effectiveModel);
 
@@ -6032,19 +6043,22 @@ export class AgentRuntime {
       }
     }
     await pauseAtBoundary(checkpoint?.nextStep ?? 0);
-    // `runStepsUsed` counts the run's steps before this execution, and a
-    // continuation's `nextStep` the steps this execution already took, so the
-    // run has used its budget once `nextStep` reaches the remainder; so has an
-    // execution whose own continuation reached `maxSteps`. Only an owed call
-    // may still run then, in one step of its own.
+    // The run's budget spans its executions: see `planRunStepBudget`.
     const startStep = checkpoint?.nextStep ?? 0;
-    const runStepsBefore = priorRunSteps(this.#runStepsUsed, this.#runStepsFinished, startStep);
-    const maxSteps = remainingRunSteps(runMaxSteps, runStepsBefore);
-    const owesResumeToolCall = !resumeToolCallExecuted && this.#resumeToolCall !== undefined;
-    const runStepBudgetUsed = !completedWithinStepBudget && startStep >= maxSteps &&
-      (runStepsBefore > 0 || checkpoint !== undefined);
+    const {
+      maxSteps,
+      budgetUsed: runStepBudgetUsed,
+      stepLimit,
+    } = planRunStepBudget({
+      runMaxSteps,
+      runStepsUsed: this.#runStepsUsed,
+      runStepsFinished: this.#runStepsFinished,
+      startStep,
+      completed: completedWithinStepBudget,
+      hasContinuation: checkpoint !== undefined,
+      owesResumeToolCall: !resumeToolCallExecuted && this.#resumeToolCall !== undefined,
+    });
     if (runStepBudgetUsed) finalFinishReason = RUN_STEP_BUDGET_FINISH_REASON;
-    const stepLimit = runStepBudgetUsed && owesResumeToolCall ? startStep + 1 : maxSteps;
     for (
       let step = startStep;
       !completedWithinStepBudget && step < stepLimit;
@@ -6440,18 +6454,7 @@ export class AgentRuntime {
       if (runStepBudgetUsed) {
         // The owed call ran; the run has no step left for another model call.
         throwIfAborted(abortSignal);
-        sendSSE(controller, encoder, {
-          type: "step-end",
-          ...(runtimeObservationStepId
-            ? {
-              privateRuntimeObservation: {
-                version: 1,
-                kind: "step_ended",
-                stepId: runtimeObservationStepId,
-              },
-            }
-            : {}),
-        });
+        sendSSE(controller, encoder, stepEndFrame(runtimeObservationStepId));
         break;
       }
 
@@ -8033,24 +8036,6 @@ export class AgentRuntime {
   async clearMemory(): Promise<void> {
     await this.memory.clear();
   }
-}
-
-/** Finish reason of an execution stopped because the run used its step budget. */
-const RUN_STEP_BUDGET_FINISH_REASON = "max_steps";
-
-function normalizeRunStepsUsed(value: unknown): number {
-  return typeof value === "number" && Number.isSafeInteger(value) && value > 0 ? value : 0;
-}
-
-/** The run's model steps before this execution: reported, or derived on a recovery. */
-function priorRunSteps(runStepsUsed: number, runStepsFinished: number, startStep: number): number {
-  if (runStepsUsed > 0) return runStepsUsed;
-  return runStepsFinished > startStep ? runStepsFinished - startStep : 0;
-}
-
-/** The steps an execution may still take of a run-wide `maxSteps` budget. */
-function remainingRunSteps(runMaxSteps: number, runStepsUsed: number): number {
-  return runMaxSteps > runStepsUsed ? runMaxSteps - runStepsUsed : 0;
 }
 
 const agentRuntimePrivateMethodNames = [

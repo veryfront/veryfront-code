@@ -1,3 +1,4 @@
+import { RUN_STEP_BUDGET_FINISH_REASON } from "../runtime/run-step-budget.ts";
 import {
   primordialArrayFilter,
   primordialArrayFlatMap,
@@ -2039,9 +2040,6 @@ function mapRuntimeStreamEventToAgUiEventsUnstamped(
       return [];
   }
 }
-
-/** Finish reason of an execution the runtime stopped at the run's step budget. */
-const RUN_STEP_BUDGET_FINISH_REASON = "max_steps";
 
 /** Finalize AG-UI events helper. */
 export function finalizeAgUiEvents(

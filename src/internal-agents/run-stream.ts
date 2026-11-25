@@ -1,4 +1,5 @@
 import { getServerResolvedProjectToolNames } from "#veryfront/agent/runtime/server-resolved-project-tools.ts";
+import { readRunStepCounts } from "#veryfront/agent/runtime/run-step-budget.ts";
 import {
   prepareSourceObservationFrames,
   SOURCE_SNAPSHOT_SSE_EVENT_NAME,
@@ -924,28 +925,6 @@ function getAllowedRemoteToolNames(
   return allowedTools.every((toolName) => typeof toolName === "string") ? allowedTools : [];
 }
 
-/**
- * The model steps the control plane reports the run used before this
- * execution (`runStepsUsed`), or, on a transport recovery, the steps it
- * finished in all (`runStepsFinished`). An agent's own `maxSteps` limits the
- * whole run, so the runtime subtracts them. An agent without one keeps its
- * per-execution default.
- */
-function runStepsUsedOption(
-  config: { maxSteps?: number },
-  forwardedProps: RuntimeRunAgentInput["forwardedProps"],
-): { runStepsUsed?: number; runStepsFinished?: number } {
-  if (config.maxSteps === undefined) return {};
-  const count = (value: unknown) =>
-    typeof value === "number" && Number.isSafeInteger(value) && value > 0 ? value : undefined;
-  const used = count(forwardedProps?.runStepsUsed);
-  const finished = count(forwardedProps?.runStepsFinished);
-  return {
-    ...(used === undefined ? {} : { runStepsUsed: used }),
-    ...(finished === undefined ? {} : { runStepsFinished: finished }),
-  };
-}
-
 function getForwardedMaxOutputTokens(
   forwardedProps: RuntimeRunAgentInput["forwardedProps"],
 ): number | undefined {
@@ -1794,7 +1773,7 @@ export async function createRuntimeAgentStreamResponse(
             producerCompletion = completion;
           },
           ...(input.resumeToolCall ? { resumeToolCall: input.resumeToolCall } : {}),
-          ...runStepsUsedOption(runtimeAgent.config, input.forwardedProps),
+          ...readRunStepCounts(runtimeAgent.config, input.forwardedProps),
           ...(inferenceAuthToken
             ? {
               // This server surface has no AgentServiceConfig object to thread through, so the
