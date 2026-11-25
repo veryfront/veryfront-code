@@ -5827,8 +5827,6 @@ export class AgentRuntime {
     const { maxAgentSteps } = getPlatformCapabilities();
     const runMaxSteps = this.computeMaxSteps(maxAgentSteps);
     const maxSteps = remainingRunSteps(runMaxSteps, this.#runStepsUsed);
-    // The run used its budget in earlier executions: only an owed call may still run.
-    const runStepBudgetUsed = this.#runStepsUsed > 0 && maxSteps === 0;
     const effectiveModel = resolveRuntimeModel(modelString || this.config.model);
     const languageModel = resolvedModel ?? resolveModel(effectiveModel);
 
@@ -6024,13 +6022,19 @@ export class AgentRuntime {
       }
     }
     await pauseAtBoundary(checkpoint?.nextStep ?? 0);
+    // `runStepsUsed` counts the run's steps before this execution, and a
+    // continuation's `nextStep` the steps this execution already took, so the
+    // run has used its budget once `nextStep` reaches the remainder. Only an
+    // owed call may still run then, in one step of its own.
+    const startStep = checkpoint?.nextStep ?? 0;
+    const runStepBudgetUsed = this.#runStepsUsed > 0 && startStep >= maxSteps;
     if (runStepBudgetUsed) finalFinishReason = RUN_STEP_BUDGET_FINISH_REASON;
-    const owedResumeStep = runStepBudgetUsed && !resumeToolCallExecuted && this.#resumeToolCall
-      ? 1
-      : 0;
+    const stepLimit = runStepBudgetUsed && !resumeToolCallExecuted && this.#resumeToolCall
+      ? startStep + 1
+      : maxSteps;
     for (
-      let step = checkpoint?.nextStep ?? 0;
-      !completedWithinStepBudget && step < maxSteps + owedResumeStep;
+      let step = startStep;
+      !completedWithinStepBudget && step < stepLimit;
       step++
     ) {
       throwIfAborted(abortSignal);
