@@ -63,6 +63,7 @@ import {
   markTrustedHostToolSet,
 } from "#veryfront/tool/host-tool-provenance.ts";
 import { isReservedPlatformToolName } from "#veryfront/tool/platform-tool-policy.ts";
+import { createInputRequestApprovalGate } from "#veryfront/tool/approval-input-request-gate.ts";
 import {
   type Agent,
   type AgentMessage as Message,
@@ -282,6 +283,8 @@ export interface RuntimeAgentStreamExecutionDeps {
   };
   /** Set by the host only after it verified this run's terminal capability for the sandbox project. */
   runIdBindsToolAuthorization?: boolean;
+  /** Canonical run UUID the host verified with that capability; approval asks are filed on it. */
+  verifiedRunId?: string;
   createBashTool?: AgentServiceSandboxToolsOptions["createBashTool"];
   createAgentServiceSandboxTools?: (
     input: AgentServiceSandboxToolsOptions,
@@ -1355,8 +1358,23 @@ export async function createRuntimeAgentStreamResponse(
     servingIdentity: deps.servingIdentity,
   });
   let recoveryLifetime: Awaited<ReturnType<typeof startManagedRecoveryLifetime>> | undefined;
+  // A tool declared with `approval` asks a checker through this run's input requests. Only a
+  // run the host bound to the project can hold them; any other run keeps failing closed.
+  const requestToolApproval = deps.runIdBindsToolAuthorization === true && deps.verifiedRunId &&
+      deps.projectAgentSandbox?.projectId && deps.projectAgentSandbox.apiUrl &&
+      deps.projectAgentSandbox.authToken
+    ? createInputRequestApprovalGate({
+      apiUrl: deps.projectAgentSandbox.apiUrl,
+      authToken: deps.projectAgentSandbox.authToken,
+      runId: deps.verifiedRunId,
+    })
+    : undefined;
+  // The gate keys each decision by the call's occurrence, so a provider that reuses a call id in a
+  // later turn gets a new decision instead of the earlier one.
   const withManagedOccurrences = <T>(operation: () => T): T =>
-    managedRecovery || projectWriter ? runWithToolCallOccurrences(operation) : operation();
+    managedRecovery || projectWriter || requestToolApproval
+      ? runWithToolCallOccurrences(operation)
+      : operation();
   try {
     if (managedRecovery) {
       if (!managedRecovery.writer) {
@@ -1612,6 +1630,7 @@ export async function createRuntimeAgentStreamResponse(
       ...(deps.projectAgentSandbox?.authToken
         ? { authToken: deps.projectAgentSandbox.authToken }
         : {}),
+      ...(requestToolApproval ? { requestToolApproval } : {}),
       ...(deps.projectAgentSandbox === undefined
         ? {}
         : { branch: deps.projectAgentSandbox.branchId }),

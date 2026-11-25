@@ -29,7 +29,7 @@ type Verification = "valid" | "rejected" | "throws";
 
 async function streamedToolContext(
   verification: Verification,
-  options: { token?: string | null; body?: string } = {},
+  options: { token?: string | null; body?: string; proxyToken?: string } = {},
 ): Promise<Record<string, unknown>> {
   const contexts: Array<Record<string, unknown> | undefined> = [];
   const handler = new AgentStreamHandler({
@@ -65,7 +65,11 @@ async function streamedToolContext(
         body,
       }),
     ),
-    { ...createCtx(publicKeyPem), projectId },
+    {
+      ...createCtx(publicKeyPem),
+      projectId,
+      ...(options.proxyToken ? { proxyToken: options.proxyToken } : {}),
+    },
   );
   assertExists(result.response);
   assertEquals(result.response.status, 200, await result.response.clone().text());
@@ -103,6 +107,18 @@ describe("agent stream authored tool run binding", () => {
       }),
     });
     assertEquals(Object.hasOwn(context, "runIdBindsToolAuthorization"), false);
+  });
+
+  it("gives a bound run with a runtime token an approval gate", async () => {
+    const context = await streamedToolContext("valid", { proxyToken: "runtime-token" });
+    assertEquals(typeof context.requestToolApproval, "function");
+  });
+
+  it("gives no approval gate to an unbound run or a run without a runtime token", async () => {
+    const unbound = await streamedToolContext("rejected", { proxyToken: "runtime-token" });
+    assertEquals(Object.hasOwn(unbound, "requestToolApproval"), false);
+    const tokenless = await streamedToolContext("valid");
+    assertEquals(Object.hasOwn(tokenless, "requestToolApproval"), false);
   });
 
   it("requires the verified project to be the sandbox project", () => {
