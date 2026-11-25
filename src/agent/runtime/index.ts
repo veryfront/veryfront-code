@@ -6024,14 +6024,15 @@ export class AgentRuntime {
     await pauseAtBoundary(checkpoint?.nextStep ?? 0);
     // `runStepsUsed` counts the run's steps before this execution, and a
     // continuation's `nextStep` the steps this execution already took, so the
-    // run has used its budget once `nextStep` reaches the remainder. Only an
-    // owed call may still run then, in one step of its own.
+    // run has used its budget once `nextStep` reaches the remainder; so has an
+    // execution whose own continuation reached `maxSteps`. Only an owed call
+    // may still run then, in one step of its own.
     const startStep = checkpoint?.nextStep ?? 0;
-    const runStepBudgetUsed = this.#runStepsUsed > 0 && startStep >= maxSteps;
+    const owesResumeToolCall = !resumeToolCallExecuted && this.#resumeToolCall !== undefined;
+    const runStepBudgetUsed = !completedWithinStepBudget && startStep >= maxSteps &&
+      (this.#runStepsUsed > 0 || owesResumeToolCall);
     if (runStepBudgetUsed) finalFinishReason = RUN_STEP_BUDGET_FINISH_REASON;
-    const stepLimit = runStepBudgetUsed && !resumeToolCallExecuted && this.#resumeToolCall
-      ? startStep + 1
-      : maxSteps;
+    const stepLimit = runStepBudgetUsed && owesResumeToolCall ? startStep + 1 : maxSteps;
     for (
       let step = startStep;
       !completedWithinStepBudget && step < stepLimit;
