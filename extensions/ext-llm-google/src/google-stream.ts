@@ -3,6 +3,8 @@ import {
   parseFinalSseChunk,
   parseSseChunk,
   ProviderStreamProtocolError,
+  readGatewayBillingMode,
+  readGatewayUsageCosts,
   readRecord,
   type RuntimeUsage,
   StreamFragmentBuffer,
@@ -82,12 +84,29 @@ export function extractGoogleUsage(payload: unknown): RuntimeUsage | undefined {
   const totalTokens = readTokenCount(usage.totalTokenCount);
   const cacheReadInputTokens = readTokenCount(usage.cachedContentTokenCount);
   const reasoningTokens = readTokenCount(usage.thoughtsTokenCount);
+  const veryfront = readRecord(usage.veryfront);
+  const billingMode = readGatewayBillingMode(veryfront?.billing_mode);
+  const costSource = veryfront?.cost_source;
+  const usageCaptureStatus = veryfront?.usage_capture_status;
+  const billableInputTokens = readTokenCount(veryfront?.billable_input_tokens);
+  const billableOutputTokens = readTokenCount(veryfront?.billable_output_tokens);
   const normalized: RuntimeUsage = {
     inputTokens,
     outputTokens,
     totalTokens,
     ...(cacheReadInputTokens !== undefined ? { cacheReadInputTokens } : {}),
     ...(reasoningTokens !== undefined ? { reasoningTokens } : {}),
+    ...readGatewayUsageCosts(veryfront),
+    ...(billingMode !== undefined ? { billingMode } : {}),
+    ...(costSource === "gateway" || costSource === "missing" || costSource === "partial"
+      ? { costSource }
+      : {}),
+    ...(usageCaptureStatus === "complete" || usageCaptureStatus === "partial" ||
+        usageCaptureStatus === "missing"
+      ? { usageCaptureStatus }
+      : {}),
+    ...(billableInputTokens !== undefined ? { billableInputTokens } : {}),
+    ...(billableOutputTokens !== undefined ? { billableOutputTokens } : {}),
   };
 
   return Object.values(normalized).some((value) => value !== undefined) ? normalized : undefined;

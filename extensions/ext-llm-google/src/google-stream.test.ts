@@ -1607,3 +1607,29 @@ describe("ext-llm-google/google-stream", () => {
     );
   });
 });
+
+describe("Google gateway usage extraction", () => {
+  it("ignores malformed gateway amounts, enums and token counters", () => {
+    assertEquals(
+      extractGoogleUsage({
+        usageMetadata: {
+          promptTokenCount: 8,
+          candidatesTokenCount: 2,
+          totalTokenCount: 10,
+          veryfront: {
+            cost_source: "unexpected",
+            billing_mode: "unexpected",
+            usage_capture_status: "unexpected",
+            cost_credits: "not-a-number",
+            provider_cost_usd: -1,
+            billable_input_tokens: -1,
+            billable_output_tokens: 0.5,
+          },
+        },
+      }),
+      { inputTokens: 8, outputTokens: 2, totalTokens: 10 },
+    );
+    assertEquals(extractGoogleUsage({ usageMetadata: { veryfront: null } }), undefined);
+    assertEquals(extractGoogleUsage({ usageMetadata: { veryfront: "not-an-object" } }), undefined);
+  });
+});

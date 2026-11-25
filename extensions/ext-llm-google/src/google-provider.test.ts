@@ -7,6 +7,7 @@ import {
   ProviderQuotaError,
   ProviderRateLimitError,
   ProviderRequestError,
+  readRecord,
 } from "veryfront/provider/shared";
 import type { ModelRuntimeCallOptions } from "veryfront/provider/shared";
 import { buildModelCallContextRequest } from "#veryfront/runtime/model-call-context-request.ts";
@@ -2205,5 +2206,87 @@ describe("ext-llm-google/google-provider", () => {
       });
       assertEquals("cachedContent" in (captured ?? {}), false);
     });
+  });
+});
+
+describe("Google managed gateway billing", () => {
+  const nativeUsage = {
+    promptTokenCount: 8,
+    candidatesTokenCount: 2,
+    totalTokenCount: 10,
+    cachedContentTokenCount: 3,
+    thoughtsTokenCount: 1,
+  };
+  const gatewayUsage = {
+    cost_source: "gateway",
+    billing_mode: "direct",
+    usage_capture_status: "complete",
+    cost_credits: "0.25",
+    provider_cost_usd: "0.01",
+    veryfront_billed_usd: "0.025",
+    billable_input_tokens: 5,
+    billable_output_tokens: 2,
+  };
+  const expectedUsage = {
+    inputTokens: 8,
+    outputTokens: 2,
+    totalTokens: 10,
+    cacheReadInputTokens: 3,
+    cachedInputTokens: 3,
+    reasoningTokens: 1,
+    costSource: "gateway",
+    billingMode: "direct",
+    usageCaptureStatus: "complete",
+    costCredits: 0.25,
+    billableInputTokens: 5,
+    billableOutputTokens: 2,
+  };
+
+  it("retains gateway billing beside native JSON usage through the real provider", async () => {
+    const runtime = createGoogleModelRuntime({
+      apiKey: "test-google-key",
+      baseURL: "https://example.google.test/v1beta",
+      fetch: () =>
+        Promise.resolve(googleJsonResponse({
+          candidates: [{ content: { parts: [{ text: "OK" }] }, finishReason: "STOP" }],
+          usageMetadata: { ...nativeUsage, veryfront: gatewayUsage },
+        })),
+    }, "gemini-2.5-flash");
+    const result = await runtime.doGenerate({
+      prompt: [{ role: "user", content: [{ type: "text", text: "Say OK" }] }],
+    });
+    assertEquals(result.usage, expectedUsage);
+  });
+
+  it("merges a sparse billing tail after native SSE completion without adding cumulative tokens", async () => {
+    const events = [
+      { candidates: [{ content: { parts: [{ text: "OK" }] } }], usageMetadata: nativeUsage },
+      { candidates: [{ finishReason: "STOP" }], usageMetadata: nativeUsage },
+      { usageMetadata: { veryfront: gatewayUsage } },
+    ];
+    const wire = events.map((event) => `data: ${JSON.stringify(event)}\n\n`).join("");
+    const bytes = new TextEncoder().encode(wire);
+    const runtime = createGoogleModelRuntime({
+      apiKey: "test-google-key",
+      baseURL: "https://example.google.test/v1beta",
+      fetch: () =>
+        Promise.resolve(
+          new Response(
+            ReadableStream.from([
+              bytes.slice(0, 17),
+              bytes.slice(17, 91),
+              bytes.slice(91),
+            ]),
+            { headers: { "content-type": "text/event-stream" } },
+          ),
+        ),
+    }, "gemini-2.5-flash");
+    const result = await runtime.doStream({
+      prompt: [{ role: "user", content: [{ type: "text", text: "Say OK" }] }],
+    });
+    const parts = await collectAsync(result.stream);
+    const finishes = parts.map(readRecord).filter((part) => part?.type === "finish");
+    assertEquals(finishes.length, 1);
+    assertEquals(finishes[0]?.usage, expectedUsage);
   });
 });
