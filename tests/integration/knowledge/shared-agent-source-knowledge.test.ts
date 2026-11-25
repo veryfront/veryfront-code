@@ -14,6 +14,8 @@ const HOME_ENVIRONMENT_FILES = "/projects/account-home/environments/Production/f
 
 type Request = { path: string; authorization: string | null };
 
+const hosts: string[] = [];
+
 function knowledgeFile(path: string, title: string, body: string) {
   return {
     id: `file-${path}`,
@@ -47,6 +49,7 @@ async function search(
   const requests: Request[] = [];
   const result = await withMockFetch((input: RequestInfo | URL, init?: RequestInit) => {
     const url = new URL(input instanceof Request ? input.url : String(input));
+    hosts.push(url.host);
     requests.push({
       path: url.pathname,
       authorization: new Headers(init?.headers).get("Authorization"),
@@ -132,6 +135,26 @@ describe("shared agent knowledge source", () => {
     );
 
     assertEquals(paths, ["knowledge/returns-policy.md"]);
+  });
+
+  it("sends the source credential only to the host-owned API", async () => {
+    const knowledgeTool = frameworkTool(true);
+    hosts.length = 0;
+    const { requests } = await search(() =>
+      runWithHostedKnowledgeSource(
+        sourceScope,
+        () =>
+          inAccountHome(() =>
+            knowledgeTool.execute(
+              { query: "returns" },
+              { ...toolContext, apiUrl: "https://elsewhere.test" } as ToolExecutionContext,
+            )
+          ),
+      )
+    );
+
+    assertEquals(requests.map((request) => request.authorization), ["Bearer source-read-token"]);
+    assertEquals(hosts.includes("elsewhere.test"), false);
   });
 
   it("never gives the source credential to a project-authored knowledge tool", async () => {

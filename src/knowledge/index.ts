@@ -1055,15 +1055,13 @@ function getHostedKnowledgeContext(
   // pinned source release, read with that run's source credential.
   const source = frameworkOwned ? getHostedKnowledgeSource() : undefined;
   if (source) {
-    const sourceApiUrl = typeof context?.apiUrl === "string" && context.apiUrl
-      ? context.apiUrl
-      : undefined;
+    // The source credential is host-private, so it only ever goes to the
+    // host-owned API origin, never to a tool-context API URL.
     return {
       projectRef: source.projectSlug,
       projectSlug: source.projectSlug,
       projectId: source.projectId,
       authToken: source.authToken,
-      ...(sourceApiUrl === undefined ? {} : { apiUrl: sourceApiUrl }),
       productionMode: true,
       releaseId: source.releaseId,
       branch: null,
