@@ -1,130 +1,88 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { defineSchema } from "#veryfront/schemas";
-import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
+import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { agent as createAgent } from "#veryfront/agent";
-import { scriptedModel } from "#veryfront/agent/runtime/model-runtime.test-helpers.ts";
-import { tool } from "#veryfront/tool";
 import { AgentRunSessionManager } from "./session-manager.ts";
 import {
   createRuntimeAgentStreamResponse,
   type RuntimeAgentStreamExecutionDeps,
 } from "./run-stream.ts";
 
-const NO_CHANNEL = "this runtime has no approval channel";
+type GateDeps = Pick<
+  RuntimeAgentStreamExecutionDeps,
+  "projectAgentSandbox" | "runIdBindsToolAuthorization"
+>;
 
-interface ApprovalAsk {
-  path: string;
-  authorization: string | null;
-  body: { tool_call_id: string; tool_call: { name: string; arguments: unknown } };
-}
+const sandbox = { projectId: "project-1", apiUrl: "https://api.invalid", authToken: "run-token" };
 
-/** Run an agent whose one tool needs approval, against a local API that approves every ask. */
-async function runGatedTool(
-  deps: (apiUrl: string) => Pick<
-    RuntimeAgentStreamExecutionDeps,
-    "projectAgentSandbox" | "runIdBindsToolAuthorization"
-  >,
-) {
-  const asks: ApprovalAsk[] = [];
-  const server = Deno.serve({ hostname: "127.0.0.1", port: 0, onListen: () => {} }, async (req) => {
-    asks.push({
-      path: new URL(req.url).pathname,
-      authorization: req.headers.get("authorization"),
-      body: await req.json(),
-    });
-    return Response.json({
-      input_request_id: "ir-1",
-      status: "submitted",
-      response: { values: { decision: "approve" }, actor: { type: "user", id: "checker" } },
-    }, { status: 201 });
-  });
-  let transfers = 0;
-  const transfer = tool({
-    id: "transfer-payment",
-    description: "Move money",
-    approval: { expiresInSeconds: 3600 },
-    inputSchema: defineSchema((v) => v.object({ amount: v.number() }))(),
-    execute: () => {
-      transfers += 1;
-      return { transferred: true };
+/** The context the run hands its runtime; the HTTP path of the gate is an integration test. */
+async function runtimeContext(deps: GateDeps): Promise<Record<string, unknown>> {
+  const contexts: Array<Record<string, unknown> | undefined> = [];
+  const response = await createRuntimeAgentStreamResponse(
+    {
+      threadId: crypto.randomUUID(),
+      runId: "run-approval-1",
+      messages: [{ id: "user-1", role: "user", content: "Pay Orion LLC" }],
+      tools: [],
+      context: [],
+      forwardedProps: {},
     },
-  });
-  const modelId = `anthropic/tool-approval-${crypto.randomUUID()}`;
-  const model = scriptedModel(
-    [{ toolCalls: [{ id: "call-1", name: "transfer-payment", input: { amount: 2_000_000 } }] }],
-    { modelId, provider: "anthropic", only: "stream" },
+    createAgent({
+      id: "payments",
+      model: "anthropic/claude-sonnet-4-5",
+      system: "Answer.",
+      skills: false,
+    }),
+    {
+      sessionManager: new AgentRunSessionManager(),
+      createRuntime: () => ({
+        stream: (_messages, context) => {
+          contexts.push(context);
+          return Promise.resolve(new ReadableStream<Uint8Array>({ start: (c) => c.close() }));
+        },
+      }),
+      ...deps,
+    },
   );
-  const agent = createAgent({
-    id: "payments",
-    model: modelId,
-    system: "Call transfer-payment once.",
-    skills: false,
-    tools: { "transfer-payment": true },
-    maxSteps: 1,
-    resolveModelTransport: () => ({ model }),
-  });
-  try {
-    const response = await createRuntimeAgentStreamResponse(
-      {
-        threadId: crypto.randomUUID(),
-        runId: "run-approval-1",
-        messages: [{ id: "user-1", role: "user", content: "Pay Orion LLC" }],
-        tools: [],
-        context: [],
-        forwardedProps: {},
-      },
-      agent,
-      {
-        sessionManager: new AgentRunSessionManager(),
-        localTools: { "transfer-payment": transfer },
-        ...deps(`http://127.0.0.1:${server.addr.port}`),
-      },
-    );
-    return { body: await response.text(), asks, transfers };
-  } finally {
-    await server.shutdown();
-  }
+  await response.text();
+  assertEquals(contexts.length, 1);
+  return contexts[0] ?? {};
 }
 
-describe("internal agent tool approval", () => {
-  it("asks a checker through the run's input requests and runs the call once approved", async () => {
-    const { body, asks, transfers } = await runGatedTool((apiUrl) => ({
+describe("internal agent tool approval gate", () => {
+  it("gives a run bound to its project an approval gate", async () => {
+    const context = await runtimeContext({
       runIdBindsToolAuthorization: true,
-      projectAgentSandbox: { projectId: "project-1", apiUrl, authToken: "run-token" },
-    }));
-    assertEquals(body.includes(NO_CHANNEL), false, `gated tool failed with "${NO_CHANNEL}"`);
-    assertEquals(asks.length, 1);
-    assertEquals(asks[0]!.path, "/runs/run-approval-1/input-requests");
-    assertEquals(asks[0]!.authorization, "Bearer run-token");
-    assertEquals(asks[0]!.body.tool_call_id, "call-1");
-    assertEquals(asks[0]!.body.tool_call, {
-      name: "transfer-payment",
-      arguments: { amount: 2_000_000 },
+      projectAgentSandbox: sandbox,
     });
-    assertEquals(transfers, 1);
+    assertEquals(typeof context.requestToolApproval, "function");
   });
 
   for (
     const [name, deps] of [
-      ["the run is not bound to the project", (apiUrl: string) => ({
-        projectAgentSandbox: { projectId: "project-1", apiUrl, authToken: "run-token" },
-      })],
-      ["no run credential", (apiUrl: string) => ({
+      ["the run is not bound", { projectAgentSandbox: sandbox }],
+      ["the binding is not exactly true", {
+        runIdBindsToolAuthorization: "true" as unknown as boolean,
+        projectAgentSandbox: sandbox,
+      }],
+      ["there is no sandbox", { runIdBindsToolAuthorization: true }],
+      ["the sandbox has no project", {
         runIdBindsToolAuthorization: true,
-        projectAgentSandbox: { projectId: "project-1", apiUrl },
-      })],
-      ["no API URL", (_apiUrl: string) => ({
+        projectAgentSandbox: { ...sandbox, projectId: null },
+      }],
+      ["the sandbox has no API URL", {
         runIdBindsToolAuthorization: true,
-        projectAgentSandbox: { projectId: "project-1", authToken: "run-token" },
-      })],
-    ] as const
+        projectAgentSandbox: { ...sandbox, apiUrl: "" },
+      }],
+      ["the sandbox has no run credential", {
+        runIdBindsToolAuthorization: true,
+        projectAgentSandbox: { ...sandbox, authToken: undefined },
+      }],
+    ] as const satisfies ReadonlyArray<readonly [string, GateDeps]>
   ) {
-    it(`still fails closed when ${name}`, async () => {
-      const { body, asks, transfers } = await runGatedTool(deps);
-      assertStringIncludes(body, NO_CHANNEL);
-      assertEquals(asks.length, 0);
-      assertEquals(transfers, 0);
+    it(`gives no approval gate when ${name}`, async () => {
+      const context = await runtimeContext(deps);
+      assertEquals(Object.hasOwn(context, "requestToolApproval"), false);
     });
   }
 });
