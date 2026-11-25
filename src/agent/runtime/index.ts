@@ -6042,7 +6042,7 @@ export class AgentRuntime {
     const maxSteps = remainingRunSteps(runMaxSteps, runStepsBefore);
     const owesResumeToolCall = !resumeToolCallExecuted && this.#resumeToolCall !== undefined;
     const runStepBudgetUsed = !completedWithinStepBudget && startStep >= maxSteps &&
-      (runStepsBefore > 0 || owesResumeToolCall);
+      (runStepsBefore > 0 || checkpoint !== undefined);
     if (runStepBudgetUsed) finalFinishReason = RUN_STEP_BUDGET_FINISH_REASON;
     const stepLimit = runStepBudgetUsed && owesResumeToolCall ? startStep + 1 : maxSteps;
     for (

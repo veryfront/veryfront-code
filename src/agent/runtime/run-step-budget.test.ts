@@ -222,4 +222,14 @@ describe("run-wide step budget", () => {
       assertEquals(model.callCount, 2);
     });
   }
+
+  it("finishes a first execution recovered at its limit with max_steps when nothing is owed", async () => {
+    const model = alwaysCallsTool();
+    const runtime = createRuntime({ maxSteps: 2, runStepsFinished: 2, recoveryNextStep: 2, model });
+
+    const wire = await new Response(await runtime.stream(userMessage)).text();
+
+    assertEquals(model.callCount, 0, wire);
+    assert(wire.includes('"finishReason":"max_steps"'), wire);
+  });
 });
