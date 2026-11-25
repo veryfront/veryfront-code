@@ -1,3 +1,4 @@
+import { RUN_STEP_BUDGET_FINISH_REASON } from "../runtime/run-step-budget.ts";
 import {
   primordialArrayFilter,
   primordialArrayFlatMap,
@@ -2058,7 +2059,9 @@ function finalizeAgUiEventsUnstamped(
     return [];
   }
 
-  if (!state.sawVisibleOutput) {
+  // A resumed execution stopped by the run's step budget has nothing left to
+  // say: the run's output came from its earlier executions.
+  if (!state.sawVisibleOutput && state.metadata.finishReason !== RUN_STEP_BUDGET_FINISH_REASON) {
     state.sawTerminalError = true;
     return [{
       event: "RunError",

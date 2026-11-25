@@ -1,4 +1,5 @@
 import { getServerResolvedProjectToolNames } from "#veryfront/agent/runtime/server-resolved-project-tools.ts";
+import { readRunStepCounts } from "#veryfront/agent/runtime/run-step-budget.ts";
 import {
   prepareSourceObservationFrames,
   SOURCE_SNAPSHOT_SSE_EVENT_NAME,
@@ -1772,6 +1773,7 @@ export async function createRuntimeAgentStreamResponse(
             producerCompletion = completion;
           },
           ...(input.resumeToolCall ? { resumeToolCall: input.resumeToolCall } : {}),
+          ...readRunStepCounts(runtimeAgent.config, input.forwardedProps),
           ...(inferenceAuthToken
             ? {
               // This server surface has no AgentServiceConfig object to thread through, so the
