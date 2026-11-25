@@ -3425,6 +3425,12 @@ export type AgentRuntimeInternalOptions = {
   onStreamCompletion?: (completion: Promise<void>) => void;
   /** Exact pending tool invocation trusted by the hosted control plane. */
   resumeToolCall?: { id: string; name: string; input: Record<string, unknown> };
+  /**
+   * Model steps the hosted run already used in earlier executions. `maxSteps`
+   * limits the whole run, so this execution gets only what is left; with none
+   * left it runs an owed `resumeToolCall` and finishes with `max_steps`.
+   */
+  runStepsUsed?: number;
   /** Host-owned authority required before context can request private runtime observations. */
   runtimeObservationCapability?: RuntimeObservationCapability;
 };
@@ -3532,6 +3538,7 @@ export class AgentRuntime {
   #persistRecoveryBoundary: AgentRuntimeInternalOptions["persistRecoveryBoundary"];
   #recoveryContinuation: AgentPauseCheckpoint | undefined;
   #resumeToolCall: AgentRuntimeInternalOptions["resumeToolCall"];
+  #runStepsUsed: number;
   #runtimeObservationCapability: AgentRuntimeInternalOptions["runtimeObservationCapability"];
   private id: string;
   private config: AgentConfig;
@@ -3563,6 +3570,7 @@ export class AgentRuntime {
       ? undefined
       : parseAgentPauseCheckpoint(internalOptions.recoveryContinuation);
     this.#resumeToolCall = internalOptions.resumeToolCall;
+    this.#runStepsUsed = normalizeRunStepsUsed(internalOptions.runStepsUsed);
     this.#runtimeObservationCapability = internalOptions.runtimeObservationCapability;
     this.#modelResolverState = internalOptions.resolveModelRuntime
       ? { status: "available", resolver: internalOptions.resolveModelRuntime }
@@ -4737,7 +4745,8 @@ export class AgentRuntime {
   ): Promise<AgentResponse> {
     return withSpan("agent.execution_loop", async (loopSpan) => {
       const { maxAgentSteps } = getPlatformCapabilities();
-      const maxSteps = this.computeMaxSteps(maxAgentSteps);
+      const runMaxSteps = this.computeMaxSteps(maxAgentSteps);
+      const maxSteps = remainingRunSteps(runMaxSteps, this.#runStepsUsed);
       const effectiveModel = resolveRuntimeModel(modelString || this.config.model);
       const languageModel = resolvedModel ?? resolveModel(effectiveModel);
 
@@ -5770,7 +5779,7 @@ export class AgentRuntime {
         status: this.status,
         usage: totalUsage,
         metadata: withAgentRunRuntimeContextMetadata(runRuntimeContext, {
-          warning: `Max steps (${maxSteps}) reached`,
+          warning: `Max steps (${runMaxSteps}) reached`,
           ...(!parsedOutput.parsed && parsedOutput.outputSchemaError !== undefined
             ? { outputSchemaError: parsedOutput.outputSchemaError }
             : {}),
@@ -5816,7 +5825,10 @@ export class AgentRuntime {
     outputSchema?: ResolvedAgentOutputSchema,
   ): Promise<AgentResponse> {
     const { maxAgentSteps } = getPlatformCapabilities();
-    const maxSteps = this.computeMaxSteps(maxAgentSteps);
+    const runMaxSteps = this.computeMaxSteps(maxAgentSteps);
+    const maxSteps = remainingRunSteps(runMaxSteps, this.#runStepsUsed);
+    // The run used its budget in earlier executions: only an owed call may still run.
+    const runStepBudgetUsed = this.#runStepsUsed > 0 && maxSteps === 0;
     const effectiveModel = resolveRuntimeModel(modelString || this.config.model);
     const languageModel = resolvedModel ?? resolveModel(effectiveModel);
 
@@ -6012,9 +6024,13 @@ export class AgentRuntime {
       }
     }
     await pauseAtBoundary(checkpoint?.nextStep ?? 0);
+    if (runStepBudgetUsed) finalFinishReason = RUN_STEP_BUDGET_FINISH_REASON;
+    const owedResumeStep = runStepBudgetUsed && !resumeToolCallExecuted && this.#resumeToolCall
+      ? 1
+      : 0;
     for (
       let step = checkpoint?.nextStep ?? 0;
-      !completedWithinStepBudget && step < maxSteps;
+      !completedWithinStepBudget && step < maxSteps + owedResumeStep;
       step++
     ) {
       throwIfAborted(abortSignal);
@@ -6402,6 +6418,24 @@ export class AgentRuntime {
           );
         }
         if (this.#persistRecoveryBoundary) await pauseAtBoundary(step);
+      }
+
+      if (runStepBudgetUsed) {
+        // The owed call ran; the run has no step left for another model call.
+        throwIfAborted(abortSignal);
+        sendSSE(controller, encoder, {
+          type: "step-end",
+          ...(runtimeObservationStepId
+            ? {
+              privateRuntimeObservation: {
+                version: 1,
+                kind: "step_ended",
+                stepId: runtimeObservationStepId,
+              },
+            }
+            : {}),
+        });
+        break;
       }
 
       // Include the parked result delivered to this request, but exclude new same-step results.
@@ -7747,7 +7781,7 @@ export class AgentRuntime {
         status: "completed",
         usage: totalUsage,
         metadata: withAgentRunRuntimeContextMetadata(runRuntimeContext, {
-          warning: `Max steps (${maxSteps}) reached`,
+          warning: `Max steps (${runMaxSteps}) reached`,
           ...(finalFinishReason ? { finishReason: finalFinishReason } : {}),
           ...(!parsedOutput.parsed && parsedOutput.outputSchemaError !== undefined
             ? { outputSchemaError: parsedOutput.outputSchemaError }
@@ -7982,6 +8016,18 @@ export class AgentRuntime {
   async clearMemory(): Promise<void> {
     await this.memory.clear();
   }
+}
+
+/** Finish reason of an execution stopped because the run used its step budget. */
+const RUN_STEP_BUDGET_FINISH_REASON = "max_steps";
+
+function normalizeRunStepsUsed(value: unknown): number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value > 0 ? value : 0;
+}
+
+/** The steps an execution may still take of a run-wide `maxSteps` budget. */
+function remainingRunSteps(runMaxSteps: number, runStepsUsed: number): number {
+  return runMaxSteps > runStepsUsed ? runMaxSteps - runStepsUsed : 0;
 }
 
 const agentRuntimePrivateMethodNames = [

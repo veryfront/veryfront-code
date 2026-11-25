@@ -924,6 +924,22 @@ function getAllowedRemoteToolNames(
   return allowedTools.every((toolName) => typeof toolName === "string") ? allowedTools : [];
 }
 
+/**
+ * The model steps the control plane reports the run used in earlier
+ * executions. An agent's own `maxSteps` limits the whole run, so the runtime
+ * subtracts them. An agent without one keeps its per-execution default.
+ */
+function runStepsUsedOption(
+  config: { maxSteps?: number },
+  forwardedProps: RuntimeRunAgentInput["forwardedProps"],
+): { runStepsUsed?: number } {
+  const value = forwardedProps?.runStepsUsed;
+  return config.maxSteps !== undefined && typeof value === "number" &&
+      Number.isSafeInteger(value) && value > 0
+    ? { runStepsUsed: value }
+    : {};
+}
+
 function getForwardedMaxOutputTokens(
   forwardedProps: RuntimeRunAgentInput["forwardedProps"],
 ): number | undefined {
@@ -1772,6 +1788,7 @@ export async function createRuntimeAgentStreamResponse(
             producerCompletion = completion;
           },
           ...(input.resumeToolCall ? { resumeToolCall: input.resumeToolCall } : {}),
+          ...runStepsUsedOption(runtimeAgent.config, input.forwardedProps),
           ...(inferenceAuthToken
             ? {
               // This server surface has no AgentServiceConfig object to thread through, so the

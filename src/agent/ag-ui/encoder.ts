@@ -2040,6 +2040,9 @@ function mapRuntimeStreamEventToAgUiEventsUnstamped(
   }
 }
 
+/** Finish reason of an execution the runtime stopped at the run's step budget. */
+const RUN_STEP_BUDGET_FINISH_REASON = "max_steps";
+
 /** Finalize AG-UI events helper. */
 export function finalizeAgUiEvents(
   state: AgUiEncoderState,
@@ -2058,7 +2061,9 @@ function finalizeAgUiEventsUnstamped(
     return [];
   }
 
-  if (!state.sawVisibleOutput) {
+  // A resumed execution stopped by the run's step budget has nothing left to
+  // say: the run's output came from its earlier executions.
+  if (!state.sawVisibleOutput && state.metadata.finishReason !== RUN_STEP_BUDGET_FINISH_REASON) {
     state.sawTerminalError = true;
     return [{
       event: "RunError",
