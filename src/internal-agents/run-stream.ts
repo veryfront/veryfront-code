@@ -283,6 +283,8 @@ export interface RuntimeAgentStreamExecutionDeps {
   };
   /** Set by the host only after it verified this run's terminal capability for the sandbox project. */
   runIdBindsToolAuthorization?: boolean;
+  /** Canonical run UUID the host verified with that capability; approval asks are filed on it. */
+  verifiedRunId?: string;
   createBashTool?: AgentServiceSandboxToolsOptions["createBashTool"];
   createAgentServiceSandboxTools?: (
     input: AgentServiceSandboxToolsOptions,
@@ -1615,13 +1617,14 @@ export async function createRuntimeAgentStreamResponse(
         : {}),
       // A tool declared with `approval` asks a checker through this run's input requests. Only a
       // run the host bound to the project can hold them; any other run keeps failing closed.
-      ...(deps.runIdBindsToolAuthorization === true && deps.projectAgentSandbox?.projectId &&
-          deps.projectAgentSandbox.apiUrl && deps.projectAgentSandbox.authToken
+      ...(deps.runIdBindsToolAuthorization === true && deps.verifiedRunId &&
+          deps.projectAgentSandbox?.projectId && deps.projectAgentSandbox.apiUrl &&
+          deps.projectAgentSandbox.authToken
         ? {
           requestToolApproval: createInputRequestApprovalGate({
             apiUrl: deps.projectAgentSandbox.apiUrl,
             authToken: deps.projectAgentSandbox.authToken,
-            runId: input.runId,
+            runId: deps.verifiedRunId,
           }),
         }
         : {}),

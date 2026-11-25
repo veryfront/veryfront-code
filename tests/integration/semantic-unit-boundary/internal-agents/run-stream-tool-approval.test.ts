@@ -25,7 +25,7 @@ interface ApprovalAsk {
 async function runGatedTool(
   deps: (apiUrl: string) => Pick<
     RuntimeAgentStreamExecutionDeps,
-    "projectAgentSandbox" | "runIdBindsToolAuthorization"
+    "projectAgentSandbox" | "runIdBindsToolAuthorization" | "verifiedRunId"
   >,
 ) {
   const asks: ApprovalAsk[] = [];
@@ -90,14 +90,15 @@ async function runGatedTool(
 }
 
 describe("internal agent tool approval", () => {
-  it("asks a checker through the run's input requests and runs the call once approved", async () => {
+  it("asks a checker through the verified run's input requests and runs the call once approved", async () => {
     const { body, asks, transfers } = await runGatedTool((apiUrl) => ({
       runIdBindsToolAuthorization: true,
+      verifiedRunId: "canonical-run-1",
       projectAgentSandbox: { projectId: "project-1", apiUrl, authToken: "run-token" },
     }));
     assertEquals(body.includes(NO_CHANNEL), false, `gated tool failed with "${NO_CHANNEL}"`);
     assertEquals(asks.length, 1);
-    assertEquals(asks[0]!.path, "/runs/run-approval-1/input-requests");
+    assertEquals(asks[0]!.path, "/runs/canonical-run-1/input-requests");
     assertEquals(asks[0]!.authorization, "Bearer run-token");
     assertEquals(asks[0]!.body.tool_call_id, "call-1");
     assertEquals(asks[0]!.body.tool_call, {
@@ -110,14 +111,17 @@ describe("internal agent tool approval", () => {
   for (
     const [name, deps] of [
       ["the run is not bound to the project", (apiUrl: string) => ({
+        verifiedRunId: "canonical-run-1",
         projectAgentSandbox: { projectId: "project-1", apiUrl, authToken: "run-token" },
       })],
       ["no run credential", (apiUrl: string) => ({
         runIdBindsToolAuthorization: true,
+        verifiedRunId: "canonical-run-1",
         projectAgentSandbox: { projectId: "project-1", apiUrl },
       })],
       ["no API URL", (_apiUrl: string) => ({
         runIdBindsToolAuthorization: true,
+        verifiedRunId: "canonical-run-1",
         projectAgentSandbox: { projectId: "project-1", authToken: "run-token" },
       })],
     ] as const

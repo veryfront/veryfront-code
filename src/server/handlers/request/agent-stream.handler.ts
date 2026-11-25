@@ -1976,14 +1976,16 @@ export class AgentStreamHandler extends BaseHandler {
         registerAgentStreamRuntimeCredentials(runtimeInput, payload, verifiedClaims, pauseToken);
         const sandboxProjectId = executionProject?.projectId ??
           projectScopedContext.projectId ?? null;
+        const runIdBindsToolAuthorization = bindsAuthoredToolRun({
+          currentRunId,
+          terminalProjectId,
+          sandboxProjectId,
+        });
         const runAgentStream = () =>
           createRuntimeAgentStreamResponse(runtimeInput, runtimeAgent, {
             ...this.deps,
-            runIdBindsToolAuthorization: bindsAuthoredToolRun({
-              currentRunId,
-              terminalProjectId,
-              sandboxProjectId,
-            }),
+            runIdBindsToolAuthorization,
+            verifiedRunId: runIdBindsToolAuthorization ? currentRunId : undefined,
             localTools,
             providerReplayCheckpoints,
             persistProviderReplayCheckpoint,

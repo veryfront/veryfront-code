@@ -21,13 +21,14 @@ import {
 } from "#veryfront/server/handlers/request/agent-stream.handler.test-helpers.ts";
 
 const runId = "run_1";
+const canonicalRunId = "22222222-2222-4222-8222-222222222222";
 const projectId = "10000000-1000-4000-8000-100000000005";
 const terminalToken = `header.${
   btoa(JSON.stringify({
     tokenUse: "run_event_writer",
     writerPurpose: "current_run_terminal",
     runId,
-    canonicalRunId: "22222222-2222-4222-8222-222222222222",
+    canonicalRunId,
     dispatchNonce: "dispatch-1",
   })).replaceAll("+", "-").replaceAll("/", "_").replaceAll("=", "")
 }.signature`;
@@ -75,7 +76,7 @@ async function boundRunGate(): Promise<ToolApprovalGate> {
 }
 
 describe("agent stream tool approval", () => {
-  it("asks on the bound run's input requests with the runtime token", async () => {
+  it("asks on the verified canonical run's input requests with the runtime token", async () => {
     const asks: Array<{ method: string; path: string; authorization: string | null }> = [];
     const server = Deno.serve({ hostname: "127.0.0.1", port: 0, onListen: () => {} }, (req) => {
       asks.push({
@@ -103,7 +104,7 @@ describe("agent stream tool approval", () => {
       assertEquals(decision.approved, true);
       assertEquals(asks, [{
         method: "POST",
-        path: `/runs/${runId}/input-requests`,
+        path: `/runs/${canonicalRunId}/input-requests`,
         authorization: "Bearer runtime-token",
       }]);
     } finally {

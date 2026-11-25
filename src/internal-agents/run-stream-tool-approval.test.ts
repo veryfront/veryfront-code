@@ -10,10 +10,11 @@ import {
 
 type GateDeps = Pick<
   RuntimeAgentStreamExecutionDeps,
-  "projectAgentSandbox" | "runIdBindsToolAuthorization"
+  "projectAgentSandbox" | "runIdBindsToolAuthorization" | "verifiedRunId"
 >;
 
 const sandbox = { projectId: "project-1", apiUrl: "https://api.invalid", authToken: "run-token" };
+const bound = { runIdBindsToolAuthorization: true, verifiedRunId: "canonical-run-1" } as const;
 
 /** The context the run hands its runtime; the HTTP path of the gate is an integration test. */
 async function runtimeContext(deps: GateDeps): Promise<Record<string, unknown>> {
@@ -51,31 +52,33 @@ async function runtimeContext(deps: GateDeps): Promise<Record<string, unknown>> 
 
 describe("internal agent tool approval gate", () => {
   it("gives a run bound to its project an approval gate", async () => {
-    const context = await runtimeContext({
-      runIdBindsToolAuthorization: true,
-      projectAgentSandbox: sandbox,
-    });
+    const context = await runtimeContext({ ...bound, projectAgentSandbox: sandbox });
     assertEquals(typeof context.requestToolApproval, "function");
   });
 
   for (
     const [name, deps] of [
-      ["the run is not bound", { projectAgentSandbox: sandbox }],
+      ["the run is not bound", { verifiedRunId: "canonical-run-1", projectAgentSandbox: sandbox }],
       ["the binding is not exactly true", {
+        ...bound,
         runIdBindsToolAuthorization: "true" as unknown as boolean,
         projectAgentSandbox: sandbox,
       }],
-      ["there is no sandbox", { runIdBindsToolAuthorization: true }],
-      ["the sandbox has no project", {
+      ["the host verified no run ID", {
         runIdBindsToolAuthorization: true,
+        projectAgentSandbox: sandbox,
+      }],
+      ["there is no sandbox", bound],
+      ["the sandbox has no project", {
+        ...bound,
         projectAgentSandbox: { ...sandbox, projectId: null },
       }],
       ["the sandbox has no API URL", {
-        runIdBindsToolAuthorization: true,
+        ...bound,
         projectAgentSandbox: { ...sandbox, apiUrl: "" },
       }],
       ["the sandbox has no run credential", {
-        runIdBindsToolAuthorization: true,
+        ...bound,
         projectAgentSandbox: { ...sandbox, authToken: undefined },
       }],
     ] as const satisfies ReadonlyArray<readonly [string, GateDeps]>
