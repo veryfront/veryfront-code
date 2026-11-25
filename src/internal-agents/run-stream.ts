@@ -1358,8 +1358,23 @@ export async function createRuntimeAgentStreamResponse(
     servingIdentity: deps.servingIdentity,
   });
   let recoveryLifetime: Awaited<ReturnType<typeof startManagedRecoveryLifetime>> | undefined;
+  // A tool declared with `approval` asks a checker through this run's input requests. Only a
+  // run the host bound to the project can hold them; any other run keeps failing closed.
+  const requestToolApproval = deps.runIdBindsToolAuthorization === true && deps.verifiedRunId &&
+      deps.projectAgentSandbox?.projectId && deps.projectAgentSandbox.apiUrl &&
+      deps.projectAgentSandbox.authToken
+    ? createInputRequestApprovalGate({
+      apiUrl: deps.projectAgentSandbox.apiUrl,
+      authToken: deps.projectAgentSandbox.authToken,
+      runId: deps.verifiedRunId,
+    })
+    : undefined;
+  // The gate keys each decision by the call's occurrence, so a provider that reuses a call id in a
+  // later turn gets a new decision instead of the earlier one.
   const withManagedOccurrences = <T>(operation: () => T): T =>
-    managedRecovery || projectWriter ? runWithToolCallOccurrences(operation) : operation();
+    managedRecovery || projectWriter || requestToolApproval
+      ? runWithToolCallOccurrences(operation)
+      : operation();
   try {
     if (managedRecovery) {
       if (!managedRecovery.writer) {
@@ -1615,19 +1630,7 @@ export async function createRuntimeAgentStreamResponse(
       ...(deps.projectAgentSandbox?.authToken
         ? { authToken: deps.projectAgentSandbox.authToken }
         : {}),
-      // A tool declared with `approval` asks a checker through this run's input requests. Only a
-      // run the host bound to the project can hold them; any other run keeps failing closed.
-      ...(deps.runIdBindsToolAuthorization === true && deps.verifiedRunId &&
-          deps.projectAgentSandbox?.projectId && deps.projectAgentSandbox.apiUrl &&
-          deps.projectAgentSandbox.authToken
-        ? {
-          requestToolApproval: createInputRequestApprovalGate({
-            apiUrl: deps.projectAgentSandbox.apiUrl,
-            authToken: deps.projectAgentSandbox.authToken,
-            runId: deps.verifiedRunId,
-          }),
-        }
-        : {}),
+      ...(requestToolApproval ? { requestToolApproval } : {}),
       ...(deps.projectAgentSandbox === undefined
         ? {}
         : { branch: deps.projectAgentSandbox.branchId }),

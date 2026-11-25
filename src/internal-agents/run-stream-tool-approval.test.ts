@@ -2,6 +2,7 @@ import "#veryfront/schemas/_test-setup.ts";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { agent as createAgent } from "#veryfront/agent";
+import { isToolCallOccurrenceScopeEnabled } from "#veryfront/runtime/tool-call-occurrence.ts";
 import { AgentRunSessionManager } from "./session-manager.ts";
 import {
   createRuntimeAgentStreamResponse,
@@ -38,7 +39,7 @@ async function runtimeContext(deps: GateDeps): Promise<Record<string, unknown>> 
       sessionManager: new AgentRunSessionManager(),
       createRuntime: () => ({
         stream: (_messages, context) => {
-          contexts.push(context);
+          contexts.push({ ...context, occurrencesTracked: isToolCallOccurrenceScopeEnabled() });
           return Promise.resolve(new ReadableStream<Uint8Array>({ start: (c) => c.close() }));
         },
       }),
@@ -54,6 +55,8 @@ describe("internal agent tool approval gate", () => {
   it("gives a run bound to its project an approval gate", async () => {
     const context = await runtimeContext({ ...bound, projectAgentSandbox: sandbox });
     assertEquals(typeof context.requestToolApproval, "function");
+    // The gate tells a reused provider call id apart by its occurrence.
+    assertEquals(context.occurrencesTracked, true);
   });
 
   for (
@@ -86,6 +89,7 @@ describe("internal agent tool approval gate", () => {
     it(`gives no approval gate when ${name}`, async () => {
       const context = await runtimeContext(deps);
       assertEquals(Object.hasOwn(context, "requestToolApproval"), false);
+      assertEquals(context.occurrencesTracked, false);
     });
   }
 });

@@ -2,7 +2,7 @@
 // suite rather than as a unit.
 import "#veryfront/schemas/_test-setup.ts";
 import { defineSchema } from "#veryfront/schemas";
-import { assertEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertNotEquals, assertStringIncludes } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { agent as createAgent } from "#veryfront/agent";
 import { scriptedModel } from "#veryfront/agent/runtime/model-runtime.test-helpers.ts";
@@ -18,6 +18,7 @@ const NO_CHANNEL = "this runtime has no approval channel";
 interface ApprovalAsk {
   path: string;
   authorization: string | null;
+  idempotencyKey: string | null;
   body: { tool_call_id: string; tool_call: { name: string; arguments: unknown } };
 }
 
@@ -27,12 +28,14 @@ async function runGatedTool(
     RuntimeAgentStreamExecutionDeps,
     "projectAgentSandbox" | "runIdBindsToolAuthorization" | "verifiedRunId"
   >,
+  turns = 1,
 ) {
   const asks: ApprovalAsk[] = [];
   const server = Deno.serve({ hostname: "127.0.0.1", port: 0, onListen: () => {} }, async (req) => {
     asks.push({
       path: new URL(req.url).pathname,
       authorization: req.headers.get("authorization"),
+      idempotencyKey: req.headers.get("idempotency-key"),
       body: await req.json(),
     });
     return Response.json({
@@ -54,7 +57,10 @@ async function runGatedTool(
   });
   const modelId = `anthropic/tool-approval-${crypto.randomUUID()}`;
   const model = scriptedModel(
-    [{ toolCalls: [{ id: "call-1", name: "transfer-payment", input: { amount: 2_000_000 } }] }],
+    // Each turn reuses the provider call id, as some providers do.
+    Array.from({ length: turns }, () => ({
+      toolCalls: [{ id: "call-1", name: "transfer-payment", input: { amount: 2_000_000 } }],
+    })),
     { modelId, provider: "anthropic", only: "stream" },
   );
   const agent = createAgent({
@@ -63,7 +69,7 @@ async function runGatedTool(
     system: "Call transfer-payment once.",
     skills: false,
     tools: { "transfer-payment": true },
-    maxSteps: 1,
+    maxSteps: turns,
     resolveModelTransport: () => ({ model }),
   });
   try {
@@ -106,6 +112,17 @@ describe("internal agent tool approval", () => {
       arguments: { amount: 2_000_000 },
     });
     assertEquals(transfers, 1);
+  });
+
+  it("asks again when a later turn reuses the provider's tool call id", async () => {
+    const { asks, transfers } = await runGatedTool((apiUrl) => ({
+      runIdBindsToolAuthorization: true,
+      verifiedRunId: "canonical-run-1",
+      projectAgentSandbox: { projectId: "project-1", apiUrl, authToken: "run-token" },
+    }), 2);
+    assertEquals(asks.map((ask) => ask.body.tool_call_id), ["call-1", "call-1"]);
+    assertNotEquals(asks[0]!.idempotencyKey, asks[1]!.idempotencyKey);
+    assertEquals(transfers, 2);
   });
 
   for (
