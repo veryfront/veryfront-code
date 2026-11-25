@@ -20,6 +20,7 @@ describe("run-wide step budget", () => {
     recoveryNextStep?: number;
     model: ReturnType<typeof scriptedModel>;
     onEffect?: () => void;
+    runStepsUsedRaw?: unknown;
   }) {
     return new AgentRuntime("run-step-budget", {
       model: input.model.modelId,
@@ -41,6 +42,9 @@ describe("run-wide step budget", () => {
       resolveModelTransport: () => ({ model: input.model }),
     }, {
       ...(input.runStepsUsed === undefined ? {} : { runStepsUsed: input.runStepsUsed }),
+      ...(input.runStepsUsedRaw === undefined
+        ? {}
+        : { runStepsUsed: input.runStepsUsedRaw as number }),
       ...(input.runStepsFinished === undefined ? {} : { runStepsFinished: input.runStepsFinished }),
       ...(input.recoveryNextStep === undefined ? {} : {
         recoveryContinuation: {
@@ -68,11 +72,11 @@ describe("run-wide step budget", () => {
     parts: [{ type: "text" as const, text: "Record the effect." }],
   }];
 
-  function alwaysCallsTool() {
+  function alwaysCallsTool(only: "stream" | "generate" = "stream") {
     let call = 0;
     return scriptedModel([() => ({
       toolCalls: [{ id: `call-${++call}`, name: "record_effect", input: {} }],
-    })], { only: "stream", repeatLastTurn: true });
+    })], { only, repeatLastTurn: true });
   }
 
   it("gives an execution only the steps the run has left", async () => {
@@ -188,4 +192,34 @@ describe("run-wide step budget", () => {
     assertEquals(model.callCount, 0, wire);
     assert(wire.includes('"finishReason":"max_steps"'), wire);
   });
+
+  it("limits generate to the steps the run has left", async () => {
+    const model = alwaysCallsTool("generate");
+    const runtime = createRuntime({ maxSteps: 3, runStepsUsed: 2, model });
+
+    const response = await runtime.generate("Record the effect.");
+
+    assertEquals(model.callCount, 1);
+    assertEquals(response.metadata?.warning, "Max steps (3) reached");
+  });
+
+  it("reports no earlier steps when a recovery's continuation already took every finished one", async () => {
+    const model = alwaysCallsTool();
+    const runtime = createRuntime({ maxSteps: 3, runStepsFinished: 1, recoveryNextStep: 1, model });
+
+    await new Response(await runtime.stream(userMessage)).text();
+
+    assertEquals(model.callCount, 2);
+  });
+
+  for (const invalid of [-1, 1.5, "2"]) {
+    it(`ignores an invalid step count (${JSON.stringify(invalid)})`, async () => {
+      const model = alwaysCallsTool();
+      const runtime = createRuntime({ maxSteps: 2, runStepsUsedRaw: invalid, model });
+
+      await new Response(await runtime.stream(userMessage)).text();
+
+      assertEquals(model.callCount, 2);
+    });
+  }
 });
