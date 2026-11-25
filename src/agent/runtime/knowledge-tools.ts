@@ -5,6 +5,7 @@ import {
   normalizedProjectKnowledgeScopeGrantsAnyPath,
   normalizeProjectKnowledgeScopeSelector,
 } from "#veryfront/knowledge/index.ts";
+import { markFrameworkKnowledgeOptions } from "#veryfront/knowledge/hosted-source-scope.ts";
 import type { AgentConfig } from "../types.ts";
 import type { RemoteToolSource, Tool } from "#veryfront/tool";
 import { toolToProviderDefinition } from "#veryfront/tool/registry.ts";
@@ -56,7 +57,9 @@ export function isKnowledgeEnabled(selector: AgentConfig["knowledge"]): boolean 
 export function createAgentKnowledgeTool(config: AgentConfig) {
   if (!isKnowledgeEnabled(config.knowledge)) return undefined;
   return markAgentKnowledgeTool(
-    createSearchKnowledgeTool({ id: "veryfront__search_knowledge", scope: config.knowledge }),
+    createSearchKnowledgeTool(
+      markFrameworkKnowledgeOptions({ id: "veryfront__search_knowledge", scope: config.knowledge }),
+    ),
   );
 }
 

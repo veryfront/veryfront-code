@@ -37,6 +37,7 @@ import { extract } from "#veryfront/compat/std/front-matter-yaml.ts";
 import { isAbsolute, join, relative } from "#veryfront/platform/compat/path/index.ts";
 import { cwd, getHostEnv } from "#veryfront/platform/compat/process.ts";
 import { getRuntimeRequestContext } from "#veryfront/platform/runtime-request-context.ts";
+import { getHostedKnowledgeSource, isFrameworkKnowledgeOptions } from "./hosted-source-scope.ts";
 import { VeryfrontApiClient } from "#veryfront/platform/adapters/veryfront-api-client/client.ts";
 import { tool } from "#veryfront/tool/factory.ts";
 import { compileGlobMatcher } from "#veryfront/utils/glob-matcher.ts";
@@ -1003,10 +1004,11 @@ function scoreEntry(
 
 async function getProjectKnowledgeManifest(
   config: ProjectKnowledgeConfig,
-  context?: ToolExecutionContext,
+  context: ToolExecutionContext | undefined,
+  frameworkOwned: boolean,
 ): Promise<ProjectKnowledgeManifestEntry[]> {
   if (!config.projectDir) {
-    const hostedManifest = await getHostedProjectKnowledgeManifest(config, context);
+    const hostedManifest = await getHostedProjectKnowledgeManifest(config, context, frameworkOwned);
     if (hostedManifest) return hostedManifest;
   }
 
@@ -1045,7 +1047,30 @@ async function getProjectKnowledgeManifest(
   return manifest;
 }
 
-function getHostedKnowledgeContext(context?: ToolExecutionContext): HostedKnowledgeContext | null {
+function getHostedKnowledgeContext(
+  context: ToolExecutionContext | undefined,
+  frameworkOwned: boolean,
+): HostedKnowledgeContext | null {
+  // A shared agent runs in another project; its own knowledge lives in the
+  // pinned source release, read with that run's source credential.
+  const source = frameworkOwned ? getHostedKnowledgeSource() : undefined;
+  if (source) {
+    const sourceApiUrl = typeof context?.apiUrl === "string" && context.apiUrl
+      ? context.apiUrl
+      : undefined;
+    return {
+      projectRef: source.projectSlug,
+      projectSlug: source.projectSlug,
+      projectId: source.projectId,
+      authToken: source.authToken,
+      ...(sourceApiUrl === undefined ? {} : { apiUrl: sourceApiUrl }),
+      productionMode: true,
+      releaseId: source.releaseId,
+      branch: null,
+      environmentName: null,
+    };
+  }
+
   const requestContext = getRuntimeRequestContext();
   const authToken = typeof context?.authToken === "string" && context.authToken
     ? context.authToken
@@ -1113,9 +1138,10 @@ function createHostedKnowledgeClient(hostedContext: HostedKnowledgeContext): Ver
 
 async function getHostedProjectKnowledgeManifest(
   config: ProjectKnowledgeConfig,
-  context?: ToolExecutionContext,
+  context: ToolExecutionContext | undefined,
+  frameworkOwned: boolean,
 ): Promise<ProjectKnowledgeManifestEntry[] | null> {
-  const hostedContext = getHostedKnowledgeContext(context);
+  const hostedContext = getHostedKnowledgeContext(context, frameworkOwned);
   if (!hostedContext) return null;
 
   const contentDir = config.contentDir ?? DEFAULT_CONTENT_DIR;
@@ -1314,11 +1340,20 @@ export async function searchProjectKnowledge(
   config: ProjectKnowledgeConfig = {},
   context?: ToolExecutionContext,
 ): Promise<ProjectKnowledgeLookupOutput> {
+  return await searchKnowledgeManifest(input, config, context, false);
+}
+
+async function searchKnowledgeManifest(
+  input: ProjectKnowledgeLookupInput,
+  config: ProjectKnowledgeConfig,
+  context: ToolExecutionContext | undefined,
+  frameworkOwned: boolean,
+): Promise<ProjectKnowledgeLookupOutput> {
   if (!projectKnowledgeScopeSelectorGrantsAnyPath(config.scope)) {
     return lookupKnowledgeManifest([], input);
   }
 
-  const manifest = await getProjectKnowledgeManifest(config, context);
+  const manifest = await getProjectKnowledgeManifest(config, context, frameworkOwned);
   return lookupKnowledgeManifest(applyKnowledgeScope(manifest, config.scope), input);
 }
 
@@ -1326,6 +1361,7 @@ export async function searchProjectKnowledge(
 export function createSearchKnowledgeTool(
   options: CreateSearchKnowledgeToolOptions = {},
 ): SearchKnowledgeTool {
+  const frameworkOwned = isFrameworkKnowledgeOptions(options);
   const { id = "search_knowledge", description, ...config } = options;
 
   return tool<ProjectKnowledgeLookupInput, ProjectKnowledgeLookupOutput>({
@@ -1334,7 +1370,7 @@ export function createSearchKnowledgeTool(
       "Retrieve a compact, cursor-based slice of project knowledge, or a specific document by lookup target.",
     inputSchema: SEARCH_KNOWLEDGE_INPUT_SCHEMA,
     execute: (input, context) =>
-      searchProjectKnowledge(coerceSearchKnowledgeInput(input), config, context),
+      searchKnowledgeManifest(coerceSearchKnowledgeInput(input), config, context, frameworkOwned),
   });
 }
 
