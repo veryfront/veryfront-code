@@ -1609,6 +1609,156 @@ describe("ext-llm-google/google-stream", () => {
 });
 
 describe("Google gateway usage extraction", () => {
+  const gatewayFields = {
+    billing_mode: "direct",
+    cost_source: "gateway",
+    usage_capture_status: "complete",
+    billable_input_tokens: 8,
+    billable_output_tokens: 2,
+    cost_credits: "0.0250000000",
+  };
+  const nativeUsage = { promptTokenCount: 8, candidatesTokenCount: 2, totalTokenCount: 10 };
+  const normalizedNativeUsage = { inputTokens: 8, outputTokens: 2, totalTokens: 10 };
+
+  it("ignores billing fields inherited from Object.prototype", () => {
+    const original = Object.setPrototypeOf(
+      Object.getOwnPropertyDescriptors(Object.prototype),
+      null,
+    );
+    let actual: ReturnType<typeof extractGoogleUsage>;
+    try {
+      for (const [key, value] of Object.entries(gatewayFields)) {
+        Object.defineProperty(Object.prototype, key, { configurable: true, value });
+      }
+      actual = extractGoogleUsage({ usageMetadata: { ...nativeUsage, veryfront: {} } });
+    } finally {
+      for (const key of Object.keys(gatewayFields)) {
+        const descriptor = original[key];
+        if (descriptor) Object.defineProperty(Object.prototype, key, descriptor);
+        else Reflect.deleteProperty(Object.prototype, key);
+      }
+    }
+    assertEquals(actual, normalizedNativeUsage);
+  });
+
+  for (const inherited of [false, true]) {
+    it(`ignores ${inherited ? "inherited" : "own"} billing getters without invoking them`, () => {
+      let reads = 0;
+      const accessors = {};
+      for (const [key, value] of Object.entries(gatewayFields)) {
+        Object.defineProperty(accessors, key, {
+          enumerable: true,
+          get() {
+            reads++;
+            return value;
+          },
+        });
+      }
+      const veryfront = inherited ? Object.setPrototypeOf({}, accessors) : accessors;
+      const actual = extractGoogleUsage({ usageMetadata: { ...nativeUsage, veryfront } });
+      assertEquals(reads, 0);
+      assertEquals(actual, normalizedNativeUsage);
+    });
+  }
+
+  for (const field of ["usageMetadata", "veryfront"]) {
+    for (const inherited of [false, true]) {
+      it(`ignores ${inherited ? "inherited" : "own"} ${field} getters without invoking them`, () => {
+        let reads = 0;
+        const accessors = {};
+        Object.defineProperty(accessors, field, {
+          enumerable: true,
+          get() {
+            reads++;
+            return field === "usageMetadata"
+              ? { ...nativeUsage, veryfront: gatewayFields }
+              : gatewayFields;
+          },
+        });
+        const record = inherited ? Object.setPrototypeOf({}, accessors) : accessors;
+        const actual = extractGoogleUsage(
+          field === "usageMetadata" ? record : {
+            usageMetadata: Object.assign(record, nativeUsage),
+          },
+        );
+        assertEquals(reads, 0);
+        assertEquals(actual, field === "usageMetadata" ? undefined : normalizedNativeUsage);
+      });
+    }
+    it(`ignores inherited ${field} data`, () => {
+      const inheritedValue = field === "usageMetadata"
+        ? { ...nativeUsage, veryfront: gatewayFields }
+        : gatewayFields;
+      const record = Object.setPrototypeOf({}, { [field]: inheritedValue });
+      assertEquals(
+        extractGoogleUsage(
+          field === "usageMetadata" ? record : {
+            usageMetadata: Object.assign(record, nativeUsage),
+          },
+        ),
+        field === "usageMetadata" ? undefined : normalizedNativeUsage,
+      );
+    });
+  }
+
+  it("preserves valid own native and gateway billing data", () => {
+    assertEquals(
+      extractGoogleUsage({ usageMetadata: { ...nativeUsage, veryfront: gatewayFields } }),
+      {
+        ...normalizedNativeUsage,
+        billingMode: "direct",
+        costSource: "gateway",
+        usageCaptureStatus: "complete",
+        billableInputTokens: 8,
+        billableOutputTokens: 2,
+        costCredits: 0.025,
+      },
+    );
+  });
+
+  it("does not consult an inherited descriptor value when rejecting an accessor", () => {
+    const original = Object.getOwnPropertyDescriptor(Object.prototype, "value");
+    let reads = 0;
+    const veryfront = {};
+    Object.defineProperty(veryfront, "billing_mode", { get: () => "direct" });
+    let actual: ReturnType<typeof extractGoogleUsage>;
+    try {
+      Object.defineProperty(Object.prototype, "value", {
+        configurable: true,
+        get() {
+          reads++;
+          return "direct";
+        },
+      });
+      actual = extractGoogleUsage({ usageMetadata: { ...nativeUsage, veryfront } });
+    } finally {
+      if (original) Object.defineProperty(Object.prototype, "value", original);
+      else Reflect.deleteProperty(Object.prototype, "value");
+    }
+    assertEquals(reads, 0);
+    assertEquals(actual, normalizedNativeUsage);
+  });
+
+  it("preserves valid own data in null-prototype metadata", () => {
+    assertEquals(
+      extractGoogleUsage({
+        usageMetadata: Object.setPrototypeOf({
+          ...nativeUsage,
+          veryfront: Object.setPrototypeOf({ ...gatewayFields }, null),
+        }, null),
+      }),
+      {
+        ...normalizedNativeUsage,
+        billingMode: "direct",
+        costSource: "gateway",
+        usageCaptureStatus: "complete",
+        billableInputTokens: 8,
+        billableOutputTokens: 2,
+        costCredits: 0.025,
+      },
+    );
+  });
+
   it("ignores malformed gateway amounts, enums and token counters", () => {
     assertEquals(
       extractGoogleUsage({
