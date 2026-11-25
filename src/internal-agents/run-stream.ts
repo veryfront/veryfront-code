@@ -925,19 +925,25 @@ function getAllowedRemoteToolNames(
 }
 
 /**
- * The model steps the control plane reports the run used in earlier
- * executions. An agent's own `maxSteps` limits the whole run, so the runtime
- * subtracts them. An agent without one keeps its per-execution default.
+ * The model steps the control plane reports the run used before this
+ * execution (`runStepsUsed`), or, on a transport recovery, the steps it
+ * finished in all (`runStepsFinished`). An agent's own `maxSteps` limits the
+ * whole run, so the runtime subtracts them. An agent without one keeps its
+ * per-execution default.
  */
 function runStepsUsedOption(
   config: { maxSteps?: number },
   forwardedProps: RuntimeRunAgentInput["forwardedProps"],
-): { runStepsUsed?: number } {
-  const value = forwardedProps?.runStepsUsed;
-  return config.maxSteps !== undefined && typeof value === "number" &&
-      Number.isSafeInteger(value) && value > 0
-    ? { runStepsUsed: value }
-    : {};
+): { runStepsUsed?: number; runStepsFinished?: number } {
+  if (config.maxSteps === undefined) return {};
+  const count = (value: unknown) =>
+    typeof value === "number" && Number.isSafeInteger(value) && value > 0 ? value : undefined;
+  const used = count(forwardedProps?.runStepsUsed);
+  const finished = count(forwardedProps?.runStepsFinished);
+  return {
+    ...(used === undefined ? {} : { runStepsUsed: used }),
+    ...(finished === undefined ? {} : { runStepsFinished: finished }),
+  };
 }
 
 function getForwardedMaxOutputTokens(

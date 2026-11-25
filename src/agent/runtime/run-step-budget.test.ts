@@ -15,6 +15,7 @@ describe("run-wide step budget", () => {
   function createRuntime(input: {
     maxSteps: number;
     runStepsUsed?: number;
+    runStepsFinished?: number;
     resumeToolCall?: boolean;
     recoveryNextStep?: number;
     model: ReturnType<typeof scriptedModel>;
@@ -40,6 +41,7 @@ describe("run-wide step budget", () => {
       resolveModelTransport: () => ({ model: input.model }),
     }, {
       ...(input.runStepsUsed === undefined ? {} : { runStepsUsed: input.runStepsUsed }),
+      ...(input.runStepsFinished === undefined ? {} : { runStepsFinished: input.runStepsFinished }),
       ...(input.recoveryNextStep === undefined ? {} : {
         recoveryContinuation: {
           version: 1,
@@ -163,6 +165,26 @@ describe("run-wide step budget", () => {
     const wire = await new Response(await runtime.stream(userMessage)).text();
 
     assertEquals(effects, 1, wire);
+    assertEquals(model.callCount, 0, wire);
+    assert(wire.includes('"finishReason":"max_steps"'), wire);
+  });
+
+  it("derives a recovered execution's earlier run steps from the run's finished steps", async () => {
+    const model = alwaysCallsTool();
+    // 3 finished in all, 1 of them by this execution before it recovered: 2 earlier, 1 of 4 left.
+    const runtime = createRuntime({ maxSteps: 4, runStepsFinished: 3, recoveryNextStep: 1, model });
+
+    await new Response(await runtime.stream(userMessage)).text();
+
+    assertEquals(model.callCount, 1);
+  });
+
+  it("finishes a recovered execution with max_steps once the run finished its budget", async () => {
+    const model = alwaysCallsTool();
+    const runtime = createRuntime({ maxSteps: 2, runStepsFinished: 2, model });
+
+    const wire = await new Response(await runtime.stream(userMessage)).text();
+
     assertEquals(model.callCount, 0, wire);
     assert(wire.includes('"finishReason":"max_steps"'), wire);
   });

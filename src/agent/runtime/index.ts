@@ -3431,6 +3431,12 @@ export type AgentRuntimeInternalOptions = {
    * left it runs an owed `resumeToolCall` and finishes with `max_steps`.
    */
   runStepsUsed?: number;
+  /**
+   * For a recovered execution: the model steps the hosted run finished in all.
+   * The steps its recovery continuation took are among them, so the run's
+   * earlier steps are this minus the continuation's `nextStep`.
+   */
+  runStepsFinished?: number;
   /** Host-owned authority required before context can request private runtime observations. */
   runtimeObservationCapability?: RuntimeObservationCapability;
 };
@@ -3539,6 +3545,7 @@ export class AgentRuntime {
   #recoveryContinuation: AgentPauseCheckpoint | undefined;
   #resumeToolCall: AgentRuntimeInternalOptions["resumeToolCall"];
   #runStepsUsed: number;
+  #runStepsFinished: number;
   #runtimeObservationCapability: AgentRuntimeInternalOptions["runtimeObservationCapability"];
   private id: string;
   private config: AgentConfig;
@@ -3571,6 +3578,7 @@ export class AgentRuntime {
       : parseAgentPauseCheckpoint(internalOptions.recoveryContinuation);
     this.#resumeToolCall = internalOptions.resumeToolCall;
     this.#runStepsUsed = normalizeRunStepsUsed(internalOptions.runStepsUsed);
+    this.#runStepsFinished = normalizeRunStepsUsed(internalOptions.runStepsFinished);
     this.#runtimeObservationCapability = internalOptions.runtimeObservationCapability;
     this.#modelResolverState = internalOptions.resolveModelRuntime
       ? { status: "available", resolver: internalOptions.resolveModelRuntime }
@@ -4746,7 +4754,10 @@ export class AgentRuntime {
     return withSpan("agent.execution_loop", async (loopSpan) => {
       const { maxAgentSteps } = getPlatformCapabilities();
       const runMaxSteps = this.computeMaxSteps(maxAgentSteps);
-      const maxSteps = remainingRunSteps(runMaxSteps, this.#runStepsUsed);
+      const maxSteps = remainingRunSteps(
+        runMaxSteps,
+        priorRunSteps(this.#runStepsUsed, this.#runStepsFinished, 0),
+      );
       const effectiveModel = resolveRuntimeModel(modelString || this.config.model);
       const languageModel = resolvedModel ?? resolveModel(effectiveModel);
 
@@ -5826,7 +5837,6 @@ export class AgentRuntime {
   ): Promise<AgentResponse> {
     const { maxAgentSteps } = getPlatformCapabilities();
     const runMaxSteps = this.computeMaxSteps(maxAgentSteps);
-    const maxSteps = remainingRunSteps(runMaxSteps, this.#runStepsUsed);
     const effectiveModel = resolveRuntimeModel(modelString || this.config.model);
     const languageModel = resolvedModel ?? resolveModel(effectiveModel);
 
@@ -6028,9 +6038,11 @@ export class AgentRuntime {
     // execution whose own continuation reached `maxSteps`. Only an owed call
     // may still run then, in one step of its own.
     const startStep = checkpoint?.nextStep ?? 0;
+    const runStepsBefore = priorRunSteps(this.#runStepsUsed, this.#runStepsFinished, startStep);
+    const maxSteps = remainingRunSteps(runMaxSteps, runStepsBefore);
     const owesResumeToolCall = !resumeToolCallExecuted && this.#resumeToolCall !== undefined;
     const runStepBudgetUsed = !completedWithinStepBudget && startStep >= maxSteps &&
-      (this.#runStepsUsed > 0 || owesResumeToolCall);
+      (runStepsBefore > 0 || owesResumeToolCall);
     if (runStepBudgetUsed) finalFinishReason = RUN_STEP_BUDGET_FINISH_REASON;
     const stepLimit = runStepBudgetUsed && owesResumeToolCall ? startStep + 1 : maxSteps;
     for (
@@ -8028,6 +8040,12 @@ const RUN_STEP_BUDGET_FINISH_REASON = "max_steps";
 
 function normalizeRunStepsUsed(value: unknown): number {
   return typeof value === "number" && Number.isSafeInteger(value) && value > 0 ? value : 0;
+}
+
+/** The run's model steps before this execution: reported, or derived on a recovery. */
+function priorRunSteps(runStepsUsed: number, runStepsFinished: number, startStep: number): number {
+  if (runStepsUsed > 0) return runStepsUsed;
+  return runStepsFinished > startStep ? runStepsFinished - startStep : 0;
 }
 
 /** The steps an execution may still take of a run-wide `maxSteps` budget. */
