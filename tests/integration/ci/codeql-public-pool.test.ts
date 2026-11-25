@@ -228,7 +228,12 @@ describe("CodeQL public analysis", () => {
     assertEquals(gate.name, "Analyze");
     assertEquals(gate["runs-on"], "ubuntu-latest");
     assertEquals(gate.needs, ["public-analysis"]);
-    assert(String(gate.if).includes("always()"));
+    // A live run must still execute after a skipped or failed public scan, but
+    // cancellation must release the workflow concurrency group for the new head.
+    assertEquals(
+      gate.if,
+      "${{ !cancelled() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}",
+    );
     const check = gate.steps!.find((step) => step.id === "public-result");
     assertExists(check);
     for (const result of ["success", "failure", "cancelled", "skipped", "", "unexpected"]) {
