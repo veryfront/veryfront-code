@@ -37,7 +37,11 @@ import { extract } from "#veryfront/compat/std/front-matter-yaml.ts";
 import { isAbsolute, join, relative } from "#veryfront/platform/compat/path/index.ts";
 import { cwd, getHostEnv } from "#veryfront/platform/compat/process.ts";
 import { getRuntimeRequestContext } from "#veryfront/platform/runtime-request-context.ts";
-import { getHostedKnowledgeSource, isFrameworkKnowledgeOptions } from "./hosted-source-scope.ts";
+import {
+  claimHostedKnowledgeSourceReader,
+  type HostedKnowledgeSourceScope,
+  isFrameworkKnowledgeOptions,
+} from "./hosted-source-scope.ts";
 import { VeryfrontApiClient } from "#veryfront/platform/adapters/veryfront-api-client/client.ts";
 import { tool } from "#veryfront/tool/factory.ts";
 import { compileGlobMatcher } from "#veryfront/utils/glob-matcher.ts";
@@ -1047,21 +1051,31 @@ async function getProjectKnowledgeManifest(
   return manifest;
 }
 
+const readHostedKnowledgeSource = claimHostedKnowledgeSourceReader();
+
+/** The bound source release, for framework-owned knowledge only. */
+function getFrameworkKnowledgeSource(
+  frameworkOwned: boolean,
+): Readonly<HostedKnowledgeSourceScope> | undefined {
+  return frameworkOwned ? readHostedKnowledgeSource() : undefined;
+}
+
 function getHostedKnowledgeContext(
   context: ToolExecutionContext | undefined,
   frameworkOwned: boolean,
 ): HostedKnowledgeContext | null {
   // A shared agent runs in another project; its own knowledge lives in the
   // pinned source release, read with that run's source credential.
-  const source = frameworkOwned ? getHostedKnowledgeSource() : undefined;
+  const source = getFrameworkKnowledgeSource(frameworkOwned);
   if (source) {
     // The source credential is host-private, so it only ever goes to the
-    // host-owned API origin, never to a tool-context API URL.
+    // host-owned API base the binding carries, never to a tool-context URL.
     return {
       projectRef: source.projectSlug,
       projectSlug: source.projectSlug,
       projectId: source.projectId,
       authToken: source.authToken,
+      apiUrl: source.apiUrl,
       productionMode: true,
       releaseId: source.releaseId,
       branch: null,
@@ -1347,6 +1361,24 @@ async function searchKnowledgeManifest(
   context: ToolExecutionContext | undefined,
   frameworkOwned: boolean,
 ): Promise<ProjectKnowledgeLookupOutput> {
+  const source = getFrameworkKnowledgeSource(frameworkOwned);
+  if (source) {
+    // The signed agent's selection and the default folder bound every read of
+    // the source release, whatever the tool's own configuration says.
+    if (
+      !projectKnowledgeScopeSelectorGrantsAnyPath(source.knowledge) ||
+      !projectKnowledgeScopeSelectorGrantsAnyPath(config.scope)
+    ) {
+      return lookupKnowledgeManifest([], input);
+    }
+    const sourceManifest = await getHostedProjectKnowledgeManifest({}, context, frameworkOwned) ??
+      [];
+    return lookupKnowledgeManifest(
+      applyKnowledgeScope(applyKnowledgeScope(sourceManifest, source.knowledge), config.scope),
+      input,
+    );
+  }
+
   if (!projectKnowledgeScopeSelectorGrantsAnyPath(config.scope)) {
     return lookupKnowledgeManifest([], input);
   }

@@ -1547,13 +1547,18 @@ export function sharedAgentKnowledgeSource(
   sourceAuthToken: string,
 ): HostedKnowledgeSourceScope | undefined {
   const source = payload.agentSource;
+  // The signed definition's own selection caps every source read; without it
+  // nothing is bound and the tool keeps reading the consuming project.
+  const knowledge = payload.agentConfig?.knowledge;
   if (!payload.sourceProject || !payload.agentEntrypoint || !sourceAuthToken) return undefined;
-  if (source.type === "branch") return undefined;
+  if (source.type === "branch" || knowledge === undefined) return undefined;
   return {
     projectId: payload.sourceProject.projectId,
     projectSlug: payload.sourceProject.projectSlug,
     releaseId: source.releaseId,
     authToken: sourceAuthToken,
+    apiUrl: resolveHostOwnedSourceApiBaseUrl(),
+    knowledge,
   };
 }
 

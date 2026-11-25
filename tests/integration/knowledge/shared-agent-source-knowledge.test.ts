@@ -1,5 +1,5 @@
 import "#veryfront/schemas/_test-setup.ts";
-import { assertEquals } from "#veryfront/testing/assert.ts";
+import { assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import { runWithRuntimeRequestContext } from "#veryfront/platform/runtime-request-context.ts";
@@ -7,7 +7,11 @@ import { createAgentKnowledgeTool } from "#veryfront/agent/runtime/knowledge-too
 import type { AgentConfig } from "#veryfront/agent/types.ts";
 import type { ToolExecutionContext } from "#veryfront/tool/types.ts";
 import { createSearchKnowledgeTool } from "#veryfront/knowledge/index.ts";
-import { runWithHostedKnowledgeSource } from "#veryfront/knowledge/hosted-source-scope.ts";
+import {
+  claimFrameworkKnowledgeMarker,
+  claimHostedKnowledgeSourceReader,
+  runWithHostedKnowledgeSource,
+} from "#veryfront/knowledge/hosted-source-scope.ts";
 
 const SOURCE_RELEASE_FILES = "/projects/support-source/releases/release-1/files";
 const HOME_ENVIRONMENT_FILES = "/projects/account-home/environments/Production/files";
@@ -87,6 +91,8 @@ const sourceScope = {
   projectSlug: "support-source",
   releaseId: "release-1",
   authToken: "source-read-token",
+  apiUrl: "https://source-api.test",
+  knowledge: true,
 };
 
 function frameworkTool(knowledge: AgentConfig["knowledge"]) {
@@ -154,7 +160,38 @@ describe("shared agent knowledge source", () => {
     );
 
     assertEquals(requests.map((request) => request.authorization), ["Bearer source-read-token"]);
-    assertEquals(hosts.includes("elsewhere.test"), false);
+    assertEquals(hosts, ["source-api.test"]);
+  });
+
+  it("caps every framework tool at the signed agent's knowledge selection", async () => {
+    // Even a tool built with a broader selection reads only what the signed agent selected.
+    const broadTool = frameworkTool(true);
+    const { paths } = await search(() =>
+      runWithHostedKnowledgeSource(
+        { ...sourceScope, knowledge: ["knowledge/returns-policy.md"] },
+        () => inAccountHome(() => broadTool.execute({ query: "returns" }, toolContext)),
+      )
+    );
+
+    assertEquals(paths, ["knowledge/returns-policy.md"]);
+  });
+
+  it("reads nothing when the signed agent selects no knowledge", async () => {
+    const broadTool = frameworkTool(true);
+    const { paths, requests } = await search(() =>
+      runWithHostedKnowledgeSource(
+        { ...sourceScope, knowledge: false },
+        () => inAccountHome(() => broadTool.execute({ query: "returns" }, toolContext)),
+      )
+    );
+
+    assertEquals(paths, []);
+    assertEquals(requests, []);
+  });
+
+  it("hands the source reader and the framework marker out only once", () => {
+    assertThrows(() => claimHostedKnowledgeSourceReader(), Error, "already claimed");
+    assertThrows(() => claimFrameworkKnowledgeMarker(), Error, "already claimed");
   });
 
   it("never gives the source credential to a project-authored knowledge tool", async () => {

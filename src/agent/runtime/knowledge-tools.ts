@@ -5,12 +5,13 @@ import {
   normalizedProjectKnowledgeScopeGrantsAnyPath,
   normalizeProjectKnowledgeScopeSelector,
 } from "#veryfront/knowledge/index.ts";
-import { markFrameworkKnowledgeOptions } from "#veryfront/knowledge/hosted-source-scope.ts";
+import { claimFrameworkKnowledgeMarker } from "#veryfront/knowledge/hosted-source-scope.ts";
 import type { AgentConfig } from "../types.ts";
 import type { RemoteToolSource, Tool } from "#veryfront/tool";
 import { toolToProviderDefinition } from "#veryfront/tool/registry.ts";
 import { createPrivateWeakStore } from "#veryfront/security/private-weak-store.ts";
 
+const markFrameworkKnowledgeOptions = claimFrameworkKnowledgeMarker();
 const agentKnowledgeSources = createPrivateWeakStore<RemoteToolSource, true>();
 const agentKnowledgeTools = createPrivateWeakStore<object, true>();
 
