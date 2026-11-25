@@ -195,6 +195,11 @@ import { FSAdapterWrapper } from "#veryfront/platform/adapters/fs/wrapper.ts";
 import { MultiProjectFSAdapter } from "#veryfront/platform/adapters/fs/veryfront/multi-project-adapter.ts";
 import { runWithoutRequestContext } from "#veryfront/platform/adapters/fs/veryfront/request-context.ts";
 import { runWithRuntimeRequestContext } from "#veryfront/platform/runtime-request-context.ts";
+import {
+  type HostedKnowledgeSourceScope,
+  runWithHostedKnowledgeSource,
+} from "#veryfront/knowledge/hosted-source-scope.ts";
+import { createSourceReleaseKnowledgeLister } from "#veryfront/knowledge/source-release-files.ts";
 import type {
   SourceSnapshotFingerprintOptions,
   SourceSnapshotFreshnessOptions,
@@ -1531,6 +1536,36 @@ function resolveIngressSourceCredentials(payload: InternalAgentStreamRequest, ct
   return { apiAuthToken, sourceAuthToken };
 }
 
+/**
+ * A shared account agent executes in the consuming project, but its knowledge
+ * is part of its pinned source release. Only the framework knowledge tool
+ * reads it, with the source credential that can read nothing but that release.
+ *
+ * @internal Exported for tests.
+ */
+export function sharedAgentKnowledgeSource(
+  payload: InternalAgentStreamRequest,
+  sourceAuthToken: string,
+): HostedKnowledgeSourceScope | undefined {
+  const source = payload.agentSource;
+  // The signed definition's own selection caps every source read; without it
+  // nothing is bound and the tool keeps reading the consuming project.
+  const knowledge = payload.agentConfig?.knowledge;
+  if (!payload.sourceProject || !payload.agentEntrypoint || !sourceAuthToken) return undefined;
+  if (source.type === "branch" || knowledge === undefined) return undefined;
+  return {
+    releaseId: source.releaseId,
+    knowledge,
+    listKnowledgeFiles: createSourceReleaseKnowledgeLister({
+      projectId: payload.sourceProject.projectId,
+      projectSlug: payload.sourceProject.projectSlug,
+      releaseId: source.releaseId,
+      authToken: sourceAuthToken,
+      apiUrl: resolveHostOwnedSourceApiBaseUrl(),
+    }),
+  };
+}
+
 function buildIngressSourceContext(
   payload: InternalAgentStreamRequest,
   ctx: HandlerContext,
@@ -1743,7 +1778,8 @@ export class AgentStreamHandler extends BaseHandler {
       assertNamedSourceCredential(payload, apiAuthToken);
       // Shared execution receives the control plane's run-bound invocation
       // credential for the consuming project. The source credential only reads
-      // its pinned release and is never used for runtime tools or inference.
+      // its pinned release: agent source, and the framework knowledge tool's
+      // reads of that release. Project tools and inference never receive it.
       // Legacy requests keep their user credential within framework API calls.
       // The process host token is never combined with request-selected tenant
       // identity, so it is not a fallback here either. The platform MCP tool
@@ -2223,17 +2259,22 @@ export class AgentStreamHandler extends BaseHandler {
       }
       // Evaluated modules may capture credentials or environment values. Never
       // reuse ordinary source-project closures or another invocation's closures.
+      const runInExecutionProject = () =>
+        runWithRuntimeRequestContext({
+          projectId: executionProject.projectId,
+          projectSlug: executionProject.projectSlug,
+          token: projectRuntimeToken,
+          productionMode: executionProject.runtimeTargetKind === "environment",
+          branch: executionProject.runtimeTargetBranchName ?? null,
+          environmentName: executionProject.runtimeTargetEnvironmentName ?? null,
+        }, () => runWithProjectEnv({}, runWithInvocationCleanup));
+      const knowledgeSource = sharedAgentKnowledgeSource(payload, sourceAuthToken);
       return await runWithRegistryScopeNamespace(
         createInvocationNamespace(),
         () =>
-          runWithRuntimeRequestContext({
-            projectId: executionProject.projectId,
-            projectSlug: executionProject.projectSlug,
-            token: projectRuntimeToken,
-            productionMode: executionProject.runtimeTargetKind === "environment",
-            branch: executionProject.runtimeTargetBranchName ?? null,
-            environmentName: executionProject.runtimeTargetEnvironmentName ?? null,
-          }, () => runWithProjectEnv({}, runWithInvocationCleanup)),
+          knowledgeSource
+            ? runWithHostedKnowledgeSource(knowledgeSource, runInExecutionProject)
+            : runInExecutionProject(),
       );
     } catch (error_) {
       return this.respondToStreamFailure(error_, req, ctx, builder);

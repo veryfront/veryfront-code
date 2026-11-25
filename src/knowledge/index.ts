@@ -37,6 +37,12 @@ import { extract } from "#veryfront/compat/std/front-matter-yaml.ts";
 import { isAbsolute, join, relative } from "#veryfront/platform/compat/path/index.ts";
 import { cwd, getHostEnv } from "#veryfront/platform/compat/process.ts";
 import { getRuntimeRequestContext } from "#veryfront/platform/runtime-request-context.ts";
+import {
+  claimHostedKnowledgeSourceReader,
+  type HostedKnowledgeSourceScope,
+  isFrameworkKnowledgeOptions,
+  type SourceReleaseKnowledgeFile,
+} from "./hosted-source-scope.ts";
 import { VeryfrontApiClient } from "#veryfront/platform/adapters/veryfront-api-client/client.ts";
 import { tool } from "#veryfront/tool/factory.ts";
 import { compileGlobMatcher } from "#veryfront/utils/glob-matcher.ts";
@@ -1127,6 +1133,13 @@ async function getHostedProjectKnowledgeManifest(
     sortOrder: "asc",
   });
 
+  return buildHostedKnowledgeManifest(contentDir, files);
+}
+
+function buildHostedKnowledgeManifest(
+  contentDir: string,
+  files: readonly { path: string; content?: unknown }[],
+): ProjectKnowledgeManifestEntry[] {
   const manifest: ProjectKnowledgeManifestEntry[] = [];
   for (const file of files) {
     const manifestPath = buildHostedManifestPath(contentDir, file.path);
@@ -1322,10 +1335,37 @@ export async function searchProjectKnowledge(
   return lookupKnowledgeManifest(applyKnowledgeScope(manifest, config.scope), input);
 }
 
+const readHostedKnowledgeSource = claimHostedKnowledgeSourceReader();
+
+/**
+ * Search a shared agent's pinned source release. The signed agent's selection
+ * and the default folder bound every read, whatever the tool's own scope says.
+ */
+async function searchSourceReleaseKnowledge(
+  input: ProjectKnowledgeLookupInput,
+  config: ProjectKnowledgeConfig,
+  source: Readonly<HostedKnowledgeSourceScope>,
+): Promise<ProjectKnowledgeLookupOutput> {
+  if (
+    !projectKnowledgeScopeSelectorGrantsAnyPath(source.knowledge) ||
+    !projectKnowledgeScopeSelectorGrantsAnyPath(config.scope)
+  ) {
+    return lookupKnowledgeManifest([], input);
+  }
+
+  const files: readonly SourceReleaseKnowledgeFile[] = await source.listKnowledgeFiles();
+  const manifest = buildHostedKnowledgeManifest(DEFAULT_CONTENT_DIR, files);
+  return lookupKnowledgeManifest(
+    applyKnowledgeScope(applyKnowledgeScope(manifest, source.knowledge), config.scope),
+    input,
+  );
+}
+
 /** Create a project-authored knowledge tool with a configurable ID and hosted-compatible response shape. */
 export function createSearchKnowledgeTool(
   options: CreateSearchKnowledgeToolOptions = {},
 ): SearchKnowledgeTool {
+  const frameworkOwned = isFrameworkKnowledgeOptions(options);
   const { id = "search_knowledge", description, ...config } = options;
 
   return tool<ProjectKnowledgeLookupInput, ProjectKnowledgeLookupOutput>({
@@ -1333,8 +1373,14 @@ export function createSearchKnowledgeTool(
     description: description ??
       "Retrieve a compact, cursor-based slice of project knowledge, or a specific document by lookup target.",
     inputSchema: SEARCH_KNOWLEDGE_INPUT_SCHEMA,
-    execute: (input, context) =>
-      searchProjectKnowledge(coerceSearchKnowledgeInput(input), config, context),
+    execute: (input, context) => {
+      const lookup = coerceSearchKnowledgeInput(input);
+      // Only the framework's own tool may read a shared agent's source release.
+      const source = frameworkOwned ? readHostedKnowledgeSource() : undefined;
+      return source
+        ? searchSourceReleaseKnowledge(lookup, config, source)
+        : searchProjectKnowledge(lookup, config, context);
+    },
   });
 }
 
