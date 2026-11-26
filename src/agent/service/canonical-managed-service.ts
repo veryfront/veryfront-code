@@ -208,6 +208,8 @@ export function createCanonicalManagedBrokerService<T>(
   });
   return {
     handle: handler.handle,
+    beginDrain: handler.beginDrain,
+    drain: handler.drain,
     cancel: {
       handle: (request: Request, input: { runId?: string }) =>
         closed

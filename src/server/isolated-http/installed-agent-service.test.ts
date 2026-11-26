@@ -109,6 +109,24 @@ Deno.test("installed canonical service rejects writer authority before API admis
     await service.settled;
   }
 });
+Deno.test("installed admission drain keeps transport readiness for existing controls", async () => {
+  const f = fixture("unused");
+  const service = createInstalledCanonicalAgentService(f.input);
+  try {
+    service.beginDrain();
+    assertEquals(service.ready, true);
+    assertEquals(await service.drain({ timeoutMs: 0 }), true);
+    assertEquals(
+      (await service.handle(new Request("https://broker.test/invalid", { method: "POST" }))).status,
+      503,
+    );
+    assertEquals(f.counts(), { allocations: 0, requests: 0 });
+  } finally {
+    await service.close();
+  }
+  assertEquals(service.ready, false);
+});
+
 Deno.test("installed canonical service validates terminal verification and execution ceilings at startup", () => {
   const f = fixture("unused");
   assertThrows(

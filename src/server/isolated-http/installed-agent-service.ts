@@ -393,6 +393,9 @@ export function createInstalledCanonicalAgentService(options: {
       return !capabilitySignal.aborted;
     },
     handle: service.handle,
+    // Admission drain deliberately keeps transport readiness and existing controls alive.
+    beginDrain: service.beginDrain,
+    drain: service.drain,
     cancel: service.cancel,
     resume: service.resume,
     get active() {

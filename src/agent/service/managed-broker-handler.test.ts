@@ -1355,6 +1355,61 @@ async function handler(
 }
 
 describe("managed broker handler", () => {
+  it("retains late execution pause finalization throughout the original drain deadline", async () => {
+    const f = await handler("detached", { waitForPrepare: true });
+    const settlementEntered = Promise.withResolvers<void>();
+    const settlementRelease = Promise.withResolvers<void>();
+    const capability = createRunBoundAgentManualPause({
+      apiUrl: "https://api.example.test",
+      runId: "run-1",
+      token: "synthetic-pause-token",
+      signal: new AbortController().signal,
+      fetch: async (_url, init) => {
+        if (JSON.parse(String(init?.body)).settled) {
+          settlementEntered.resolve();
+          await settlementRelease.promise;
+        }
+        return Response.json({ stop: true });
+      },
+    });
+    await capability.acknowledge({
+      version: 1,
+      nextStep: 1,
+      messages: [],
+      toolCalls: [],
+      usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
+      latestAssistantText: "",
+      completed: false,
+      recoveredEmptyResponse: false,
+      recoveredInterruptedLocalToolBatch: false,
+    });
+    capability.persisted?.(true);
+    inheritHostedAgentPauseCapability(f.fixture.runtime, capability);
+    const handling = f.managed.handle(f.first.request);
+    try {
+      await f.prepareEntered;
+      const draining = f.managed.drain({ timeoutMs: 10 });
+      f.releasePrepare();
+      assertEquals((await handling).status, 202);
+      f.fixture.release();
+      await settlementEntered.promise;
+      assertEquals(f.managed.active, 0);
+      assertEquals(f.cleanupCalls, 1);
+      // The reservation has retired, but the later-created execution still owns
+      // the durable pause receipt. The same finite drain must wait or time out.
+      assertEquals(await draining, false);
+      const completed = f.managed.drain({ timeoutMs: 1000 });
+      settlementRelease.resolve();
+      assertEquals(await completed, true);
+    } finally {
+      f.releasePrepare();
+      f.fixture.release();
+      settlementRelease.resolve();
+      await handling;
+      await f.managed.close();
+    }
+  });
+
   it("cleans prepared ownership when negotiated output is unavailable", async () => {
     const f = await handler("sse", { missingOutput: true, negotiatedWriter: true });
     try {
@@ -2303,6 +2358,25 @@ describe("managed broker handler", () => {
       }
     });
   }
+
+  it("accounts for stalled authentication during drain and refuses its late admission", async () => {
+    const f = await handler("detached", { waitForAuthorization: true });
+    const pending = f.managed.handle(f.first.request);
+    await f.authorizationEntered;
+    try {
+      assertEquals(await f.managed.drain({ timeoutMs: 0 }), false);
+      assertEquals(f.brokerStarts, 0);
+      f.releaseAuthorization();
+      assertEquals((await pending).status, 503);
+      assertEquals(await f.managed.drain({ timeoutMs: 1000 }), true);
+      assertEquals(f.prepareCalls, 0);
+      assertEquals(f.brokerStarts, 0);
+    } finally {
+      f.releaseAuthorization();
+      await pending;
+      await f.managed.close();
+    }
+  });
 
   it("does not admit a late authorization result after handler closure", async () => {
     const f = await handler("detached", { waitForAuthorization: true });

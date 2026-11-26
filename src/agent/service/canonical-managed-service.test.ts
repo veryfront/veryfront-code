@@ -355,6 +355,79 @@ async function fixture(
   };
 }
 
+describe("canonical active-run drain", () => {
+  it("preserves admitted execution and authenticated resume while refusing new starts", async () => {
+    const f = await fixture("resume");
+    let reading: Promise<string> | undefined;
+    try {
+      const response = await f.start();
+      reading = response.text();
+      await f.entered;
+      let finished = false;
+      const draining = f.service.drain({ timeoutMs: 1000 }).then((result) => {
+        finished = true;
+        return result;
+      });
+      await Promise.resolve();
+      assertEquals(finished, false);
+      assertEquals(f.signal?.aborted, false);
+      assertEquals((await f.start()).status, 503);
+      assertEquals(f.started, 1);
+      assertEquals(
+        (await f.control("resume", {
+          type: "tool_result",
+          toolCallId: "tool_1",
+          result: "Approved",
+        })).status,
+        200,
+      );
+      assert((await reading).includes("Approved"));
+      assertEquals(await draining, true);
+      assertEquals(f.cleaned, 1);
+    } finally {
+      await f.service.close();
+      await reading;
+    }
+  });
+
+  it("keeps authenticated cancellation available during drain", async () => {
+    const f = await fixture("cancel");
+    let reading: Promise<string> | undefined;
+    try {
+      const response = await f.start();
+      reading = response.text();
+      await f.entered;
+      const draining = f.service.drain({ timeoutMs: 1000 });
+      assertEquals((await f.control("cancel", {})).status, 202);
+      await reading;
+      assertEquals(await draining, true);
+      assertEquals(f.cleaned, 1);
+    } finally {
+      await f.service.close();
+      await reading;
+    }
+  });
+
+  it("returns a bounded timeout, then existing close cancels and settles owned work", async () => {
+    const f = await fixture("cancel");
+    let reading: Promise<string> | undefined;
+    try {
+      const response = await f.start();
+      reading = response.text();
+      await f.entered;
+      assertEquals(await f.service.drain({ timeoutMs: 5 }), false);
+      assertEquals(f.signal?.aborted, false);
+      await f.service.close();
+      await reading;
+      assertEquals(f.cleaned, 1);
+      assertEquals(f.service.active, 0);
+    } finally {
+      await f.service.close();
+      await reading;
+    }
+  });
+});
+
 describe("canonical managed service ownership", () => {
   it("routes two simultaneous API calls through authenticated out-of-order resumes", async () => {
     const f = await fixture("api-tools-parallel");
