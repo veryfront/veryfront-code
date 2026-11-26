@@ -968,6 +968,7 @@ export function createAgentServiceEvalAdapter(
       };
     }
     let failureStage: AgentServiceFailureStage = "request-build";
+    let responseStatus = 0;
     try {
       const body = buildAgentServiceEvalRequestBody({
         exampleId: context.example.id,
@@ -1001,6 +1002,7 @@ export function createAgentServiceEvalAdapter(
       const fetchArguments = nativeFetchArguments(endpoint, init);
       failureStage = "request-fetch";
       const response = await requestFetch(fetchArguments[0], fetchArguments[1]);
+      responseStatus = response.status;
       failureStage = "response-read";
       const run = await parseAgUiSseResponse(response, parseOptions);
       failureStage = "result-processing";
@@ -1032,7 +1034,7 @@ export function createAgentServiceEvalAdapter(
         output: {
           text: "",
           agUi: {
-            responseStatus: 0,
+            responseStatus,
             eventTypes: [],
             runError: stringifyEvalError(error),
             failure: agentServiceFailureDiagnostic(failureStage, error),

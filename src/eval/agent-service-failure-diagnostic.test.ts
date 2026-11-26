@@ -58,31 +58,34 @@ describe("agent-service failure stages", () => {
     assertEquals(result.completed, false);
   });
 
-  it("distinguishes failed response consumption", async () => {
-    const adapter = createAgentServiceEvalAdapter({
-      authToken: "fixture-token",
-      fetch: () =>
-        Promise.resolve(
-          new Response(
-            new ReadableStream({
-              start(controller) {
-                controller.error(new SyntaxError("private stream detail"));
-              },
-            }),
-            { headers: { "content-type": "text/event-stream" } },
+  for (const status of [200, 503]) {
+    it(`preserves HTTP ${status} when response consumption fails`, async () => {
+      const adapter = createAgentServiceEvalAdapter({
+        authToken: "fixture-token",
+        fetch: () =>
+          Promise.resolve(
+            new Response(
+              new ReadableStream({
+                start(controller) {
+                  controller.error(new SyntaxError("private stream detail"));
+                },
+              }),
+              { status, headers: { "content-type": "text/event-stream" } },
+            ),
           ),
-        ),
+      });
+      const result = await adapter(context());
+      assert(typeof result !== "string");
+      assertEquals(failure(result.output), {
+        stage: "response-read",
+        errorName: "SyntaxError",
+        transportCode: "redacted",
+      });
+      assertEquals(result.completed, false);
+      assertEquals(result.error, "private stream detail");
+      assertEquals(agUi(result.output).responseStatus, status);
     });
-    const result = await adapter(context());
-    assert(typeof result !== "string");
-    assertEquals(failure(result.output), {
-      stage: "response-read",
-      errorName: "SyntaxError",
-      transportCode: "redacted",
-    });
-    assertEquals(result.completed, false);
-    assertEquals(result.error, "private stream detail");
-  });
+  }
 
   it("keeps progress callback failures inside response reading", async () => {
     const adapter = createAgentServiceEvalAdapter({
@@ -103,6 +106,7 @@ describe("agent-service failure stages", () => {
     assert(typeof result !== "string");
     assertEquals(failure(result.output).stage, "response-read");
     assertEquals(failure(result.output).errorName, "RangeError");
+    assertEquals(agUi(result.output).responseStatus, 200);
     assertEquals(result.completed, false);
   });
 
@@ -129,6 +133,7 @@ describe("agent-service failure stages", () => {
       errorName: "RangeError",
       transportCode: "redacted",
     });
+    assertEquals(agUi(result.output).responseStatus, 200);
     assertEquals(result.completed, false);
   });
 
