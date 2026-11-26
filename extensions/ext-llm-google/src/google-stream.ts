@@ -3,6 +3,8 @@ import {
   parseFinalSseChunk,
   parseSseChunk,
   ProviderStreamProtocolError,
+  readGatewayBillingMode,
+  readGatewayUsageCosts,
   readRecord,
   type RuntimeUsage,
   StreamFragmentBuffer,
@@ -63,10 +65,23 @@ export function normalizeGoogleFinishReason(
   }
 }
 
+const ObjectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
+const ObjectHasOwn = Object.hasOwn;
+
+function readOwnGoogleUsageField(
+  record: unknown,
+  key: string,
+): unknown {
+  if (!record || typeof record !== "object" || Array.isArray(record)) return undefined;
+  const descriptor = ObjectGetOwnPropertyDescriptor(record, key);
+  return descriptor !== undefined && ObjectHasOwn(descriptor, "value")
+    ? descriptor.value
+    : undefined;
+}
+
 export function extractGoogleUsage(payload: unknown): RuntimeUsage | undefined {
-  const record = readRecord(payload);
-  const usage = readRecord(record?.usageMetadata);
-  if (!usage) {
+  const usage = readOwnGoogleUsageField(payload, "usageMetadata");
+  if (!usage || typeof usage !== "object" || Array.isArray(usage)) {
     return undefined;
   }
 
@@ -77,17 +92,40 @@ export function extractGoogleUsage(payload: unknown): RuntimeUsage | undefined {
       value >= 0
       ? value
       : undefined;
-  const inputTokens = readTokenCount(usage.promptTokenCount);
-  const outputTokens = readTokenCount(usage.candidatesTokenCount);
-  const totalTokens = readTokenCount(usage.totalTokenCount);
-  const cacheReadInputTokens = readTokenCount(usage.cachedContentTokenCount);
-  const reasoningTokens = readTokenCount(usage.thoughtsTokenCount);
+  const inputTokens = readTokenCount(readOwnGoogleUsageField(usage, "promptTokenCount"));
+  const outputTokens = readTokenCount(readOwnGoogleUsageField(usage, "candidatesTokenCount"));
+  const totalTokens = readTokenCount(readOwnGoogleUsageField(usage, "totalTokenCount"));
+  const cacheReadInputTokens = readTokenCount(
+    readOwnGoogleUsageField(usage, "cachedContentTokenCount"),
+  );
+  const reasoningTokens = readTokenCount(readOwnGoogleUsageField(usage, "thoughtsTokenCount"));
+  const veryfront = readOwnGoogleUsageField(usage, "veryfront");
+  const billingMode = readGatewayBillingMode(readOwnGoogleUsageField(veryfront, "billing_mode"));
+  const costSource = readOwnGoogleUsageField(veryfront, "cost_source");
+  const usageCaptureStatus = readOwnGoogleUsageField(veryfront, "usage_capture_status");
+  const billableInputTokens = readTokenCount(
+    readOwnGoogleUsageField(veryfront, "billable_input_tokens"),
+  );
+  const billableOutputTokens = readTokenCount(
+    readOwnGoogleUsageField(veryfront, "billable_output_tokens"),
+  );
   const normalized: RuntimeUsage = {
     inputTokens,
     outputTokens,
     totalTokens,
     ...(cacheReadInputTokens !== undefined ? { cacheReadInputTokens } : {}),
     ...(reasoningTokens !== undefined ? { reasoningTokens } : {}),
+    ...readGatewayUsageCosts({ cost_credits: readOwnGoogleUsageField(veryfront, "cost_credits") }),
+    ...(billingMode !== undefined ? { billingMode } : {}),
+    ...(costSource === "gateway" || costSource === "missing" || costSource === "partial"
+      ? { costSource }
+      : {}),
+    ...(usageCaptureStatus === "complete" || usageCaptureStatus === "partial" ||
+        usageCaptureStatus === "missing"
+      ? { usageCaptureStatus }
+      : {}),
+    ...(billableInputTokens !== undefined ? { billableInputTokens } : {}),
+    ...(billableOutputTokens !== undefined ? { billableOutputTokens } : {}),
   };
 
   return Object.values(normalized).some((value) => value !== undefined) ? normalized : undefined;

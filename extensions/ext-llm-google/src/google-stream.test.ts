@@ -1607,3 +1607,135 @@ describe("ext-llm-google/google-stream", () => {
     );
   });
 });
+
+describe("Google gateway usage extraction", () => {
+  const gatewayFields = {
+    billing_mode: "direct",
+    cost_source: "gateway",
+    usage_capture_status: "complete",
+    billable_input_tokens: 8,
+    billable_output_tokens: 2,
+    cost_credits: "0.0250000000",
+  };
+  const nativeUsage = { promptTokenCount: 8, candidatesTokenCount: 2, totalTokenCount: 10 };
+  const normalizedNativeUsage = { inputTokens: 8, outputTokens: 2, totalTokens: 10 };
+
+  for (const inherited of [false, true]) {
+    it(`ignores ${inherited ? "inherited" : "own"} billing getters without invoking them`, () => {
+      let reads = 0;
+      const accessors = {};
+      for (const [key, value] of Object.entries(gatewayFields)) {
+        Object.defineProperty(accessors, key, {
+          enumerable: true,
+          get() {
+            reads++;
+            return value;
+          },
+        });
+      }
+      const veryfront = inherited ? Object.setPrototypeOf({}, accessors) : accessors;
+      const actual = extractGoogleUsage({ usageMetadata: { ...nativeUsage, veryfront } });
+      assertEquals(reads, 0);
+      assertEquals(actual, normalizedNativeUsage);
+    });
+  }
+
+  for (const field of ["usageMetadata", "veryfront"]) {
+    for (const inherited of [false, true]) {
+      it(`ignores ${inherited ? "inherited" : "own"} ${field} getters without invoking them`, () => {
+        let reads = 0;
+        const accessors = {};
+        Object.defineProperty(accessors, field, {
+          enumerable: true,
+          get() {
+            reads++;
+            return field === "usageMetadata"
+              ? { ...nativeUsage, veryfront: gatewayFields }
+              : gatewayFields;
+          },
+        });
+        const record = inherited ? Object.setPrototypeOf({}, accessors) : accessors;
+        const actual = extractGoogleUsage(
+          field === "usageMetadata" ? record : {
+            usageMetadata: Object.assign(record, nativeUsage),
+          },
+        );
+        assertEquals(reads, 0);
+        assertEquals(actual, field === "usageMetadata" ? undefined : normalizedNativeUsage);
+      });
+    }
+    it(`ignores inherited ${field} data`, () => {
+      const inheritedValue = field === "usageMetadata"
+        ? { ...nativeUsage, veryfront: gatewayFields }
+        : gatewayFields;
+      const record = Object.setPrototypeOf({}, { [field]: inheritedValue });
+      assertEquals(
+        extractGoogleUsage(
+          field === "usageMetadata" ? record : {
+            usageMetadata: Object.assign(record, nativeUsage),
+          },
+        ),
+        field === "usageMetadata" ? undefined : normalizedNativeUsage,
+      );
+    });
+  }
+
+  it("preserves valid own native and gateway billing data", () => {
+    assertEquals(
+      extractGoogleUsage({ usageMetadata: { ...nativeUsage, veryfront: gatewayFields } }),
+      {
+        ...normalizedNativeUsage,
+        billingMode: "direct",
+        costSource: "gateway",
+        usageCaptureStatus: "complete",
+        billableInputTokens: 8,
+        billableOutputTokens: 2,
+        costCredits: 0.025,
+      },
+    );
+  });
+
+  it("preserves valid own data in null-prototype metadata", () => {
+    assertEquals(
+      extractGoogleUsage({
+        usageMetadata: Object.setPrototypeOf({
+          ...nativeUsage,
+          veryfront: Object.setPrototypeOf({ ...gatewayFields }, null),
+        }, null),
+      }),
+      {
+        ...normalizedNativeUsage,
+        billingMode: "direct",
+        costSource: "gateway",
+        usageCaptureStatus: "complete",
+        billableInputTokens: 8,
+        billableOutputTokens: 2,
+        costCredits: 0.025,
+      },
+    );
+  });
+
+  it("ignores malformed gateway amounts, enums and token counters", () => {
+    assertEquals(
+      extractGoogleUsage({
+        usageMetadata: {
+          promptTokenCount: 8,
+          candidatesTokenCount: 2,
+          totalTokenCount: 10,
+          veryfront: {
+            cost_source: "unexpected",
+            billing_mode: "unexpected",
+            usage_capture_status: "unexpected",
+            cost_credits: "not-a-number",
+            provider_cost_usd: -1,
+            billable_input_tokens: -1,
+            billable_output_tokens: 0.5,
+          },
+        },
+      }),
+      { inputTokens: 8, outputTokens: 2, totalTokens: 10 },
+    );
+    assertEquals(extractGoogleUsage({ usageMetadata: { veryfront: null } }), undefined);
+    assertEquals(extractGoogleUsage({ usageMetadata: { veryfront: "not-an-object" } }), undefined);
+  });
+});
