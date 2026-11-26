@@ -9,7 +9,12 @@ import { createRuntimeAgentFromMarkdownDefinition } from "#veryfront/agent";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { registerSkill } from "#veryfront/skill/registry.ts";
-import { prompt } from "#veryfront/prompt/factory.ts";
+import {
+  prompt,
+  resetPromptDeadlineRuntimeForTests,
+  setPromptDeadlineRuntimeForTests,
+} from "#veryfront/prompt/factory.ts";
+import type { PromptRenderContext } from "#veryfront/prompt/types.ts";
 import { promptRegistry, promptRegistryInternal } from "#veryfront/prompt/registry.ts";
 import { __subscribeLogRecordEmitter, type LogEntry } from "#veryfront/utils/logger/logger.ts";
 import type { HandlerContext } from "#veryfront/types";
@@ -853,6 +858,77 @@ describe("prompt-reference suggestions", () => {
         { type: "prompt", title: "Plan work", prompt: "Turn this idea into a concrete plan." },
       ],
     });
+  });
+
+  it("leaves out a prompt whose renderer stalls past the timeout, and cancels it", async () => {
+    promptRegistryInternal.clearAll();
+    const timers: Array<{ callback: () => void; delayMs: number }> = [];
+    setPromptDeadlineRuntimeForTests({
+      now: () => 0,
+      setTimer: (callback, delayMs) => {
+        timers.push({ callback, delayMs });
+        return timers.length as unknown as ReturnType<typeof setTimeout>;
+      },
+      clearTimer: () => {},
+    });
+    const logs = captureSuggestionLogs();
+    let received: Readonly<PromptRenderContext> | undefined;
+    try {
+      registerPrompts();
+      // A custom definition that ignores its render context and never settles.
+      promptRegistry.register("stalled", {
+        id: "stalled",
+        description: "Stalls forever",
+        getContent: (_variables, context) => {
+          received = context;
+          return new Promise<string>(() => {});
+        },
+      });
+
+      const pending = getRuntimeAgentPublicMetadata(
+        "support",
+        createAgent({
+          suggestions: [
+            { type: "prompt", id: "stalled" },
+            { type: "prompt", id: "triage-ticket" },
+          ],
+        }),
+      );
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      const watchdog = timers.find((timer) => timer.delayMs === 5_000);
+      assertEquals(watchdog !== undefined, true, "the render is raced against a 5-second timer");
+      watchdog!.callback();
+      const metadata = await pending;
+
+      assertEquals(metadata.suggestions, {
+        suggestions: [{
+          type: "prompt",
+          id: "triage-ticket",
+          title: "Triage a ticket",
+          prompt: "Triage the newest open ticket.",
+        }],
+      });
+      assertEquals(received?.abortSignal?.aborted, true, "the stalled render is cancelled");
+      assertEquals(
+        logs.records.map((record) => ({
+          level: record.level,
+          agentId: record.agent_id,
+          promptId: record.context?.promptId,
+          reason: record.context?.reason,
+        })),
+        [{
+          level: "warn",
+          agentId: "support",
+          promptId: "stalled",
+          reason: "prompt-render-timed-out",
+        }],
+      );
+    } finally {
+      logs.stop();
+      resetPromptDeadlineRuntimeForTests();
+      promptRegistryInternal.clearAll();
+    }
   });
 
   it("drops only the malformed entry, not the agent's other suggestions", async () => {

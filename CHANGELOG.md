@@ -12,9 +12,9 @@ An agent starter that names a project prompt, `{ type: "prompt", id }`, now
 shows in `<Chat>` and `GET /api/agents`. The runtime serves it as
 `{ type: "prompt", id, title, prompt }`: `title` is the prompt's `mcp.title`,
 else its `description`, else the id, and `prompt` is the prompt's `suggestion`,
-else its rendered content. A reference to a missing prompt, or to a prompt with
-a required argument, is left out with a warning that names the agent and the
-prompt id. Before, the runtime served the bare reference and `<Chat>` did not
+else its rendered content. A reference to a missing prompt, to a prompt with
+a required argument, or to a prompt whose content does not render within 5
+seconds, is left out with a warning that names the agent and the prompt id. Before, the runtime served the bare reference and `<Chat>` did not
 show it.
 
 One malformed suggestion entry no longer drops every suggestion the agent has.

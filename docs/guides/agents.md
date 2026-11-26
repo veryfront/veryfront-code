@@ -884,8 +884,9 @@ The runtime resolves the reference when it serves the agent's metadata
 | Label         | `mcp.title`, `description`, the prompt id |
 | Sent text     | `suggestion`, the rendered prompt content |
 
-The runtime leaves out a reference when no prompt has that id, or when the
-prompt has a required argument. It logs a warning that names the agent and the
+The runtime leaves out a reference when no prompt has that id, when the
+prompt has a required argument, or when the prompt has no `suggestion` and its
+content does not render within 5 seconds. It logs a warning that names the agent and the
 prompt id. The agent's other starters still show.
 
 ## Agent configuration

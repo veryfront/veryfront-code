@@ -6,6 +6,8 @@ import type { DiscoveryResult } from "#veryfront/discovery";
 import type { HandlerContext } from "#veryfront/types/server.ts";
 import { skillRegistry } from "#veryfront/skill/registry.ts";
 import { promptRegistry } from "#veryfront/prompt/registry.ts";
+import { getPromptDeadlineRuntime } from "#veryfront/prompt/factory.ts";
+import type { Prompt } from "#veryfront/prompt/types.ts";
 import { agentLogger } from "#veryfront/utils/logger/index.ts";
 import { privateJsonParse } from "#veryfront/security/private-json.ts";
 import {
@@ -933,6 +935,7 @@ type PromptSuggestionSkipReason =
   | "prompt-not-found"
   | "prompt-requires-arguments"
   | "prompt-render-failed"
+  | "prompt-render-timed-out"
   | "prompt-empty";
 
 function skipPromptSuggestion(
@@ -946,12 +949,51 @@ function skipPromptSuggestion(
     ? "the prompt has a required argument"
     : reason === "prompt-render-failed"
     ? "the prompt content could not be rendered"
+    : reason === "prompt-render-timed-out"
+    ? "the prompt content did not render within 5 seconds"
     : "the prompt has no suggestion or content";
   suggestionLogger.warn(
     `Agent "${agentId}" suggestion skipped: prompt "${promptId}" is not shown because ${detail}`,
     { agentId, promptId, reason },
   );
   return undefined;
+}
+
+const PROMPT_RENDER_TIMED_OUT = Symbol("prompt-render-timed-out");
+const PROMPT_RENDER_FAILED = Symbol("prompt-render-failed");
+
+/**
+ * Render a prompt's static content with no arguments, bounded by a host-owned
+ * timer. A custom `Prompt` can ignore its render context, so the deadline alone
+ * cannot stop it: the render is raced against the timer and its signal aborted.
+ */
+async function renderPromptSuggestionContent(
+  registered: Prompt,
+): Promise<string | typeof PROMPT_RENDER_TIMED_OUT | typeof PROMPT_RENDER_FAILED> {
+  const runtime = getPromptDeadlineRuntime();
+  const controller = new AbortController();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timedOut = new Promise<typeof PROMPT_RENDER_TIMED_OUT>((resolve) => {
+    timer = runtime.setTimer(() => {
+      controller.abort(new DOMException("Prompt rendering deadline exceeded", "TimeoutError"));
+      resolve(PROMPT_RENDER_TIMED_OUT);
+    }, PROMPT_SUGGESTION_RENDER_TIMEOUT_MS);
+  });
+  const rendering = Promise.resolve().then(() =>
+    registered.getContent({}, {
+      abortSignal: controller.signal,
+      deadline: runtime.now() + PROMPT_SUGGESTION_RENDER_TIMEOUT_MS,
+    })
+  ).then(
+    (content): string | typeof PROMPT_RENDER_TIMED_OUT | typeof PROMPT_RENDER_FAILED => content,
+    () => controller.signal.aborted ? PROMPT_RENDER_TIMED_OUT : PROMPT_RENDER_FAILED,
+  );
+
+  try {
+    return await Promise.race([rendering, timedOut]);
+  } finally {
+    if (timer !== undefined) runtime.clearTimer(timer);
+  }
 }
 
 function nonBlank(value: unknown): string | undefined {
@@ -975,15 +1017,14 @@ async function resolvePromptSuggestion(
 
   let text = nonBlank(registered.suggestion);
   if (text === undefined) {
-    try {
-      text = nonBlank(
-        await registered.getContent({}, {
-          deadline: Date.now() + PROMPT_SUGGESTION_RENDER_TIMEOUT_MS,
-        }),
-      );
-    } catch {
+    const rendered = await renderPromptSuggestionContent(registered);
+    if (rendered === PROMPT_RENDER_TIMED_OUT) {
+      return skipPromptSuggestion(agentId, promptId, "prompt-render-timed-out");
+    }
+    if (rendered === PROMPT_RENDER_FAILED) {
       return skipPromptSuggestion(agentId, promptId, "prompt-render-failed");
     }
+    text = nonBlank(rendered);
   }
   if (text === undefined) return skipPromptSuggestion(agentId, promptId, "prompt-empty");
 
