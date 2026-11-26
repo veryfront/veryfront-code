@@ -387,12 +387,17 @@ function createManagedBrokerIngressHandler<TIngress>(options: {
   const active = new Map<string, { accepted: boolean; settled: Promise<void> }>();
   const lifetime = new AbortController();
   const executions = new Set<Promise<void>>();
+  // Includes authentication/body reads before a run reservation exists.
+  const admissions = new Set<Promise<void>>();
+  let draining = false;
   let closed = false;
 
   async function handle(request: Request): Promise<Response> {
-    if (closed || options.signal?.aborted) {
+    if (closed || draining || options.signal?.aborted) {
       return Response.json({ errorCode: "BROKER_UNAVAILABLE" }, { status: 503 });
     }
+    const admission = Promise.withResolvers<void>();
+    admissions.add(admission.promise);
     try {
       const signal = AbortSignal.any([
         request.signal,
@@ -402,7 +407,8 @@ function createManagedBrokerIngressHandler<TIngress>(options: {
       const parsed = await options.parse(request, signal);
       if (isResponseLike(parsed)) return parsed;
       const { ingress, runId, runKey } = parsed;
-      assertAvailable(closed, signal);
+      // A parse already in flight when draining began cannot acquire a late reservation.
+      assertAvailable(closed || draining, signal);
       const existing = active.get(runKey);
       if (existing) {
         if (!existing.accepted) {
@@ -609,11 +615,50 @@ function createManagedBrokerIngressHandler<TIngress>(options: {
         { errorCode: aborted ? "BROKER_INGRESS_ABORTED" : "BROKER_EXECUTION_SETUP_FAILED" },
         { status: aborted ? 499 : 500 },
       );
+    } finally {
+      admissions.delete(admission.promise);
+      admission.resolve();
+    }
+  }
+
+  const pendingWork =
+    () => [...admissions, ...[...active.values()].map((run) => run.settled), ...executions];
+  const beginDrain = () => {
+    draining = true;
+  };
+  /** Stop new starts, then await owned admissions/executions without cancelling them.
+   * A false result leaves forced abort/close to the process owner's cleanup phase.
+   */
+  async function drain({ timeoutMs }: { timeoutMs: number }): Promise<boolean> {
+    if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 0 || timeoutMs > 300_000) {
+      throw new TypeError("Invalid managed broker drain timeout");
+    }
+    beginDrain();
+    if (!pendingWork().length) return true;
+    if (timeoutMs === 0) return false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const expired = new Promise<false>((resolve) => {
+      timer = setTimeout(() => resolve(false), timeoutMs);
+    });
+    try {
+      // Preparation can register execution after the first snapshot; reservation
+      // retirement can precede its durable finalizer. Recheck all owners without
+      // renewing the single total grace window.
+      while (true) {
+        const pending = pendingWork();
+        if (!pending.length) return true;
+        if (!await Promise.race([Promise.allSettled(pending).then(() => true), expired])) {
+          return false;
+        }
+      }
+    } finally {
+      if (timer !== undefined) clearTimeout(timer);
     }
   }
 
   async function close(): Promise<void> {
     closed = true;
+    beginDrain();
     lifetime.abort();
     await Promise.allSettled(
       [...active.values()].map((run) => run.settled).concat([...executions]),
@@ -622,6 +667,8 @@ function createManagedBrokerIngressHandler<TIngress>(options: {
 
   return {
     handle,
+    beginDrain,
+    drain,
     close,
     get active() {
       return active.size;
