@@ -20,7 +20,18 @@ const freeze = Object.freeze;
 export const getExecutorHttpApplicationConfigurationSchema = defineSchema((v) =>
   getInstalledProjectHttpBindingSchema().extend({
     configurationId: v.string().min(1).max(256),
-    variables: v.record(v.string(), v.string()),
+    // A backend record parser may silently discard __proto__. Keep validated own
+    // string data through the shared bounded, frozen, null-prototype snapshot.
+    variables: v.custom<Record<string, string>>((value) => {
+      try {
+        createProjectEnvSnapshot(value);
+        return true;
+      } catch {
+        return false;
+      }
+    }, "Invalid application variable record").transform((value): Record<string, string> =>
+      createProjectEnvSnapshot(value)
+    ),
   }).strict()
 );
 export type ExecutorHttpApplicationConfiguration = InferSchema<

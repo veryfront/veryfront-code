@@ -154,6 +154,9 @@ export function createCanonicalManagedBrokerHandler<T>(
         conversationId: run.conversationId,
         messageId: run.messageId,
         status: lifecycle.status,
+        ...(ingress.executor.runtimeConfiguration
+          ? { runtimeConfiguration: ingress.executor.runtimeConfiguration }
+          : {}),
       };
       const prepared = await prepareExecutor({ ingress, signal });
       let persistence: ReturnType<typeof createManagedBrokerPersistence> | undefined;

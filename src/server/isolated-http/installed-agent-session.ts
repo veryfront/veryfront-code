@@ -1,3 +1,5 @@
+import type { RuntimeConfigurationReference } from "#veryfront/agent/runtime/runtime-configuration-reference.ts";
+import { createInstalledConfigurationRegistry } from "./installed-configuration-registry.ts";
 import { EXECUTOR_MAX_TIMEOUT_MS } from "#veryfront/agent/executor/protocol.ts";
 import { executorNodeClock } from "#veryfront/agent/hosted/executor-node-deadline.ts";
 import type { HostedExecutorSessionOptions } from "#veryfront/agent/hosted/executor-session.ts";
@@ -15,13 +17,16 @@ import { snapshotBoundedJsonValue } from "#veryfront/schemas/json-value.ts";
 import { getExecutorHttpApplicationConfigurationSchema } from "./application-configuration.ts";
 import type { InstalledHttpBrokerOptions } from "./installed-http-broker.ts";
 
-type Session = Omit<HostedExecutorSessionOptions, "createOperations">;
+type Session = Omit<HostedExecutorSessionOptions, "createOperations"> & {
+  readonly runtimeConfiguration?: RuntimeConfigurationReference;
+};
 
 /** Trusted native deployment registry and transport for captured project releases. */
 export type InstalledProjectAgentSessionOptions =
   & Pick<
     InstalledHttpBrokerOptions,
     | "installations"
+    | "configurationReferences"
     | "expectedBrokerInstanceId"
     | "allocator"
     | "connectTransport"
@@ -63,6 +68,9 @@ export function createInstalledProjectAgentSessionResolver(
   ) {
     throw new TypeError("Invalid installed project release registry");
   }
+  const captured = options.configurationReferences === undefined
+    ? undefined
+    : createInstalledConfigurationRegistry(snapshot.value, options.configurationReferences);
   const registry = new Map<string, string>();
   const key = (projectId: string, environmentId: string, releaseId: string) =>
     JSON.stringify([projectId, environmentId, releaseId]);
@@ -96,6 +104,7 @@ export function createInstalledProjectAgentSessionResolver(
   const select = (input: {
     sourceProject: BrokerRuntimeAgentExecutorInput["run"]["project"];
     requestedSource: BrokerRuntimeAgentExecutorInput["agentSource"];
+    runtimeConfiguration?: BrokerRuntimeAgentExecutorInput["runtimeConfiguration"];
   }) => {
     const project = input.sourceProject, source = input.requestedSource;
     if (
@@ -104,12 +113,32 @@ export function createInstalledProjectAgentSessionResolver(
       (project.sourceTargetEnvironmentId &&
         project.sourceTargetEnvironmentId !== project.runtimeTargetEnvironmentId)
     ) return undefined;
-    const image = registry.get(
-      key(project.projectId, project.runtimeTargetEnvironmentId, source.releaseId),
-    );
-    return image === undefined
-      ? undefined
-      : { image, source: { type: "release" as const, releaseId: source.releaseId } };
+    let reference: BrokerRuntimeAgentExecutorInput["runtimeConfiguration"];
+    let image: string | undefined;
+    if (captured) {
+      try {
+        const selected = captured.select(input.runtimeConfiguration);
+        reference = selected.reference;
+        if (
+          reference.projectId !== project.projectId ||
+          reference.environmentId !== project.runtimeTargetEnvironmentId ||
+          reference.releaseId !== source.releaseId
+        ) return undefined;
+        image = selected.image;
+      } catch {
+        return undefined;
+      }
+    } else {
+      if (input.runtimeConfiguration !== undefined) return undefined;
+      image = registry.get(
+        key(project.projectId, project.runtimeTargetEnvironmentId, source.releaseId),
+      );
+    }
+    return image === undefined ? undefined : {
+      image,
+      ...(reference ? { runtimeConfiguration: reference } : {}),
+      source: { type: "release" as const, releaseId: source.releaseId },
+    };
   };
   const resolveBoundSource = (input: Parameters<typeof select>[0]) => select(input)?.source;
   const resolve = (executor: BrokerRuntimeAgentExecutorInput, signal: AbortSignal): Session => {
@@ -119,7 +148,11 @@ export function createInstalledProjectAgentSessionResolver(
     if (executor.owner.scopeKind !== "project" || executor.owner.projectId !== project.projectId) {
       throw new BrokerIngressError(403, "BROKER_INGRESS_SCOPE_DENIED");
     }
-    const selection = select({ sourceProject: project, requestedSource: executor.agentSource });
+    const selection = select({
+      sourceProject: project,
+      requestedSource: executor.agentSource,
+      runtimeConfiguration: executor.runtimeConfiguration,
+    });
     if (!selection) throw new BrokerIngressError(503, "BROKER_UNAVAILABLE");
     const { image, source } = selection;
     const now = Math.floor(clock.now());
@@ -140,10 +173,13 @@ export function createInstalledProjectAgentSessionResolver(
       prepareDeadlineAt: Math.min(now + preparationMs, hardDeadlineAt),
       hardDeadlineAt,
     });
-    return {
+    const session = {
       request,
       expectedBrokerInstanceId: brokerId,
       expectedImage: image,
+      ...(selection.runtimeConfiguration
+        ? { runtimeConfiguration: selection.runtimeConfiguration }
+        : {}),
       allocator,
       connectTransport,
       clock,
@@ -153,6 +189,7 @@ export function createInstalledProjectAgentSessionResolver(
       ...(requestTimeoutMs === undefined ? {} : { requestTimeoutMs }),
       ...(cleanupTimeoutMs === undefined ? {} : { cleanupTimeoutMs }),
     };
+    return selection.runtimeConfiguration ? Object.freeze(session) : session;
   };
   return Object.freeze(Object.assign(resolve, { resolveBoundSource }));
 }

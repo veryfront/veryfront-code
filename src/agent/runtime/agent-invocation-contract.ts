@@ -1,3 +1,4 @@
+import { getRuntimeConfigurationReferenceSchema } from "./runtime-configuration-reference.ts";
 import { isNormalizedAgentEntrypointPath } from "#veryfront/discovery/agent-entrypoint-path.ts";
 import { snapshotHostedTaskInput } from "../hosted/task-input.ts";
 import { encodePrivateText, PrivateTextEncoder } from "#veryfront/security/private-text.ts";
@@ -450,6 +451,7 @@ export const getRuntimeAgentRunInvocationSchema = defineSchema((v) =>
   v.object({
     run: getRuntimeAgentRunContextSchema(),
     sourceProject: getRuntimeAgentProjectContextSchema().optional(),
+    runtimeConfiguration: getRuntimeConfigurationReferenceSchema().optional(),
     agentEntrypoint: getRuntimeAgentEntrypointSchema().optional(),
     taskId: getRuntimeAgentTaskIdSchema().optional(),
     taskInput: v.unknown().optional().refine((value) => {
@@ -485,6 +487,22 @@ export const getRuntimeAgentRunInvocationSchema = defineSchema((v) =>
     // Optional fields are read as own properties: one the invocation leaves
     // out is undefined here too.
     const sourceProject = ownField(input, "sourceProject");
+    const configuration = ownField(input, "runtimeConfiguration");
+    if (configuration) {
+      const source = sourceProject ?? input.run.project;
+      if (
+        configuration.projectId !== source.projectId ||
+        configuration.environmentId !== source.runtimeTargetEnvironmentId ||
+        source.runtimeTargetKind !== "environment" || input.agentSource.type === "branch" ||
+        configuration.releaseId !== input.agentSource.releaseId
+      ) {
+        ctx.addIssue({
+          code: "custom",
+          message: "Captured configuration does not match source scope",
+          path: ["runtimeConfiguration"],
+        });
+      }
+    }
     const agentConfig = ownField(input, "agentConfig");
     const credentials = ownField(input, "credentials");
     if (sourceProject) {

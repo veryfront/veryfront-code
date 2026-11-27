@@ -1,3 +1,8 @@
+import {
+  createInstalledConfigurationRegistry,
+  type InstalledConfigurationReferences,
+} from "./installed-configuration-registry.ts";
+import type { RuntimeConfigurationReference } from "#veryfront/agent/runtime/runtime-configuration-reference.ts";
 import { EXECUTOR_MAX_TIMEOUT_MS } from "#veryfront/agent/executor/protocol.ts";
 import type { HostedExecutorSessionOptions } from "#veryfront/agent/hosted/executor-session.ts";
 import { getHostedExecutorImageSchema } from "#veryfront/agent/hosted/executor-session-schema.ts";
@@ -23,6 +28,7 @@ export interface InstalledHttpBrokerOptions {
     image: string;
     configuration: ExecutorHttpApplicationConfiguration;
   }[];
+  configurationReferences?: InstalledConfigurationReferences;
   expectedBrokerInstanceId: string;
   allocator: HostedExecutorSessionOptions["allocator"];
   connectTransport: HostedExecutorSessionOptions["connectTransport"];
@@ -32,7 +38,10 @@ export interface InstalledHttpBrokerOptions {
   observeDispatch?: HostedHttpBrokerOptions["observeDispatch"];
   /** Check current project/environment/release authority against the source API on every request. */
   authorize: {
-    (authority: HostedHttpRequestAuthority, signal: AbortSignal): Promise<void>;
+    (
+      authority: HostedHttpRequestAuthority,
+      signal: AbortSignal,
+    ): Promise<void | RuntimeConfigurationReference>;
     /** Underlying host IO may outlive a refused request and remains owned through shutdown. */
     readonly pending?: number;
     readonly settled?: Promise<void>;
@@ -81,6 +90,9 @@ export function createInstalledHttpBroker(options: InstalledHttpBrokerOptions) {
     !snapshot.success || !Array.isArray(snapshot.value) ||
     snapshot.value.length < 1 || snapshot.value.length > 64
   ) throw new TypeError("Invalid installed HTTP registry");
+  const captured = options.configurationReferences === undefined
+    ? undefined
+    : createInstalledConfigurationRegistry(snapshot.value, options.configurationReferences);
   const registry = new Map<string, {
     image: string;
     configuration: ExecutorHttpApplicationConfiguration;
@@ -109,7 +121,7 @@ export function createInstalledHttpBroker(options: InstalledHttpBrokerOptions) {
       },
     });
     const configuration = snapshotExecutorHttpApplicationConfiguration(raw, installation);
-    if (registry.has(key)) throw new TypeError("Duplicate installed HTTP identity");
+    if (!captured && registry.has(key)) throw new TypeError("Duplicate installed HTTP identity");
     registry.set(key, { image: parsedImage.data, configuration });
   }
   const authorizationOwner = options.authorize;
@@ -147,7 +159,10 @@ export function createInstalledHttpBroker(options: InstalledHttpBrokerOptions) {
     signal.throwIfAborted();
     owner.signal.throwIfAborted();
     const { binding, key } = identityKey(authority);
-    const selected = registry.get(key);
+    if (Object.hasOwn(authority, "runtimeConfiguration")) {
+      throw new TypeError("Caller configuration selection is forbidden");
+    }
+    let selected = registry.get(key);
     if (!selected) throw new Error("Installed HTTP source is unavailable");
     const sourceToken = authority.sourceToken;
     if (typeof sourceToken !== "string" || !/^[\x21-\x7e]{1,8192}$/.test(sourceToken)) {
@@ -157,7 +172,15 @@ export function createInstalledHttpBroker(options: InstalledHttpBrokerOptions) {
     // Authorization starts now. The broker orders generation changes by this time, so an
     // authorization that finishes late cannot pass for a newer one.
     const requestedAt = Date.now();
-    await authorize(Object.freeze({ ...binding, sourceToken }), lifetime);
+    const reference = await authorize(Object.freeze({ ...binding, sourceToken }), lifetime);
+    if (captured) {
+      selected = captured.select(reference);
+      if (identityKey(selected.configuration).key !== key) {
+        throw new Error("Captured HTTP configuration scope mismatch");
+      }
+    } else if (reference !== undefined) {
+      throw new TypeError("Captured configuration requires an explicit installed capability");
+    }
     lifetime.throwIfAborted();
     // The configured lifetime runs from the end of authorization. The allocation as a
     // whole, authorization included, stays within the executor session bound.

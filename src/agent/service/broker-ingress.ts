@@ -1,3 +1,4 @@
+import { snapshotRuntimeConfigurationReference } from "../runtime/runtime-configuration-reference.ts";
 import {
   getProjectEventPersistenceSchema,
   type ProjectEventPersistence,
@@ -63,6 +64,7 @@ const forbiddenForwardedAuthorityFields = new Set([
   "credential",
   "credentials",
   "runeventtoken",
+  "runtimeconfiguration",
 ]);
 
 /** Fixed, credential-free ingress failure identifiers. */
@@ -101,6 +103,7 @@ export interface BrokerRuntimeAgentExecutorInput {
   readonly run: Omit<RuntimeAgentRunContext, "validatedClaims"> & {
     validatedClaims?: RuntimeAgentRunContext["validatedClaims"];
   };
+  readonly runtimeConfiguration?: RuntimeAgentRunInvocation["runtimeConfiguration"];
   readonly taskId?: string;
   readonly agentSource: RuntimeAgentRunInvocation["agentSource"];
   readonly sourceProject?: Readonly<NonNullable<RuntimeAgentRunInvocation["sourceProject"]>>;
@@ -152,6 +155,7 @@ export interface BrokerRuntimeAgentIngressOptions<TAuthorization> {
   resolveBoundSource?(input: {
     sourceProject: Readonly<RuntimeAgentRunContext["project"]>;
     requestedSource: RuntimeAgentRunInvocation["agentSource"];
+    runtimeConfiguration?: RuntimeAgentRunInvocation["runtimeConfiguration"];
   }): HostedRuntimeSourceIdentity | undefined;
   expectedOwner: HostedExecutorOwner;
   authorizeScope(
@@ -302,6 +306,9 @@ export async function parseBrokerRuntimeAgentIngress<TAuthorization>(
       boundSource = options.resolveBoundSource({
         sourceProject: Object.freeze({ ...sourceProject }),
         requestedSource: Object.freeze({ ...invocation.agentSource }),
+        ...(invocation.runtimeConfiguration
+          ? { runtimeConfiguration: Object.freeze({ ...invocation.runtimeConfiguration }) }
+          : {}),
       });
     } catch {
       throw new BrokerIngressError(500, "BROKER_INGRESS_SCOPE_FAILED");
@@ -349,12 +356,23 @@ export async function parseBrokerRuntimeAgentIngress<TAuthorization>(
       run: invocation.run,
       ...(invocation.taskId ? { taskId: invocation.taskId } : {}),
       agentSource: invocation.agentSource,
+      ...(invocation.runtimeConfiguration
+        ? { runtimeConfiguration: invocation.runtimeConfiguration }
+        : {}),
       ...(invocation.sourceProject ? { sourceProject: invocation.sourceProject } : {}),
       ...(invocation.agentEntrypoint ? { agentEntrypoint: invocation.agentEntrypoint } : {}),
       ...(invocation.agentConfig ? { agentConfig: invocation.agentConfig } : {}),
       input: toRuntimeRunAgentInput(parsedInbound.data),
     } satisfies BrokerRuntimeAgentExecutorInput,
   );
+  if (executorValue.runtimeConfiguration) {
+    Object.defineProperty(executorValue, "runtimeConfiguration", {
+      value: snapshotRuntimeConfigurationReference(executorValue.runtimeConfiguration),
+      enumerable: true,
+      writable: false,
+      configurable: false,
+    });
+  }
   if (
     containsBrokerCredential(executorValue, [
       inboundAuthorization,

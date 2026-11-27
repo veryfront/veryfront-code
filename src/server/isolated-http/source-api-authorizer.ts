@@ -1,4 +1,8 @@
 import {
+  type RuntimeConfigurationReference,
+  snapshotRuntimeConfigurationReference,
+} from "#veryfront/agent/runtime/runtime-configuration-reference.ts";
+import {
   PROJECT_METADATA_ENVIRONMENTS,
   PROJECT_METADATA_RESPONSE_BYTES,
   PROJECT_METADATA_TOKEN_CODE_UNITS,
@@ -11,9 +15,9 @@ const SOURCE_RESPONSE_BYTES = 16 * 1024;
 const UUID = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i;
 const unavailable = () => new Error("Runtime source authorization failed");
 
-/** Revalidate exact source access and active environment binding through existing read-only APIs. */
-export function createRuntimeSourceAuthorizer(options: {
+interface RuntimeSourceAuthorizerOptions {
   baseUrl: string;
+  configurationReferenceVersion?: 1;
   timeoutMs?: number;
   /** Raw source HTTP and credential IO retain their reservation until settlement; 1 through 64, default 16. */
   maxPendingOperations?: number;
@@ -21,7 +25,23 @@ export function createRuntimeSourceAuthorizer(options: {
   readProjectToken(projectId: string, signal: AbortSignal): Promise<string>;
   /** Host-owned transport injection; production defaults to verified native HTTPS fetch. */
   fetch?: typeof globalThis.fetch;
-}) {
+}
+type RuntimeSourceAuthorizer<Result> =
+  & ((authority: HostedHttpRequestAuthority, signal: AbortSignal) => Promise<Result>)
+  & { readonly pending: number; readonly settled: Promise<void> };
+
+/** Revalidate source access; only the explicit capability can select captured configuration. */
+export function createRuntimeSourceAuthorizer(
+  options: RuntimeSourceAuthorizerOptions & { configurationReferenceVersion: 1 },
+): RuntimeSourceAuthorizer<RuntimeConfigurationReference>;
+export function createRuntimeSourceAuthorizer(
+  options: RuntimeSourceAuthorizerOptions & { configurationReferenceVersion?: undefined },
+): RuntimeSourceAuthorizer<void>;
+export function createRuntimeSourceAuthorizer(
+  options: RuntimeSourceAuthorizerOptions,
+): RuntimeSourceAuthorizer<void | RuntimeConfigurationReference>;
+export function createRuntimeSourceAuthorizer(options: RuntimeSourceAuthorizerOptions) {
+  const configurationReferenceVersion = options.configurationReferenceVersion;
   const origin = new URL(options.baseUrl);
   if (
     origin.protocol !== "https:" || origin.username || origin.password ||
@@ -33,6 +53,7 @@ export function createRuntimeSourceAuthorizer(options: {
   const readProjectToken = options.readProjectToken;
   const maxPendingOperations = options.maxPendingOperations ?? 16;
   if (
+    (configurationReferenceVersion !== undefined && configurationReferenceVersion !== 1) ||
     typeof fetch !== "function" || typeof readProjectToken !== "function" ||
     !Number.isSafeInteger(timeoutMs) || timeoutMs < 1 ||
     timeoutMs > 30_000 || !Number.isSafeInteger(maxPendingOperations) ||
@@ -97,7 +118,7 @@ export function createRuntimeSourceAuthorizer(options: {
   const authorize = async (
     authority: HostedHttpRequestAuthority,
     signal: AbortSignal,
-  ): Promise<void> => {
+  ): Promise<void | RuntimeConfigurationReference> => {
     const binding = snapshotInstalledProjectHttpBinding({
       projectId: authority.projectId,
       projectSlug: authority.projectSlug,
@@ -167,6 +188,17 @@ export function createRuntimeSourceAuthorizer(options: {
         environments.length !== 1 || environments[0].name !== binding.environmentName ||
         environments[0].active_release_id !== binding.releaseId
       ) throw unavailable();
+      if (configurationReferenceVersion === 1) {
+        const reference = snapshotRuntimeConfigurationReference(
+          environments[0].active_runtime_configuration,
+        );
+        if (
+          reference.projectId !== binding.projectId ||
+          reference.environmentId !== binding.environmentId ||
+          reference.releaseId !== binding.releaseId
+        ) throw unavailable();
+        return reference;
+      }
     } catch {
       // Denial is explicit; transport errors and response bodies cannot disclose source credentials.
       throw unavailable();
