@@ -1,6 +1,6 @@
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { it } from "#veryfront/testing/bdd.ts";
-import { joinPrivateAbortSignals } from "./private-abort.ts";
+import { joinPrivateAbortSignals } from "#veryfront/security/private-abort.ts";
 
 it("private signal joins ignore replaced static and array iterator hooks", () => {
   const first = new AbortController(), second = new AbortController();

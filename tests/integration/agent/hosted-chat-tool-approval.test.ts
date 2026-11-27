@@ -5,9 +5,9 @@ import { clearModelProviders, registerModelProvider } from "#veryfront/provider"
 import { withMockFetch } from "#veryfront/testing/mock-fetch.ts";
 import { defineSchema } from "#veryfront/schemas/index.ts";
 import { type Tool, tool, type ToolExecutionContext } from "#veryfront/tool";
-import { scriptedModel } from "../runtime/model-runtime.test-helpers.ts";
-import { createDefaultHostedChatRuntime } from "./default-chat-runtime.ts";
-import { registerHostedToolRunAuthorization } from "./tool-run-authorization.ts";
+import { scriptedModel } from "#veryfront/agent/runtime/model-runtime.test-helpers.ts";
+import { createDefaultHostedChatRuntime } from "#veryfront/agent/hosted/default-chat-runtime.ts";
+import { registerHostedToolRunAuthorization } from "#veryfront/agent/hosted/tool-run-authorization.ts";
 
 for (
   const admission of [
