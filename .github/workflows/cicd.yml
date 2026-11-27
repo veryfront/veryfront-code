@@ -980,7 +980,7 @@ jobs:
           status=124
           for attempt in 1 2; do
             remaining_seconds=$((scan_budget_seconds - (SECONDS - scan_started)))
-            if [ "$remaining_seconds" -lt "$((attempt_minutes * 60 + 30))" ]; then
+            if [ "$attempt" -gt 1 ] && [ "$remaining_seconds" -lt "$((attempt_minutes * 60 + 30))" ]; then
               echo "::error::Insufficient budget for a complete Sonar attempt; refusing an automatic retry"
               exit "$status"
             fi

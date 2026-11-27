@@ -78,6 +78,7 @@ jobs:
           oom = 'java.lang.OutOfMemoryError: Java heap space\n\tat org.sonar.scanner.report.ReportPublisher.upload(ReportPublisher.java:208)\nEXECUTION FAILURE'
           cases = [
               ('success', [('analysis complete', 0)], 0, 1),
+              ('initial clock tick', [('analysis complete', 0)], 0, 1),
               ('server error then success', [('CE Task finished abnormally', 3), ('analysis complete', 0)], 0, 2),
               ('server error twice', [('CE Task finished abnormally', 3), ('CE Task finished abnormally', 7)], 7, 2),
               ('server error then quality gate', [('CE Task finished abnormally', 3), ('QUALITY GATE STATUS: FAILED - coverage 0.0% < 80%', 2)], 2, 2),
@@ -109,7 +110,8 @@ jobs:
           def write_timeout(directory):
               tool = directory / 'timeout'
               tool.write_text('#!/usr/bin/env python3\nimport os, sys\n'
-                  "assert sys.argv[1:4] == ['--signal=TERM', '--kill-after=30s', '38m']\n"
+                  "expected = '38m' if os.environ.get('SONAR_REF_NAME') == 'main' and os.environ.get('SONAR_EVENT_NAME') != 'merge_group' else '27m'\n"
+                  "assert sys.argv[1:4] == ['--signal=TERM', '--kill-after=30s', expected]\n"
                   'os.execvp(sys.argv[4], sys.argv[4:])\n')
               tool.chmod(0o755)
           for label, results, expected_status, expected_attempts in cases:
@@ -137,12 +139,16 @@ jobs:
                          'GITHUB_STEP_SUMMARY': str(tmp / 'summary.md')}
                   started = time.monotonic()
                   case_wrapper = wrapper
+                  if label == 'initial clock tick':
+                      env.update(SONAR_EVENT_NAME='pull_request', SONAR_REF_NAME='feature/test')
+                      case_wrapper = wrapper.replace('for attempt in 1 2; do',
+                          'for attempt in 1 2; do\n  SECONDS=$((scan_started + 1))')
                   if label == 'insufficient retry budget':
                       case_wrapper = wrapper.replace('for attempt in 1 2; do',
                           'for attempt in 1 2; do\n  if [ "$attempt" -eq 2 ]; then SECONDS=$((scan_started + 81 * 60)); fi')
                   run = subprocess.run(['bash', '-e', '-o', 'pipefail', '-c', case_wrapper], env=env,
                                        text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=15)
-                  attempts = int((tmp / 'attempts').read_text())
+                  attempts = int((tmp / 'attempts').read_text()) if (tmp / 'attempts').exists() else 0
                   assert (run.returncode, attempts) == (expected_status, expected_attempts), (label, run.returncode, attempts, run.stdout)
                   upload_retry = 'Retrying Sonar once after report upload timeout' in run.stdout
                   assert upload_retry == (label.startswith('upload') and expected_attempts == 2), (label, run.stdout)

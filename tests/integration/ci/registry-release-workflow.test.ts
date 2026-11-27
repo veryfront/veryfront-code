@@ -2358,7 +2358,7 @@ describe("RC publication alongside the reused main Sonar scan", () => {
       );
       assertStringIncludes(
         wrapper,
-        'if [ "$remaining_seconds" -lt "$((attempt_minutes * 60 + 30))" ]; then',
+        'if [ "$attempt" -gt 1 ] && [ "$remaining_seconds" -lt "$((attempt_minutes * 60 + 30))" ]; then',
       );
       assertStringIncludes(wrapper, 'if [ "$status" -eq 124 ] || [ "$status" -eq 137 ]; then');
     }
