@@ -51,6 +51,9 @@ jobs:
           wrapper = textwrap.dedent(step.split('        run: |\n', 1)[1])
           assert 'continue-on-error:' not in step, 'The wrapper must propagate failures'
 
+          clock_step = source.split('      - name: Record the monotonic Sonar job deadline\n', 1)[1].split('\n      - ', 1)[0]
+          clock = textwrap.dedent(clock_step.split('        run: |\n', 1)[1])
+
           # Stock SonarScanner output when SonarCloud stalls the report upload:
           # exit 3, no report-task.txt and no CE task or quality gate result.
           upload_timeout = '\n'.join([
@@ -78,11 +81,18 @@ jobs:
           oom = 'java.lang.OutOfMemoryError: Java heap space\n\tat org.sonar.scanner.report.ReportPublisher.upload(ReportPublisher.java:208)\nEXECUTION FAILURE'
           cases = [
               ('success', [('analysis complete', 0)], 0, 1),
+              ('initial clock tick', [('analysis complete', 0)], 0, 1),
+              ('slow PR setup', [('analysis complete', 0)], 0, 1),
+              ('maintenance dispatch', [('analysis complete', 0)], 0, 1),
+              ('setup exhausts budget', [], 124, 0),
               ('server error then success', [('CE Task finished abnormally', 3), ('analysis complete', 0)], 0, 2),
               ('server error twice', [('CE Task finished abnormally', 3), ('CE Task finished abnormally', 7)], 7, 2),
               ('server error then quality gate', [('CE Task finished abnormally', 3), ('QUALITY GATE STATUS: FAILED - coverage 0.0% < 80%', 2)], 2, 2),
               ('quality gate', [('QUALITY GATE STATUS: FAILED - coverage 0.0% < 80%', 2)], 2, 1),
               ('other failure', [('Not authorized', 4)], 4, 1),
+              ('insufficient retry budget', [('CE Task finished abnormally', 3)], 3, 1),
+              ('deadline after server text', [('CE Task finished abnormally', 124)], 124, 1),
+              ('forced deadline after server text', [('CE Task finished abnormally', 137)], 137, 1),
               ('similar message', [('CE Task timeout', 6)], 6, 1),
               ('mixed gate and server text', [('CE Task finished abnormally; QUALITY GATE STATUS: FAILED', 2)], 2, 1),
               ('upload timeout then success', [(upload_timeout, 3), ('analysis complete', 0)], 0, 2),
@@ -103,9 +113,29 @@ jobs:
               ('upload timeout via action other exit', [(action_failed(upload_timeout, 30), 1)], 1, 1),
               ('upload timeout via action exit 1', [(action_failed(upload_timeout, 1), 1)], 1, 1),
           ]
+          def write_timeout(directory):
+              tool = directory / 'timeout'
+              tool.write_text('#!/usr/bin/env python3\nimport os, sys\n'
+                  "assert sys.argv[1:4] == ['--signal=TERM', '--kill-after=30s', os.environ['FIXTURE_TIMEOUT']]\n"
+                  'os.execvp(sys.argv[4], sys.argv[4:])\n')
+              tool.chmod(0o755)
+          def prepare_clock(tmp, env, elapsed=0):
+              uptime = tmp / 'uptime'
+              uptime.write_text('1000.00 0.00\n')
+              env['GITHUB_OUTPUT'] = str(tmp / 'outputs')
+              run = subprocess.run(['bash', '-e', '-o', 'pipefail', '-c', clock.replace('/proc/uptime', str(uptime))],
+                  env=env, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=15)
+              assert run.returncode == 0, run.stdout
+              deadline = (tmp / 'outputs').read_text().strip().removeprefix('deadline=')
+              expected = 6040 if env['SONAR_EVENT_NAME'] in ('push', 'workflow_dispatch') else 2620
+              assert int(deadline) == expected, (deadline, expected)
+              env['SONAR_JOB_DEADLINE'] = deadline
+              uptime.write_text(f'{1000 + elapsed}.00 0.00\n')
+              return wrapper.replace('/proc/uptime', str(uptime))
           for label, results, expected_status, expected_attempts in cases:
               with tempfile.TemporaryDirectory() as directory:
                   tmp = Path(directory)
+                  write_timeout(tmp)
                   node = tmp / 'node'
                   node.write_text('#!/usr/bin/env python3\n' + '''import json, os, pathlib, sys
           root = pathlib.Path(os.environ['FIXTURE_ROOT'])
@@ -118,17 +148,29 @@ jobs:
           assert attempt <= len(results), 'Unexpected extra retry'
           message, status = results[attempt - 1]
           print(message, file=sys.stderr)
+          if os.environ.get('FIXTURE_EXHAUST_RETRY'):
+              (root / 'uptime').write_text('5000.00 0.00\\n')
           sys.exit(status)
           ''')
                   node.chmod(0o755)
                   env = {**os.environ, 'PATH': str(tmp) + os.pathsep + os.environ['PATH'],
-                         'SONAR_EVENT_NAME': 'push', 'RUNNER_TEMP': str(tmp), 'FIXTURE_ROOT': str(tmp),
+                         'SONAR_EVENT_NAME': 'push', 'SONAR_REF_NAME': 'main', 'RUNNER_TEMP': str(tmp), 'FIXTURE_ROOT': str(tmp),
                          'FIXTURE_RESULTS': json.dumps(results), 'INPUT_SKIPSIGNATUREVERIFICATION': 'false',
                          'GITHUB_STEP_SUMMARY': str(tmp / 'summary.md')}
+                  env['FIXTURE_TIMEOUT'] = '2280s'
+                  elapsed = 0
+                  if label in ('initial clock tick', 'slow PR setup', 'setup exhausts budget'):
+                      env.update(SONAR_EVENT_NAME='pull_request', SONAR_REF_NAME='feature/test')
+                      elapsed = {'initial clock tick': 1, 'slow PR setup': 120, 'setup exhausts budget': 1590}[label]
+                      env['FIXTURE_TIMEOUT'] = f'{1590 - elapsed}s'
+                  if label == 'maintenance dispatch':
+                      env.update(SONAR_EVENT_NAME='workflow_dispatch', SONAR_REF_NAME='maintenance/rc.123')
+                  if label == 'insufficient retry budget': env['FIXTURE_EXHAUST_RETRY'] = '1'
                   started = time.monotonic()
-                  run = subprocess.run(['bash', '-e', '-o', 'pipefail', '-c', wrapper], env=env,
-                                       text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-                  attempts = int((tmp / 'attempts').read_text())
+                  case_wrapper = prepare_clock(tmp, env, elapsed)
+                  run = subprocess.run(['bash', '-e', '-o', 'pipefail', '-c', case_wrapper], env=env,
+                                       text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=15)
+                  attempts = int((tmp / 'attempts').read_text()) if (tmp / 'attempts').exists() else 0
                   assert (run.returncode, attempts) == (expected_status, expected_attempts), (label, run.returncode, attempts, run.stdout)
                   upload_retry = 'Retrying Sonar once after report upload timeout' in run.stdout
                   assert upload_retry == (label.startswith('upload') and expected_attempts == 2), (label, run.stdout)
@@ -141,13 +183,16 @@ jobs:
           # A failed log write must never trigger a retry, even if the CE signature was read.
           with tempfile.TemporaryDirectory() as directory:
               tmp = Path(directory)
+              write_timeout(tmp)
               (tmp / 'node').write_text('#!/bin/sh\necho "CE Task finished abnormally" >&2\nexit 3\n')
               (tmp / 'tee').write_text('#!/bin/sh\ncat\nexit 9\n')
               for executable in ['node', 'tee']:
                   (tmp / executable).chmod(0o755)
-              run = subprocess.run(['bash', '-e', '-o', 'pipefail', '-c', wrapper],
-                                   env={**os.environ, 'PATH': str(tmp) + os.pathsep + os.environ['PATH'], 'SONAR_EVENT_NAME': 'push', 'RUNNER_TEMP': str(tmp)},
-                                   text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+              env = {**os.environ, 'PATH': str(tmp) + os.pathsep + os.environ['PATH'], 'SONAR_EVENT_NAME': 'push',
+                     'SONAR_REF_NAME': 'main', 'RUNNER_TEMP': str(tmp), 'FIXTURE_TIMEOUT': '2280s'}
+              case_wrapper = prepare_clock(tmp, env)
+              run = subprocess.run(['bash', '-e', '-o', 'pipefail', '-c', case_wrapper], env=env,
+                                   text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=15)
               assert run.returncode == 9, run.stdout
               assert 'Retrying' not in run.stdout, run.stdout
               print('PASS failed log capture: exit=9, no retry')

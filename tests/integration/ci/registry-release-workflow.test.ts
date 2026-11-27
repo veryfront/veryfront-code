@@ -2335,6 +2335,44 @@ async function parallelJobs(): Promise<Record<string, ParallelJob>> {
 }
 
 describe("RC publication alongside the reused main Sonar scan", () => {
+  it("bounds main retries while retaining a full queue quality-gate allowance", async () => {
+    const graph = await parallelJobs();
+    for (const name of ["sonar", "sonar-main"]) {
+      const job = asRecord(graph[name], name);
+      const step = graph[name].steps.find((entry) => entry.id === "sonar-scan");
+      assert(step, "each scanner job must retain the production wrapper");
+      const wrapper = String(step.run);
+      assertStringIncludes(
+        wrapper,
+        'timeout --signal=TERM --kill-after=30s "${timeout_seconds}s" node',
+      );
+      assertStringIncludes(wrapper, "attempt_seconds=$((27 * 60))");
+      assertStringIncludes(wrapper, "attempt_seconds=$((38 * 60))");
+      assertStringIncludes(wrapper, "push|workflow_dispatch) attempt_seconds=$((38 * 60))");
+      assertEquals(
+        job["timeout-minutes"],
+        "${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && 85 || 28 }}",
+      );
+      assert(85 >= 2 * (38 + 0.5) + 5, "main admits two full attempts plus setup");
+      assertStringIncludes(wrapper, "timeout_seconds=$((remaining_seconds - 30))");
+      assertStringIncludes(
+        wrapper,
+        'if [ "$timeout_seconds" -gt "$attempt_seconds" ]; then timeout_seconds=$attempt_seconds; fi',
+      );
+      assertStringIncludes(wrapper, 'if [ "$timeout_seconds" -le 0 ]; then');
+      assertEquals(graph[name].steps[0].id, "sonar-clock");
+      assertStringIncludes(
+        wrapper,
+        "remaining_seconds=$((SONAR_JOB_DEADLINE - ${uptime%%.*}))",
+      );
+      assertStringIncludes(
+        wrapper,
+        'if [ "$attempt" -gt 1 ] && [ "$remaining_seconds" -lt "$((attempt_seconds + 30))" ]; then',
+      );
+      assertStringIncludes(wrapper, 'if [ "$status" -eq 124 ] || [ "$status" -eq 137 ]; then');
+    }
+  });
+
   it("keeps the reused scan out of publication ancestors and retains fallback scanning", async () => {
     const graph = await parallelJobs();
     assert(graph["sonar-main"], "reuse must have its own parallel scan");

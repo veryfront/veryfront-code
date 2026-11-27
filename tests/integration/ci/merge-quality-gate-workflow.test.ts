@@ -58,6 +58,8 @@ const TESTED_RUN_DOWNLOAD = {
 };
 const SONAR_GATE_JOB_EXPRESSION = `\${{ always() && ${SONAR_REQUIRED_CONDITION} }}`;
 const SONAR_JOB_TIMEOUT_MINUTES = 28;
+const SONAR_JOB_TIMEOUT_EXPRESSION =
+  "${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && 85 || 28 }}";
 const SONAR_QUALITY_GATE_TIMEOUT_SECONDS = 1200;
 const SONAR_CHECK_NAME = "SonarQube Cloud quality gate";
 const SONAR_SCAN_CHECK_NAME = "SonarQube Cloud scan";
@@ -133,7 +135,10 @@ function longestJobPathMinutes(
   );
 
   const job = asRecord(jobs[jobName], `${jobName} job`);
-  const configuredTimeout = Number(job["timeout-minutes"]);
+  // This traversal models merge-queue execution, never the main-only scan budget.
+  const configuredTimeout = job["timeout-minutes"] === SONAR_JOB_TIMEOUT_EXPRESSION
+    ? SONAR_JOB_TIMEOUT_MINUTES
+    : Number(job["timeout-minutes"]);
   assert(
     Number.isFinite(configuredTimeout) && configuredTimeout > 0,
     `${jobName} must have a positive timeout-minutes value`,
@@ -285,6 +290,12 @@ describe("merge quality gate workflow", () => {
     try {
       await Deno.writeTextFile(`${dir}/node`, '#!/bin/sh\nprintf "%s" "$INPUT_ARGS"\n');
       await Deno.chmod(`${dir}/node`, 0o755);
+      await Deno.writeTextFile(
+        `${dir}/timeout`,
+        '#!/bin/sh\nlimit=1590s\ncase "$SONAR_EVENT_NAME" in push|workflow_dispatch) limit=2280s;; esac\n[ "$1" = "--signal=TERM" ] && [ "$2" = "--kill-after=30s" ] && [ "$3" = "$limit" ] || exit 99\nshift 3\nexec "$@"\n',
+      );
+      await Deno.chmod(`${dir}/timeout`, 0o755);
+      await Deno.writeTextFile(`${dir}/uptime`, "1000.00 0.00\n");
       const ref = "gh-readonly-queue/main/pr-4910-abcdef012345";
       for (
         const [event, branch, expected, code] of [
@@ -296,6 +307,7 @@ describe("merge quality gate workflow", () => {
           ],
           ["pull_request", "feature/test", "", 0],
           ["push", "main", "", 0],
+          ["workflow_dispatch", "maintenance/rc.123", "", 0],
           ["merge_group", "main", "Invalid merge queue ref", 1],
           [
             "merge_group",
@@ -306,11 +318,16 @@ describe("merge quality gate workflow", () => {
         ] as const
       ) {
         const output = await new Deno.Command("bash", {
-          args: ["-c", 'PATH="$FIXTURE_BIN_DIR:$PATH"\n' + String(step.run)],
+          args: [
+            "-c",
+            'PATH="$FIXTURE_BIN_DIR:$PATH"\n' +
+            String(step.run).replaceAll("/proc/uptime", `${dir}/uptime`),
+          ],
           env: {
             FIXTURE_BIN_DIR: dir,
             RUNNER_TEMP: dir,
             SONAR_EVENT_NAME: event,
+            SONAR_JOB_DEADLINE: ["push", "workflow_dispatch"].includes(event) ? "6040" : "2620",
             SONAR_REF_NAME: branch,
             INPUT_ARGS: "",
           },
@@ -422,7 +439,11 @@ describe("merge quality gate workflow", () => {
       await readRepoFile("sonar-project.properties"),
     );
 
-    assertEquals(sonar["timeout-minutes"], SONAR_JOB_TIMEOUT_MINUTES);
+    assertEquals(sonar["timeout-minutes"], SONAR_JOB_TIMEOUT_EXPRESSION);
+    assertEquals(
+      asRecord(jobs["sonar-main"], "reused main Sonar job")["timeout-minutes"],
+      SONAR_JOB_TIMEOUT_EXPRESSION,
+    );
     assertEquals(
       sonarProperties.get("sonar.qualitygate.wait"),
       "true",
@@ -619,6 +640,25 @@ describe("merge quality gate workflow", () => {
     assert(Array.isArray(sonar.steps), "sonar steps must be an array");
     const steps = sonar.steps.map((step) => asRecord(step, "sonar step"));
     assertEquals(sonar.needs, ["sonar-coverage", "tested-run", "version-check"]);
+    const clock = steps[0];
+    assertEquals(clock.name, "Record the monotonic Sonar job deadline");
+    assertEquals(clock.id, "sonar-clock");
+    assertEquals(clock.shell, "bash");
+    assertEquals(clock.uses, undefined);
+    assertEquals(clock.env, { SONAR_EVENT_NAME: "${{ github.event_name }}" });
+    assertEquals(
+      clock.run,
+      `set -euo pipefail
+read -r uptime _ < /proc/uptime
+job_started=\${uptime%%.*}
+case "$SONAR_EVENT_NAME" in
+  push|workflow_dispatch) job_seconds=$((85 * 60)) ;;
+  *) job_seconds=$((28 * 60)) ;;
+esac
+# Leave one minute for the gate fold, action post steps and job cleanup.
+echo "deadline=$((job_started + job_seconds - 60))" >> "$GITHUB_OUTPUT"
+`,
+    );
     const sonarDownloadIndex = steps.findIndex((step) =>
       step.name === "Download merged Sonar coverage"
     );
@@ -704,17 +744,39 @@ write_sonar_summary() {
   } >> "$GITHUB_STEP_SUMMARY" || true
 }
 trap write_sonar_summary EXIT
+attempt_seconds=$((27 * 60))
+case "$SONAR_EVENT_NAME" in
+  push|workflow_dispatch) attempt_seconds=$((38 * 60)) ;;
+esac
+[[ "$SONAR_JOB_DEADLINE" =~ ^[0-9]{1,12}$ ]] || exit 1
+status=124
 for attempt in 1 2; do
+  read -r uptime _ < /proc/uptime
+  remaining_seconds=$((SONAR_JOB_DEADLINE - \${uptime%%.*}))
+  if [ "$attempt" -gt 1 ] && [ "$remaining_seconds" -lt "$((attempt_seconds + 30))" ]; then
+    echo "::error::Insufficient budget for a complete Sonar attempt; refusing an automatic retry"
+    exit "$status"
+  fi
+  timeout_seconds=$((remaining_seconds - 30))
+  if [ "$timeout_seconds" -gt "$attempt_seconds" ]; then timeout_seconds=$attempt_seconds; fi
+  if [ "$timeout_seconds" -le 0 ]; then
+    echo "::error::Sonar job budget exhausted during setup; refusing to start a scanner"
+    exit "$status"
+  fi
   log="$RUNNER_TEMP/sonar-attempt-$attempt.log"
   echo "Sonar scan attempt $attempt of 2"
   set +e
-  node "$RUNNER_TEMP/sonarqube-scan-action/dist/index.js" 2>&1 | tee "$log"
+  timeout --signal=TERM --kill-after=30s "\${timeout_seconds}s" node "$RUNNER_TEMP/sonarqube-scan-action/dist/index.js" 2>&1 | tee "$log"
   statuses=("\${PIPESTATUS[@]}")
   set -e
   if [ "\${statuses[1]}" -ne 0 ]; then
     exit "\${statuses[1]}"
   fi
   status="\${statuses[0]}"
+  if [ "$status" -eq 124 ] || [ "$status" -eq 137 ]; then
+    echo "::error::Sonar attempt exceeded its \${timeout_seconds}-second bound; refusing an automatic retry"
+    exit "$status"
+  fi
   if [ "$status" -eq 0 ] || [ "$attempt" -eq 2 ]; then
     exit "$status"
   fi
@@ -737,6 +799,7 @@ done
     );
     assertEquals(asRecord(scanStep.env, "Sonar scan environment"), {
       SONAR_TOKEN: "\${{ secrets.SONAR_TOKEN }}",
+      SONAR_JOB_DEADLINE: "${{ steps.sonar-clock.outputs.deadline }}",
       SONAR_EVENT_NAME: "${{ github.event_name }}",
       SONAR_REF_NAME: "${{ github.ref_name }}",
       INPUT_ARGS: "",
@@ -751,9 +814,9 @@ done
     );
     assertStringIncludes(retryContract, "mixed gate and server text");
     assertStringIncludes(retryContract, "failed log capture");
-    assertStringIncludes(retryContract, "wrapper], env=env");
+    assertStringIncludes(retryContract, "case_wrapper], env=env");
     for (const [index, step] of steps.entries()) {
-      if (index === fetchIndex || index === scanIndex) continue;
+      if (index === 0 || index === fetchIndex || index === scanIndex) continue;
       if (step.name === "Require server-side quality gate") {
         assertEquals(index, scanIndex + 1);
         assertEquals(step.run, sonarGateStep(await readSonarGate()).run);
