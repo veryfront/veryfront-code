@@ -884,12 +884,13 @@ The runtime resolves the reference when it serves the agent's metadata
 | Starter field | Source, in order of precedence            |
 | ------------- | ----------------------------------------- |
 | Label         | `mcp.title`, `description`, the prompt id |
-| Sent text     | `suggestion`, the rendered prompt content |
+| Sent text     | `suggestion`                              |
 
-The runtime leaves out a reference when no prompt has that id, when the
-prompt has a required argument, or when the prompt has no `suggestion` and its
-content does not render within 5 seconds. It logs a warning that names the agent and the
-prompt id. The agent's other starters still show.
+The runtime never renders the prompt's content for a starter, so a prompt
+needs a `suggestion` to show as one. The runtime leaves out a reference when no
+prompt has that id, when the prompt has a required argument, or when the prompt
+has no `suggestion`. It logs a warning that names the agent and the prompt id.
+The agent's other starters still show.
 
 ## Agent configuration
 

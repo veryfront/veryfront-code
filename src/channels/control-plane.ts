@@ -6,7 +6,6 @@ import type { DiscoveryResult } from "#veryfront/discovery";
 import type { HandlerContext } from "#veryfront/types/server.ts";
 import { skillRegistry } from "#veryfront/skill/registry.ts";
 import { promptRegistry } from "#veryfront/prompt/registry.ts";
-import type { Prompt } from "#veryfront/prompt/types.ts";
 import { agentLogger } from "#veryfront/utils/logger/index.ts";
 import { privateJsonParse } from "#veryfront/security/private-json.ts";
 import {
@@ -928,14 +927,11 @@ function normalizeConfiguredSuggestions(value: unknown): unknown {
 }
 
 const suggestionLogger = agentLogger.component("agent-suggestions");
-const PROMPT_SUGGESTION_RENDER_TIMEOUT_MS = 5_000;
 
 type PromptSuggestionSkipReason =
   | "prompt-not-found"
   | "prompt-requires-arguments"
-  | "prompt-render-failed"
-  | "prompt-render-timed-out"
-  | "prompt-empty";
+  | "prompt-no-suggestion";
 
 function skipPromptSuggestion(
   agentId: string,
@@ -946,57 +942,12 @@ function skipPromptSuggestion(
     ? "no prompt with this id is registered"
     : reason === "prompt-requires-arguments"
     ? "the prompt has a required argument"
-    : reason === "prompt-render-failed"
-    ? "the prompt content could not be rendered"
-    : reason === "prompt-render-timed-out"
-    ? "the prompt content did not render within 5 seconds"
-    : "the prompt has no suggestion or content";
+    : "the prompt has no suggestion";
   suggestionLogger.warn(
     `Agent "${agentId}" suggestion skipped: prompt "${promptId}" is not shown because ${detail}`,
     { agentId, promptId, reason },
   );
   return undefined;
-}
-
-const PROMPT_RENDER_TIMED_OUT = Symbol("prompt-render-timed-out");
-const PROMPT_RENDER_FAILED = Symbol("prompt-render-failed");
-
-/**
- * Render a prompt's static content with no arguments, bounded by a host-owned
- * timer. A custom `Prompt` can ignore its render context, so the deadline alone
- * cannot stop it: the render is raced against the timer and its signal aborted.
- */
-async function renderPromptSuggestionContent(
-  registered: Prompt,
-): Promise<string | typeof PROMPT_RENDER_TIMED_OUT | typeof PROMPT_RENDER_FAILED> {
-  // Loaded lazily: prompt/factory.ts reaches the agent runtime, whose skill
-  // metadata loader awaits ext-yaml at module load. The standalone proxy imports
-  // this module but does not bundle ext-yaml, so a static import crashes it.
-  const { getPromptDeadlineRuntime } = await import("#veryfront/prompt/factory.ts");
-  const runtime = getPromptDeadlineRuntime();
-  const controller = new AbortController();
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const timedOut = new Promise<typeof PROMPT_RENDER_TIMED_OUT>((resolve) => {
-    timer = runtime.setTimer(() => {
-      controller.abort(new DOMException("Prompt rendering deadline exceeded", "TimeoutError"));
-      resolve(PROMPT_RENDER_TIMED_OUT);
-    }, PROMPT_SUGGESTION_RENDER_TIMEOUT_MS);
-  });
-  const rendering = Promise.resolve().then(() =>
-    registered.getContent({}, {
-      abortSignal: controller.signal,
-      deadline: runtime.now() + PROMPT_SUGGESTION_RENDER_TIMEOUT_MS,
-    })
-  ).then(
-    (content): string | typeof PROMPT_RENDER_TIMED_OUT | typeof PROMPT_RENDER_FAILED => content,
-    () => controller.signal.aborted ? PROMPT_RENDER_TIMED_OUT : PROMPT_RENDER_FAILED,
-  );
-
-  try {
-    return await Promise.race([rendering, timedOut]);
-  } finally {
-    if (timer !== undefined) runtime.clearTimer(timer);
-  }
 }
 
 function nonBlank(value: unknown): string | undefined {
@@ -1005,31 +956,22 @@ function nonBlank(value: unknown): string | undefined {
 
 /**
  * Resolve a `{ type: "prompt", id }` suggestion against the current project's
- * prompt registry. The chip sends the prompt's `suggestion` text, else its
- * rendered content; the label is `mcp.title`, else `description`, else the id.
+ * prompt registry. The chip sends the prompt's static `suggestion` text; the
+ * label is `mcp.title`, else `description`, else the id. The prompt is never
+ * rendered: the agent metadata routes are public, and a prompt's content can
+ * run project code and depend on the request.
  */
-async function resolvePromptSuggestion(
+function resolvePromptSuggestion(
   agentId: string,
   promptId: string,
-): Promise<RuntimeSuggestion | undefined> {
+): RuntimeSuggestion | undefined {
   const registered = promptRegistry.get(promptId);
   if (!registered) return skipPromptSuggestion(agentId, promptId, "prompt-not-found");
   if (registered.mcp?.arguments?.some((argument) => argument.required === true)) {
     return skipPromptSuggestion(agentId, promptId, "prompt-requires-arguments");
   }
-
-  let text = nonBlank(registered.suggestion);
-  if (text === undefined) {
-    const rendered = await renderPromptSuggestionContent(registered);
-    if (rendered === PROMPT_RENDER_TIMED_OUT) {
-      return skipPromptSuggestion(agentId, promptId, "prompt-render-timed-out");
-    }
-    if (rendered === PROMPT_RENDER_FAILED) {
-      return skipPromptSuggestion(agentId, promptId, "prompt-render-failed");
-    }
-    text = nonBlank(rendered);
-  }
-  if (text === undefined) return skipPromptSuggestion(agentId, promptId, "prompt-empty");
+  const text = nonBlank(registered.suggestion);
+  if (text === undefined) return skipPromptSuggestion(agentId, promptId, "prompt-no-suggestion");
 
   return {
     id: promptId,
@@ -1053,25 +995,25 @@ function hasBlankField(suggestion: RuntimeSuggestion): boolean {
  * Parse an agent's configured suggestions one entry at a time, so one bad
  * entry is left out instead of dropping every suggestion the agent has.
  */
-async function resolveRuntimeSuggestions(
+function resolveRuntimeSuggestions(
   agentId: string,
   configured: unknown,
-): Promise<RuntimeSuggestions | undefined> {
+): RuntimeSuggestions | undefined {
   const normalized = normalizeConfiguredSuggestions(configured);
   if (!isRecord(normalized) || !Array.isArray(normalized.suggestions)) return undefined;
   const envelope = RuntimeSuggestionsSchema.safeParse({ ...normalized, suggestions: [] });
   if (!envelope.success) return undefined;
 
   const entries = normalized.suggestions;
-  const resolved = await Promise.all(entries.map(async (entry) => {
+  const resolved = entries.map((entry) => {
     const parsed = RuntimeSuggestionSchema.safeParse(entry);
     if (!parsed.success || hasBlankField(parsed.data)) return undefined;
     const suggestion = parsed.data;
     if (suggestion.type === "prompt" && "id" in suggestion && suggestion.id !== undefined) {
-      return await resolvePromptSuggestion(agentId, suggestion.id);
+      return resolvePromptSuggestion(agentId, suggestion.id);
     }
     return suggestion;
-  }));
+  });
   const suggestions = resolved.filter((entry): entry is RuntimeSuggestion => entry !== undefined);
   if (
     suggestions.length === 0 && entries.length > 0 && envelope.data.welcomeMessage === undefined
@@ -1094,7 +1036,7 @@ export async function getRuntimeAgentPublicMetadata(
   const rawConfig = agent.config;
   const suggestions = rawConfig.suggestions === undefined
     ? undefined
-    : await resolveRuntimeSuggestions(id, rawConfig.suggestions);
+    : resolveRuntimeSuggestions(id, rawConfig.suggestions);
   const avatarUrl = typeof rawConfig.avatarUrl === "string" && rawConfig.avatarUrl.trim().length > 0
     ? rawConfig.avatarUrl
     : typeof rawConfig.avatar_url === "string" && rawConfig.avatar_url.trim().length > 0

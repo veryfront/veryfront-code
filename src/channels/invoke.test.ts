@@ -6,6 +6,7 @@ import { createError, toError } from "#veryfront/errors/veryfront-error.ts";
 import { assertEquals, assertExists, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import type { HandlerContext } from "#veryfront/types";
+import { promptRegistry, promptRegistryInternal } from "#veryfront/prompt/registry.ts";
 import { base64urlEncode, base64urlEncodeBytes } from "#veryfront/utils/base64url.ts";
 import {
   buildChannelResponseParts,
@@ -409,6 +410,38 @@ describe("channels/invoke", () => {
           ],
         }),
       );
+    });
+
+    it("does not render prompt starters it never returns", async () => {
+      promptRegistryInternal.clearAll();
+      try {
+        let renders = 0;
+        promptRegistry.register("starter", {
+          id: "starter",
+          description: "A starter",
+          getContent: () => {
+            renders += 1;
+            return Promise.resolve("Start here.");
+          },
+        });
+        const response = await listChannelAssistants(createHandlerContext(), {
+          ensureProjectDiscovery: async () => createEmptyDiscoveryResult(),
+          getAgent: (id) => ({
+            ...createAgent({ id }),
+            config: {
+              system: "You are Alpha.",
+              name: "Alpha",
+              suggestions: [{ type: "prompt", id: "starter" }],
+            } as unknown as Agent["config"],
+          }),
+          getAllAgentIds: () => ["assistant-a"],
+        });
+
+        assertEquals(renders, 0);
+        assertEquals(response.assistants.map((assistant) => assistant.id), ["assistant-a"]);
+      } finally {
+        promptRegistryInternal.clearAll();
+      }
     });
 
     it("validates assistants request payload shape", () => {

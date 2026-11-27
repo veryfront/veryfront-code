@@ -9,12 +9,7 @@ import { createRuntimeAgentFromMarkdownDefinition } from "#veryfront/agent";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { registerSkill } from "#veryfront/skill/registry.ts";
-import {
-  prompt,
-  resetPromptDeadlineRuntimeForTests,
-  setPromptDeadlineRuntimeForTests,
-} from "#veryfront/prompt/factory.ts";
-import type { PromptRenderContext } from "#veryfront/prompt/types.ts";
+import { prompt } from "#veryfront/prompt/factory.ts";
 import { promptRegistry, promptRegistryInternal } from "#veryfront/prompt/registry.ts";
 import { __subscribeLogRecordEmitter, type LogEntry } from "#veryfront/utils/logger/logger.ts";
 import type { HandlerContext } from "#veryfront/types";
@@ -690,6 +685,7 @@ describe("prompt-reference suggestions", () => {
         id: "weekly-summary",
         description: "Summarize the week",
         content: "Summarize what shipped this week.",
+        suggestion: "Summarize what shipped this week.",
       }),
     );
     promptRegistry.register(
@@ -698,6 +694,7 @@ describe("prompt-reference suggestions", () => {
         id: "untitled",
         description: "",
         content: "Draft a release note.",
+        suggestion: "Draft a release note.",
       }),
     );
     promptRegistry.register(
@@ -742,7 +739,7 @@ describe("prompt-reference suggestions", () => {
     }
   });
 
-  it("falls back to rendered content, then description, then id", async () => {
+  it("labels a starter with the description, then the id", async () => {
     promptRegistryInternal.clearAll();
     try {
       registerPrompts();
@@ -861,46 +858,52 @@ describe("prompt-reference suggestions", () => {
     });
   });
 
-  it("leaves out a prompt whose renderer stalls past the timeout, and cancels it", async () => {
+  it("leaves out a prompt without a suggestion and never renders it", async () => {
     promptRegistryInternal.clearAll();
-    const timers: Array<{ callback: () => void; delayMs: number }> = [];
-    setPromptDeadlineRuntimeForTests({
-      now: () => 0,
-      setTimer: (callback, delayMs) => {
-        timers.push({ callback, delayMs });
-        return timers.length as unknown as ReturnType<typeof setTimeout>;
-      },
-      clearTimer: () => {},
-    });
     const logs = captureSuggestionLogs();
-    let received: Readonly<PromptRenderContext> | undefined;
+    const calls = { getContent: 0, generate: 0 };
     try {
       registerPrompts();
-      // A custom definition that ignores its render context and never settles.
-      promptRegistry.register("stalled", {
-        id: "stalled",
-        description: "Stalls forever",
-        getContent: (_variables, context) => {
-          received = context;
-          return new Promise<string>(() => {});
+      promptRegistry.register("content-only", {
+        id: "content-only",
+        description: "Has content but no suggestion",
+        getContent: () => {
+          calls.getContent += 1;
+          return Promise.resolve("Rendered content.");
         },
       });
+      promptRegistry.register(
+        "generated",
+        prompt({
+          id: "generated",
+          description: "Generates its content",
+          generate: () => {
+            calls.generate += 1;
+            return "Generated content.";
+          },
+        }),
+      );
+      promptRegistry.register(
+        "blank-suggestion",
+        prompt({
+          id: "blank-suggestion",
+          description: "Blank suggestion",
+          content: "Some content.",
+          suggestion: "   ",
+        }),
+      );
 
-      const pending = getRuntimeAgentPublicMetadata(
+      const metadata = await getRuntimeAgentPublicMetadata(
         "support",
         createAgent({
           suggestions: [
-            { type: "prompt", id: "stalled" },
+            { type: "prompt", id: "content-only" },
+            { type: "prompt", id: "generated" },
+            { type: "prompt", id: "blank-suggestion" },
             { type: "prompt", id: "triage-ticket" },
           ],
         }),
       );
-      await new Promise((resolve) => setTimeout(resolve, 0));
-
-      const watchdog = timers.find((timer) => timer.delayMs === 5_000);
-      assertEquals(watchdog !== undefined, true, "the render is raced against a 5-second timer");
-      watchdog!.callback();
-      const metadata = await pending;
 
       assertEquals(metadata.suggestions, {
         suggestions: [{
@@ -910,24 +913,20 @@ describe("prompt-reference suggestions", () => {
           prompt: "Triage the newest open ticket.",
         }],
       });
-      assertEquals(received?.abortSignal?.aborted, true, "the stalled render is cancelled");
+      assertEquals(calls, { getContent: 0, generate: 0 }, "a starter never renders its prompt");
       assertEquals(
         logs.records.map((record) => ({
-          level: record.level,
-          agentId: record.agent_id,
           promptId: record.context?.promptId,
           reason: record.context?.reason,
         })),
-        [{
-          level: "warn",
-          agentId: "support",
-          promptId: "stalled",
-          reason: "prompt-render-timed-out",
-        }],
+        [
+          { promptId: "content-only", reason: "prompt-no-suggestion" },
+          { promptId: "generated", reason: "prompt-no-suggestion" },
+          { promptId: "blank-suggestion", reason: "prompt-no-suggestion" },
+        ],
       );
     } finally {
       logs.stop();
-      resetPromptDeadlineRuntimeForTests();
       promptRegistryInternal.clearAll();
     }
   });

@@ -57,12 +57,13 @@ import type { EdgeConfig, MemoryConfig } from "./schemas/index.ts";
  *
  * A prompt reference names a prompt in `prompts/`. The starter label is the
  * prompt's `mcp.title`, else its `description`, else the id. Selecting it sends
- * the prompt's `suggestion`, else its rendered content. A missing prompt, or a
- * prompt with a required argument, is left out and logged.
+ * the prompt's `suggestion`; the prompt is never rendered. A missing prompt, a
+ * prompt with a required argument, or a prompt without a `suggestion` is left
+ * out and logged.
  *
  * @example
  * ```ts
- * suggestions: [{ type: "prompt", id: "triage-ticket" }]
+ * suggestions: [{ type: "prompt", id: "triageTicket" }]
  * ```
  */
 export type Suggestion =
@@ -376,7 +377,7 @@ export interface AgentConfig<TOutput = any> {
    * suggestions: [
    *   "Summarize this ticket",
    *   { title: "Plan work", prompt: "Turn this idea into a concrete plan." },
-   *   { type: "prompt", id: "triage-ticket" },
+   *   { type: "prompt", id: "triageTicket" },
    * ]
    * ```
    */

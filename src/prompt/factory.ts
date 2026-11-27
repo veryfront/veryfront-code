@@ -241,15 +241,6 @@ function promptDeadlineRuntime(): PromptDeadlineRuntime {
   return promptDeadlineRuntimeOverride ?? defaultPromptDeadlineRuntime;
 }
 
-/**
- * Framework-internal: the clock and timers captured at module load (or the test
- * override), for callers that must bound a prompt render that ignores its
- * render context.
- */
-export function getPromptDeadlineRuntime(): PromptDeadlineRuntime {
-  return promptDeadlineRuntime();
-}
-
 /** Inject a controlled clock and timers so tests can cross a deadline without real waiting. */
 export function setPromptDeadlineRuntimeForTests(
   runtime: PromptDeadlineRuntime,
