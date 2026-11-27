@@ -110,6 +110,8 @@ export interface ExecutorChannel {
   /** Resolves after closure and actual handler/owned transport cleanup. Keep admission until this settles. */
   readonly settled: Promise<void>;
   readonly signal: AbortSignal;
+  /** Actual per-direction admission budget, when supplied by the channel implementation. */
+  readonly maxConcurrentCalls?: number;
   request(operation: string, input: JsonValue, options?: ExecutorCallOptions): Promise<JsonValue>;
   /** Single consumer. Concurrent next() calls reject without adding a waiter. */
   stream(
@@ -239,6 +241,10 @@ class Channel implements ExecutorChannel {
       this.#readLoopDone = true;
       this.#settle();
     });
+  }
+
+  get maxConcurrentCalls(): number {
+    return this.#maxCalls;
   }
 
   get ready(): Promise<void> {

@@ -69,8 +69,12 @@ it("project approval handles a decision arriving before its request stream ackno
           toolName: "project-transfer",
           toolCallId: "call-1",
           channel: {
-            request: async (operation, value) => {
-              if (operation === PROJECT_TOOL_APPROVAL_REQUEST) return await f.read(value);
+            request: async (operation, value, options) => {
+              const context = {
+                ...operationContext(),
+                ...(options?.signal ? { signal: options.signal } : {}),
+              };
+              if (operation === PROJECT_TOOL_APPROVAL_REQUEST) return await f.read(value, context);
               assertEquals(operation, PROJECT_TOOL_APPROVAL_DECISION);
               return await f.reply(value);
             },
@@ -233,8 +237,15 @@ it("project approval keeps large admitted arguments out of progress while delive
         toolName: "project-transfer",
         toolCallId: "call-1",
         channel: {
-          request: async (operation, value) =>
-            await (operation === PROJECT_TOOL_APPROVAL_REQUEST ? f.read(value) : f.reply(value)),
+          request: async (operation, value, options) => {
+            const context = {
+              ...operationContext(),
+              ...(options?.signal ? { signal: options.signal } : {}),
+            };
+            return await (operation === PROJECT_TOOL_APPROVAL_REQUEST
+              ? f.read(value, context)
+              : f.reply(value, context));
+          },
         },
         gate: (input) => {
           assertEquals(input.input, { document });
@@ -247,5 +258,105 @@ it("project approval keeps large admitted arguments out of progress while delive
     assertEquals(await call.gate(largeRequest), approved);
   } finally {
     call.close();
+  }
+});
+
+it("project approval observes an already aborted request-specific signal before publishing", async () => {
+  const f = fixture();
+  const signal = AbortSignal.abort();
+  let published = 0;
+  const call = f.receiver.forCall("project-transfer", {
+    toolCallId: "call-1",
+    publishDataEvent: () => {
+      published++;
+    },
+  });
+  const waiting = call.gate(request, signal);
+  call.close();
+  await assertRejects(() => waiting);
+  assertEquals(published, 0);
+});
+
+it("project approval retires a pending nonce when only the request-specific signal aborts", async () => {
+  const f = fixture();
+  const emitted = Promise.withResolvers<ToolExecutionDataEvent>();
+  const requestSignal = new AbortController();
+  const callSignal = new AbortController();
+  const call = f.receiver.forCall("project-transfer", {
+    toolCallId: "call-1",
+    abortSignal: callSignal.signal,
+    publishDataEvent: (event) => {
+      emitted.resolve(event);
+    },
+  });
+  const waiting = call.gate(request, requestSignal.signal);
+  const event = eventValue(await emitted.promise);
+  try {
+    requestSignal.abort();
+    assertThrows(() => f.reply({ approvalRequestId: event.approvalRequestId, decision: approved }));
+    assertEquals(callSignal.signal.aborted, false);
+    assertEquals(f.lifetime.signal.aborted, false);
+  } finally {
+    call.close();
+    await assertRejects(() => waiting);
+  }
+});
+
+it("request cancellation also stops the host gate while its progress acknowledgement is pending", async () => {
+  const f = fixture();
+  const entered = Promise.withResolvers<void>();
+  const stopped = Promise.withResolvers<void>();
+  const requestSignal = new AbortController();
+  let decisions = 0;
+  const call = f.receiver.forCall("project-transfer", {
+    toolCallId: "call-1",
+    publishDataEvent: async (event) => {
+      await handleProjectToolApproval(event, {
+        toolName: "project-transfer",
+        toolCallId: "call-1",
+        signal: f.lifetime.signal,
+        channel: {
+          request: async (operation, value, options) => {
+            const context = {
+              ...operationContext(),
+              signal: options?.signal ?? operationContext().signal,
+            };
+            if (operation === PROJECT_TOOL_APPROVAL_REQUEST) return await f.read(value, context);
+            decisions++;
+            return await f.reply(value, context);
+          },
+        },
+        gate: (_request, signal) =>
+          new Promise((_resolve, reject) => {
+            const abort = () => {
+              stopped.resolve();
+              reject(new Error("Host gate cancelled"));
+            };
+            signal!.addEventListener("abort", abort, { once: true });
+            if (signal!.aborted) abort();
+            entered.resolve();
+          }),
+      });
+    },
+  });
+  const waiting = call.gate(request, requestSignal.signal);
+  try {
+    await entered.promise;
+    requestSignal.abort();
+    const deadline = AbortSignal.timeout(1000);
+    await new Promise<void>((resolve, reject) => {
+      const timeout = () => reject(new Error("Request cancellation did not stop the host gate"));
+      deadline.addEventListener("abort", timeout, { once: true });
+      void stopped.promise.then(() => {
+        deadline.removeEventListener("abort", timeout);
+        resolve();
+      });
+    });
+    assertEquals(decisions, 0);
+    assertEquals(f.lifetime.signal.aborted, false);
+  } finally {
+    f.lifetime.abort();
+    call.close();
+    await assertRejects(() => waiting);
   }
 });

@@ -979,14 +979,8 @@ describe("managed durable broker handler", () => {
         assert(started);
         const gate = getHostedToolApprovalCapability(started, "run-1");
         assertEquals(typeof gate, privateMapping ? "function" : "undefined");
-        assertEquals(
-          getHostedToolApprovalCapability({
-            projectId,
-            runId: "run-1",
-            approvalRunId: canonicalRunId,
-          }, "run-1"),
-          undefined,
-        );
+        const publicCopy = { projectId, runId: "run-1", approvalRunId: canonicalRunId };
+        assertEquals(getHostedToolApprovalCapability(publicCopy, "run-1"), undefined);
         if (gate) {
           await assertRejects(() =>
             gate({ toolName: "transfer", toolCallId: "call-1", input: {}, policy: {} })
@@ -1126,6 +1120,7 @@ async function request(
   requestPath = path,
   runId = "run-1",
   sourceAuthToken?: string,
+  canonicalRunId?: string,
 ) {
   const body = JSON.stringify({
     run: {
@@ -1133,6 +1128,9 @@ async function request(
       agentId: "builder",
       conversationId: "00000000-0000-4000-8000-000000000001",
       runId,
+      ...(canonicalRunId
+        ? { eventCursor: { canonicalRunId, latestEventId: 0, latestExternalEventSequence: 0 } }
+        : {}),
       messageId: "00000000-0000-4000-8000-000000000002",
       inputAnchorMessageId: "00000000-0000-4000-8000-000000000003",
       requestedByUserId: userId,
@@ -1844,67 +1842,83 @@ describe("managed broker handler", () => {
     assertEquals(f.cleanupCalls, 1);
   });
 
-  it("privately binds approval to execution authority, run and cancellation", async () => {
-    const first = await request(undefined, path, "run-1", "source-only-token");
-    const fixture = runtimeFixture();
-    const execution = new AbortController();
-    let started: ManagedExecutorStartInput | undefined;
-    const auth: string[] = [];
-    const managed = createManagedBrokerHandler({
-      responseMode: "detached",
-      approvalApiBaseUrl: "https://approval.example.test",
-      approvalFetch: ((_url, init) => {
-        auth.push(new Headers(init?.headers).get("authorization") ?? "");
-        return Promise.reject(new Error("synthetic approval transport"));
-      }) as typeof fetch,
-      broker: {
-        start(input) {
-          started = input;
-          return Promise.resolve(fixture.runtime);
+  for (const canonicalMapping of [false, true]) {
+    it(`privately binds approval to execution authority, run and cancellation (canonical=${canonicalMapping})`, async () => {
+      const first = await request(
+        undefined,
+        path,
+        "run-1",
+        "source-only-token",
+        canonicalMapping ? "30000000-3000-4000-8000-300000000001" : undefined,
+      );
+      const fixture = runtimeFixture();
+      const execution = new AbortController();
+      let started: ManagedExecutorStartInput | undefined;
+      const auth: string[] = [];
+      const managed = createManagedBrokerHandler({
+        responseMode: "detached",
+        approvalApiBaseUrl: "https://approval.example.test",
+        approvalFetch: ((url, init) => {
+          assertEquals(
+            String(url),
+            "https://approval.example.test/runs/30000000-3000-4000-8000-300000000001/input-requests",
+          );
+          auth.push(new Headers(init?.headers).get("authorization") ?? "");
+          return Promise.reject(new Error("synthetic approval transport"));
+        }) as typeof fetch,
+        broker: {
+          start(input) {
+            started = input;
+            return Promise.resolve(fixture.runtime);
+          },
         },
-      },
-      resolveIngressOptions: () => ({
-        publicKeyPem: first.publicKeyPem,
-        audience: "demo-project",
-        projectId,
-        expectedSurface: "studio",
-        boundSource: { type: "release", releaseId: "release-1" },
-        expectedOwner: { scopeKind: "project", projectId },
-        authorizeScope: () => ({ userId }),
-      }),
-      prepare: () =>
-        Promise.resolve({
-          start: managedStart({ agentId: "builder" }),
-          messages: [],
-          executionSignal: execution.signal,
-          output: { write: () => Promise.resolve(), finish: () => Promise.resolve() },
+        resolveIngressOptions: () => ({
+          publicKeyPem: first.publicKeyPem,
+          audience: "demo-project",
+          projectId,
+          expectedSurface: "studio",
+          boundSource: { type: "release", releaseId: "release-1" },
+          expectedOwner: { scopeKind: "project", projectId },
+          authorizeScope: () => ({ userId }),
         }),
+        prepare: () =>
+          Promise.resolve({
+            start: managedStart({ agentId: "builder" }),
+            messages: [],
+            executionSignal: execution.signal,
+            output: { write: () => Promise.resolve(), finish: () => Promise.resolve() },
+          }),
+      });
+      try {
+        const response = await managed.handle(first.request);
+        assertEquals(response.status, 202, await response.clone().text());
+        assert(started);
+        const gate = getHostedToolApprovalCapability(started, "run-1");
+        if (!canonicalMapping) {
+          assertEquals(gate, undefined);
+          return;
+        }
+        assert(gate);
+        assertEquals(getHostedToolApprovalCapability(started, "other-run"), undefined);
+        assertEquals(getHostedToolApprovalCapability({ runId: "run-1" }, "run-1"), undefined);
+        assertEquals(JSON.stringify(started).includes("api-token"), false);
+        assertEquals(JSON.stringify(started).includes("source-only-token"), false);
+        const call = { toolName: "transfer", toolCallId: "call-1", input: {}, policy: {} };
+        await assertRejects(() => gate(call));
+        assertEquals(auth, ["Bearer api-token"]);
+        const stream = new AbortController();
+        stream.abort();
+        assertThrows(() => gate(call, stream.signal));
+        assertEquals(auth.length, 1);
+        execution.abort();
+        assertThrows(() => gate(call));
+        assertEquals(auth.length, 1);
+      } finally {
+        fixture.release();
+        await managed.close();
+      }
     });
-    try {
-      const response = await managed.handle(first.request);
-      assertEquals(response.status, 202, await response.clone().text());
-      assert(started);
-      const gate = getHostedToolApprovalCapability(started, "run-1");
-      assert(gate);
-      assertEquals(getHostedToolApprovalCapability(started, "other-run"), undefined);
-      assertEquals(getHostedToolApprovalCapability({ runId: "run-1" }, "run-1"), undefined);
-      assertEquals(JSON.stringify(started).includes("api-token"), false);
-      assertEquals(JSON.stringify(started).includes("source-only-token"), false);
-      const call = { toolName: "transfer", toolCallId: "call-1", input: {}, policy: {} };
-      await assertRejects(() => gate(call));
-      assertEquals(auth, ["Bearer api-token"]);
-      const stream = new AbortController();
-      stream.abort();
-      assertThrows(() => gate(call, stream.signal));
-      assertEquals(auth.length, 1);
-      execution.abort();
-      assertThrows(() => gate(call));
-      assertEquals(auth.length, 1);
-    } finally {
-      fixture.release();
-      await managed.close();
-    }
-  });
+  }
 
   it("binds signed broker authority to trusted managed hosted knowledge", async () => {
     const first = await request();

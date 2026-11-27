@@ -1,3 +1,5 @@
+import { projectToolChannelAdmission } from "./project-tool-channel-admission.ts";
+import { joinPrivateAbortSignals } from "#veryfront/security/private-abort.ts";
 import {
   createProjectToolApprovalReceiver,
   handleProjectToolApproval,
@@ -347,6 +349,7 @@ export async function createExecutorProjectToolSource(
   const limits = executorToolLimits(options.limits);
   const allowed = captureNames(options.allowedToolNames, limits);
   const { channel, signal, assertActive } = options;
+  const admission = projectToolChannelAdmission(channel);
   const check = () => {
     assertActive();
     signal.throwIfAborted();
@@ -467,28 +470,45 @@ export async function createExecutorProjectToolSource(
         ...(call.progressToken === undefined ? {} : { progressToken: call.progressToken }),
       });
       const gate = callField(context, "requestToolApproval");
-      const publisher = call.publishDataEvent;
-      const result = await remote.executeTool(name, args, {
-        ...call,
-        ...(gate ? { requestToolApproval: gate } : {}),
-        publishDataEvent: async (event) => {
-          check();
-          if (
-            await handleProjectToolApproval(event, {
-              channel,
-              toolName: name,
-              toolCallId: call.toolCallId,
-              gate,
-              signal: call.abortSignal ?? signal,
-              maxArgumentBytes: limits.maxArgumentBytes,
-            })
-          ) return;
-          await publisher?.(event);
-          check();
-        },
-      });
-      check();
-      return result;
+      if (gate && !admission.supportsApproval) {
+        throw new TypeError("Project channel cannot carry approval control");
+      }
+      const callSignal = joinPrivateAbortSignals(
+        signal,
+        call.abortSignal
+          ? joinPrivateAbortSignals(call.abortSignal, channel.signal)
+          : channel.signal,
+      );
+      const release = await admission.acquire(callSignal);
+      try {
+        check();
+        callSignal.throwIfAborted();
+        const publisher = call.publishDataEvent;
+        const result = await remote.executeTool(name, args, {
+          ...call,
+          abortSignal: callSignal,
+          ...(gate ? { requestToolApproval: gate } : {}),
+          publishDataEvent: async (event) => {
+            check();
+            if (
+              await handleProjectToolApproval(event, {
+                channel,
+                toolName: name,
+                toolCallId: call.toolCallId,
+                gate,
+                signal: callSignal,
+                maxArgumentBytes: limits.maxArgumentBytes,
+              })
+            ) return;
+            await publisher?.(event);
+            check();
+          },
+        });
+        check();
+        return result;
+      } finally {
+        release();
+      }
     },
   });
 }

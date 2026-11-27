@@ -1,3 +1,4 @@
+import { defineSchema } from "#veryfront/schemas/index.ts";
 import {
   inheritHostedToolApprovalCapability,
   registerHostedToolApprovalCapability,
@@ -166,17 +167,24 @@ function snapshotManagedResumeToolCall(
   >;
 }
 
+type ApprovalBrokerIngress =
+  | BrokerRuntimeAgentIngress<unknown>
+  | ManagedDurableAgentIngressResult
+  | ManagedAgUiAgentIngressResult;
+const getCanonicalApprovalRunIdSchema = defineSchema((v) => v.string().uuid());
+
 function brokerOwnedApprovalCredential(
-  ingress: unknown,
+  ingress: ApprovalBrokerIngress,
   runId: string,
 ): { authToken: string; approvalRunId: string } | undefined {
-  if (ingress === null || typeof ingress !== "object") return undefined;
-  const authority = Object.getOwnPropertyDescriptor(ingress, "privateAuthority")?.value;
-  if (authority !== null && typeof authority === "object") {
-    // Signed broker admission owns execution persistence; sourceAuthToken is never approval authority.
-    const token = Object.getOwnPropertyDescriptor(authority, "apiAuthToken")?.value;
-    return typeof token === "string" && token.length > 0
-      ? { authToken: token, approvalRunId: runId }
+  if ("privateAuthority" in ingress) {
+    const { privateAuthority, executor } = ingress;
+    const cursor = privateAuthority.projectEventPersistence ?? executor.run.eventCursor;
+    const identity = getCanonicalApprovalRunIdSchema().safeParse(cursor?.canonicalRunId ?? runId);
+    // Signed execution identity, never the source credential or an unverified legacy alias.
+    return identity.success && executor.run.runId === runId &&
+        privateAuthority.apiAuthToken.length > 0
+      ? { authToken: privateAuthority.apiAuthToken, approvalRunId: identity.data }
       : undefined;
   }
   const broker = Object.getOwnPropertyDescriptor(ingress, "broker")?.value;
@@ -401,7 +409,7 @@ export function createManagedDurableBrokerHandler(options: {
   });
 }
 
-function createManagedBrokerIngressHandler<TIngress>(options: {
+function createManagedBrokerIngressHandler<TIngress extends ApprovalBrokerIngress>(options: {
   broker: ManagedExecutorStarter;
   responseMode: "detached" | "sse";
   maxActiveRuns?: number;

@@ -65,6 +65,8 @@ async function fixture(options: {
   sourceTools?: string[];
   deniedTools?: string[];
   channelTimeoutMs?: number;
+  projectConcurrency?: number;
+  channelCapacity?: number;
   describe?: Extract<ExecutorOperation, { mode: "unary" }>["handle"];
   facades?: Partial<ExecutorRuntimeFacades>;
   facadeInstance?: (facades: ExecutorRuntimeFacades) => ExecutorRuntimeFacades;
@@ -136,8 +138,8 @@ async function fixture(options: {
     },
     tools: new Map([[toolName, registered]]),
     allowedToolNames: new Set([toolName]),
-    maxCalls: 32,
-    maxConcurrent: 2,
+    maxCalls: options.projectConcurrency ? 64 : 32,
+    maxConcurrent: options.projectConcurrency ?? 2,
   }));
   if (options.forgedAlias) {
     operations.set("project.tool-aliases", {
@@ -166,11 +168,13 @@ async function fixture(options: {
   const backward = new TransformStream<Uint8Array, Uint8Array>();
   const trusted = createExecutorChannel({
     binding,
+    ...(options.channelCapacity ? { maxConcurrentCalls: options.channelCapacity } : {}),
     ...(options.channelTimeoutMs ? { defaultTimeoutMs: options.channelTimeoutMs } : {}),
     transport: { readable: backward.readable, writable: forward.writable },
   });
   const project = createExecutorChannel({
     binding,
+    ...(options.channelCapacity ? { maxConcurrentCalls: options.channelCapacity } : {}),
     operations,
     transport: { readable: forward.readable, writable: backward.writable },
   });
@@ -273,6 +277,7 @@ async function fixture(options: {
     lifetime,
     trusted,
     project,
+    projectTools,
     get closed() {
       return closed;
     },
@@ -305,6 +310,73 @@ async function fixture(options: {
 }
 
 describe("trusted runtime preparation", () => {
+  for (const channelCapacity of [2, 32]) {
+    it(`completes 32 concurrent gated project calls with channel capacity ${channelCapacity}`, async () => {
+      const f = await fixture({ approval: "approve", projectConcurrency: 32, channelCapacity });
+      const signal = AbortSignal.timeout(5000);
+      try {
+        const results = await Promise.allSettled(
+          Array.from(
+            { length: 32 },
+            (_, index) =>
+              f.projectTools.executeTool("inspect", { query: `query-${index}` }, {
+                ...context,
+                toolCallId: `call-${index}`,
+                abortSignal: signal,
+                requestToolApproval: () => Promise.resolve({ approved: true, outcome: "approved" }),
+              }),
+          ),
+        );
+        assertEquals(results.filter((result) => result.status === "fulfilled").length, 32);
+        assertEquals(f.seen.length, 32);
+      } finally {
+        await f.owner.close();
+        await f.owner.settled;
+      }
+    });
+  }
+
+  it("cancels queued project calls without executing their tools or retaining channel work", async () => {
+    const f = await fixture({ approval: "approve", projectConcurrency: 32, channelCapacity: 2 });
+    const entered = Promise.withResolvers<void>();
+    const controller = new AbortController();
+    const calls = Array.from(
+      { length: 32 },
+      (_, index) =>
+        f.projectTools.executeTool("inspect", { query: `query-${index}` }, {
+          ...context,
+          toolCallId: `call-${index}`,
+          abortSignal: controller.signal,
+          requestToolApproval: (_request, signal) =>
+            new Promise((_resolve, reject) => {
+              const abort = () => reject(new Error("Synthetic approval cancelled"));
+              signal!.addEventListener("abort", abort, { once: true });
+              if (signal!.aborted) abort();
+              entered.resolve();
+            }),
+        }),
+    );
+    const results = Promise.allSettled(calls);
+    try {
+      await entered.promise;
+      controller.abort();
+      assertEquals((await results).every((result) => result.status === "rejected"), true);
+      assertEquals(f.seen.length, 0);
+      assertEquals(f.lifetime.signal.aborted, false);
+      await f.projectTools.executeTool("inspect", { query: "after cancellation" }, {
+        ...context,
+        toolCallId: "after-cancellation",
+        requestToolApproval: () => Promise.resolve({ approved: true, outcome: "approved" }),
+      });
+      assertEquals(f.seen.length, 1);
+    } finally {
+      controller.abort();
+      await results;
+      await f.owner.close();
+      await f.owner.settled;
+    }
+  });
+
   for (const outcome of ["approve", "deny", "expired"] as const) {
     it(`gates remote project tools through the host approval channel: ${outcome}`, async () => {
       const f = await fixture({ approval: outcome, repeatApprovalCall: true });

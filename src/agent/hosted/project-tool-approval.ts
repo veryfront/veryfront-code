@@ -37,6 +37,7 @@ export const PROJECT_TOOL_APPROVAL_DECISION = "project.tool-approval-decision";
 export const PROJECT_TOOL_APPROVAL_REQUEST = "project.tool-approval-request";
 const randomUUID = crypto.randomUUID.bind(crypto);
 const now = Date.now;
+const ApprovalAbortController = AbortController;
 const getRequestSchema = defineSchema((v) =>
   v.object({
     type: v.literal(REQUEST_EVENT),
@@ -51,7 +52,7 @@ const getRequestSchema = defineSchema((v) =>
   }).strict()
 );
 const getRequestReferenceSchema = defineSchema((v) =>
-  v.object({ approvalRequestId: v.string().uuid() }).strict()
+  v.object({ approvalRequestId: v.string().uuid(), watch: v.boolean().optional() }).strict()
 );
 const getRequestNoticeSchema = defineSchema((v) =>
   v.object({
@@ -103,6 +104,7 @@ export function createProjectToolApprovalReceiver(scope: {
     active(): void;
     decision?: Decision;
     request: unknown;
+    closed: Promise<void>;
   }>();
   const authorize = (context: ExecutorOperationContext) => {
     scope.assertActive();
@@ -124,6 +126,20 @@ export function createProjectToolApprovalReceiver(scope: {
       const waiting = pending.get(reference.approvalRequestId);
       if (!waiting) throw new TypeError("Project approval is no longer pending");
       waiting.active();
+      if (reference.watch) {
+        const retired = createPrivateDeferred<{ closed: true }>();
+        const abort = () => {
+          context.signal.removeEventListener("abort", abort);
+          retired.reject(new TypeError("Project approval observation cancelled"));
+        };
+        context.signal.addEventListener("abort", abort, { once: true });
+        void chainPrivatePromise(waiting.closed, () => {
+          context.signal.removeEventListener("abort", abort);
+          retired.resolve({ closed: true });
+        });
+        if (context.signal.aborted) abort();
+        return retired.promise;
+      }
       return chainPrivatePromise(
         resolvePrivatePromise(),
         () => parseExecutorToolData(getRequestSchema(), waiting.request),
@@ -156,9 +172,10 @@ export function createProjectToolApprovalReceiver(scope: {
       let closed = false;
       let requestId: string | undefined;
       let decision: ReturnType<typeof createPrivateDeferred<Decision>> | undefined;
-      const signal = context.abortSignal
+      let signal = context.abortSignal
         ? joinPrivateAbortSignals(context.abortSignal, scope.signal)
         : scope.signal;
+      let retirement: ReturnType<typeof createPrivateDeferred<void>> | undefined;
       const active = () => {
         scope.assertActive();
         scope.signal.throwIfAborted();
@@ -170,11 +187,14 @@ export function createProjectToolApprovalReceiver(scope: {
         if (requestId) pending.delete(requestId);
         signal.removeEventListener("abort", abort);
         decision?.reject(new TypeError("Project tool approval call has ended"));
+        retirement?.resolve();
       };
       const abort = () => close();
-      const gate: ToolApprovalGate = async (request) => {
+      const gate: ToolApprovalGate = async (request, requestSignal) => {
         active();
         if (decision) throw new TypeError("Project tool already requested approval for this call");
+        if (requestSignal) signal = joinPrivateAbortSignals(signal, requestSignal);
+        active();
         if (!context.toolCallId || !context.publishDataEvent) {
           throw new TypeError("Project tool approval stream is unavailable");
         }
@@ -190,7 +210,13 @@ export function createProjectToolApprovalReceiver(scope: {
         decision = createPrivateDeferred<Decision>();
         // Observe rejection before publishing: cancellation may race the stream acknowledgement.
         void chainPrivatePromise(decision.promise, () => {}, () => {});
-        pending.set(requestId, { resolve: decision.resolve, active, request: event });
+        retirement = createPrivateDeferred<void>();
+        pending.set(requestId, {
+          resolve: decision.resolve,
+          active,
+          request: event,
+          closed: retirement.promise,
+        });
         signal.addEventListener("abort", abort, { once: true });
         if (signal.aborted) abort();
         try {
@@ -236,23 +262,57 @@ export async function handleProjectToolApproval(event: ToolExecutionDataEvent, i
   ) throw new TypeError("Project tool approval request changed");
   executorToolJson(request.input, input.maxArgumentBytes ?? EXECUTOR_TOOL_LIMITS.maxArgumentBytes);
   input.signal?.throwIfAborted();
-  const decision = await input.gate({
-    toolName: input.toolName,
-    toolCallId: input.toolCallId,
-    input: request.input,
-    policy: request.policy,
-  }, input.signal);
-  input.signal?.throwIfAborted();
-  const safeDecision = parseExecutorToolData(getDecisionSchema(), {
-    approved: decision.approved,
-    outcome: decision.outcome,
-    ...(decision.comment === undefined ? {} : { comment: decision.comment }),
-    ...(decision.approvalId === undefined ? {} : { approvalId: decision.approvalId }),
-  });
-  const acknowledgement = await input.channel.request(PROJECT_TOOL_APPROVAL_DECISION, {
-    approvalRequestId: request.approvalRequestId,
-    decision: safeDecision,
-  }, { signal: input.signal });
-  parseExecutorToolData(getAcknowledgementSchema(), acknowledgement);
-  return true;
+  // The source can cancel a narrower request without ending its enclosing tool/run.
+  // Observe that nonce's retirement on the same authenticated channel while the host gate waits.
+  const retired = new ApprovalAbortController();
+  const watcher = new ApprovalAbortController();
+  const gateSignal = input.signal
+    ? joinPrivateAbortSignals(input.signal, retired.signal)
+    : retired.signal;
+  const watchSignal = input.signal
+    ? joinPrivateAbortSignals(input.signal, watcher.signal)
+    : watcher.signal;
+  const abortRetired = () => {
+    if (!watcher.signal.aborted) {
+      retired.abort(new TypeError("Project tool approval call has ended"));
+    }
+  };
+  let observed: Promise<void> | undefined;
+  try {
+    observed = chainPrivatePromise(
+      input.channel.request(PROJECT_TOOL_APPROVAL_REQUEST, {
+        approvalRequestId: request.approvalRequestId,
+        watch: true,
+      }, { signal: watchSignal }),
+      abortRetired,
+      abortRetired,
+    );
+    gateSignal.throwIfAborted();
+    const decision = await input.gate({
+      toolName: input.toolName,
+      toolCallId: input.toolCallId,
+      input: request.input,
+      policy: request.policy,
+    }, gateSignal);
+    gateSignal.throwIfAborted();
+    const safeDecision = parseExecutorToolData(getDecisionSchema(), {
+      approved: decision.approved,
+      outcome: decision.outcome,
+      ...(decision.comment === undefined ? {} : { comment: decision.comment }),
+      ...(decision.approvalId === undefined ? {} : { approvalId: decision.approvalId }),
+    });
+    // request() settles only after the channel release acknowledgement; free the watch slot first.
+    watcher.abort();
+    await observePrivatePromise(observed);
+    gateSignal.throwIfAborted();
+    const acknowledgement = await input.channel.request(PROJECT_TOOL_APPROVAL_DECISION, {
+      approvalRequestId: request.approvalRequestId,
+      decision: safeDecision,
+    }, { signal: input.signal });
+    parseExecutorToolData(getAcknowledgementSchema(), acknowledgement);
+    return true;
+  } finally {
+    watcher.abort();
+    if (observed) await observePrivatePromise(observed);
+  }
 }
