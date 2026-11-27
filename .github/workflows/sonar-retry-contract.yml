@@ -83,6 +83,8 @@ jobs:
               ('server error then quality gate', [('CE Task finished abnormally', 3), ('QUALITY GATE STATUS: FAILED - coverage 0.0% < 80%', 2)], 2, 2),
               ('quality gate', [('QUALITY GATE STATUS: FAILED - coverage 0.0% < 80%', 2)], 2, 1),
               ('other failure', [('Not authorized', 4)], 4, 1),
+              ('deadline after server text', [('CE Task finished abnormally', 124)], 124, 1),
+              ('forced deadline after server text', [('CE Task finished abnormally', 137)], 137, 1),
               ('similar message', [('CE Task timeout', 6)], 6, 1),
               ('mixed gate and server text', [('CE Task finished abnormally; QUALITY GATE STATUS: FAILED', 2)], 2, 1),
               ('upload timeout then success', [(upload_timeout, 3), ('analysis complete', 0)], 0, 2),
@@ -103,9 +105,16 @@ jobs:
               ('upload timeout via action other exit', [(action_failed(upload_timeout, 30), 1)], 1, 1),
               ('upload timeout via action exit 1', [(action_failed(upload_timeout, 1), 1)], 1, 1),
           ]
+          def write_timeout(directory):
+              tool = directory / 'timeout'
+              tool.write_text('#!/usr/bin/env python3\nimport os, sys\n'
+                  "assert sys.argv[1:4] == ['--signal=TERM', '--kill-after=30s', '38m']\n"
+                  'os.execvp(sys.argv[4], sys.argv[4:])\n')
+              tool.chmod(0o755)
           for label, results, expected_status, expected_attempts in cases:
               with tempfile.TemporaryDirectory() as directory:
                   tmp = Path(directory)
+                  write_timeout(tmp)
                   node = tmp / 'node'
                   node.write_text('#!/usr/bin/env python3\n' + '''import json, os, pathlib, sys
           root = pathlib.Path(os.environ['FIXTURE_ROOT'])
@@ -127,7 +136,7 @@ jobs:
                          'GITHUB_STEP_SUMMARY': str(tmp / 'summary.md')}
                   started = time.monotonic()
                   run = subprocess.run(['bash', '-e', '-o', 'pipefail', '-c', wrapper], env=env,
-                                       text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+                                       text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=15)
                   attempts = int((tmp / 'attempts').read_text())
                   assert (run.returncode, attempts) == (expected_status, expected_attempts), (label, run.returncode, attempts, run.stdout)
                   upload_retry = 'Retrying Sonar once after report upload timeout' in run.stdout
@@ -141,13 +150,14 @@ jobs:
           # A failed log write must never trigger a retry, even if the CE signature was read.
           with tempfile.TemporaryDirectory() as directory:
               tmp = Path(directory)
+              write_timeout(tmp)
               (tmp / 'node').write_text('#!/bin/sh\necho "CE Task finished abnormally" >&2\nexit 3\n')
               (tmp / 'tee').write_text('#!/bin/sh\ncat\nexit 9\n')
               for executable in ['node', 'tee']:
                   (tmp / executable).chmod(0o755)
               run = subprocess.run(['bash', '-e', '-o', 'pipefail', '-c', wrapper],
                                    env={**os.environ, 'PATH': str(tmp) + os.pathsep + os.environ['PATH'], 'SONAR_EVENT_NAME': 'push', 'RUNNER_TEMP': str(tmp)},
-                                   text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+                                   text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=15)
               assert run.returncode == 9, run.stdout
               assert 'Retrying' not in run.stdout, run.stdout
               print('PASS failed log capture: exit=9, no retry')

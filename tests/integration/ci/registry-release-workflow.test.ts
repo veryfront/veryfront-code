@@ -2335,6 +2335,26 @@ async function parallelJobs(): Promise<Record<string, ParallelJob>> {
 }
 
 describe("RC publication alongside the reused main Sonar scan", () => {
+  it("bounds both Sonar attempts inside each job without retrying a deadline", async () => {
+    const graph = await parallelJobs();
+    for (const name of ["sonar", "sonar-main"]) {
+      const job = asRecord(graph[name], name);
+      const step = graph[name].steps.find((entry) => entry.id === "sonar-scan");
+      assert(step, "each scanner job must retain the production wrapper");
+      const wrapper = String(step.run);
+      const deadline = /timeout --signal=TERM --kill-after=30s (\d+)m node/.exec(wrapper);
+      assert(deadline, "a scanner attempt must have its own process deadline");
+      const attemptMinutes = Number(deadline[1]);
+      assert(attemptMinutes > 28, "one current full scan must fit before the former cancellation");
+      assert(
+        Number(job["timeout-minutes"]) >= 2 * (attemptMinutes + 0.5) + 5,
+        "two bounded attempts, forced cleanup and setup must fit the job",
+      );
+      assert(Number(job["timeout-minutes"]) <= 90, "the complete retry budget stays bounded");
+      assertStringIncludes(wrapper, 'if [ "$status" -eq 124 ] || [ "$status" -eq 137 ]; then');
+    }
+  });
+
   it("keeps the reused scan out of publication ancestors and retains fallback scanning", async () => {
     const graph = await parallelJobs();
     assert(graph["sonar-main"], "reuse must have its own parallel scan");
