@@ -893,11 +893,12 @@ jobs:
   # The scan waits up to 20 minutes for SonarCloud's server-side Quality Gate
   # before this required job succeeds; the remaining 8 minutes cover checkout,
   # the report download and analysis upload. Main scans now exceed 28 minutes.
-  # Two 38-minute attempts, their forced-cleanup bounds and setup fit inside
-  # 85 minutes; only the existing explicit server-error cases may retry.
+  # Main gets two bounded 38-minute attempts plus cleanup/setup. PR/queue
+  # attempts stay at 10 minutes inside the existing 28-minute job budget.
+  # Only the existing explicit server-error cases may retry.
   sonar:
     runs-on: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.ubuntu26 == true && 'ubuntu-26.04' || 'ubuntu-latest' }}
-    timeout-minutes: 85
+    timeout-minutes: ${{ github.ref == 'refs/heads/main' && 85 || 28 }}
     name: SonarQube Cloud scan
     needs: [sonar-coverage, tested-run, version-check]
     if: ${{ !cancelled() && (needs.tested-run.outputs.reuse != 'true' || needs.version-check.outputs.is_stable != 'false') && needs.sonar-coverage.result == 'success' && ((github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && (github.event_name != 'pull_request' || github.event.pull_request.user.login != 'dependabot[bot]')) }}
@@ -969,11 +970,15 @@ jobs:
             } >> "$GITHUB_STEP_SUMMARY" || true
           }
           trap write_sonar_summary EXIT
+          attempt_minutes=10
+          if [ "$SONAR_REF_NAME" = "main" ] && [ "$SONAR_EVENT_NAME" != "merge_group" ]; then
+            attempt_minutes=38
+          fi
           for attempt in 1 2; do
             log="$RUNNER_TEMP/sonar-attempt-$attempt.log"
             echo "Sonar scan attempt $attempt of 2"
             set +e
-            timeout --signal=TERM --kill-after=30s 38m node "$RUNNER_TEMP/sonarqube-scan-action/dist/index.js" 2>&1 | tee "$log"
+            timeout --signal=TERM --kill-after=30s "${attempt_minutes}m" node "$RUNNER_TEMP/sonarqube-scan-action/dist/index.js" 2>&1 | tee "$log"
             statuses=("${PIPESTATUS[@]}")
             set -e
             if [ "${statuses[1]}" -ne 0 ]; then
@@ -981,7 +986,7 @@ jobs:
             fi
             status="${statuses[0]}"
             if [ "$status" -eq 124 ] || [ "$status" -eq 137 ]; then
-              echo "::error::Sonar attempt exceeded its 38-minute bound; refusing an automatic retry"
+              echo "::error::Sonar attempt exceeded its ${attempt_minutes}-minute bound; refusing an automatic retry"
               exit "$status"
             fi
             if [ "$status" -eq 0 ] || [ "$attempt" -eq 2 ]; then
@@ -1014,7 +1019,7 @@ jobs:
 
   sonar-main:
     runs-on: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.ubuntu26 == true && 'ubuntu-26.04' || 'ubuntu-latest' }}
-    timeout-minutes: 85
+    timeout-minutes: ${{ github.ref == 'refs/heads/main' && 85 || 28 }}
     name: Reused main SonarQube Cloud scan
     needs: [sonar-coverage-main, tested-run, version-check]
     if: ${{ !cancelled() && needs.tested-run.outputs.reuse == 'true' && needs.version-check.outputs.is_stable == 'false' && needs.sonar-coverage-main.result == 'success' && ((github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && (github.event_name != 'pull_request' || github.event.pull_request.user.login != 'dependabot[bot]')) }}

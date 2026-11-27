@@ -58,6 +58,7 @@ const TESTED_RUN_DOWNLOAD = {
 };
 const SONAR_GATE_JOB_EXPRESSION = `\${{ always() && ${SONAR_REQUIRED_CONDITION} }}`;
 const SONAR_JOB_TIMEOUT_MINUTES = 28;
+const SONAR_JOB_TIMEOUT_EXPRESSION = "${{ github.ref == 'refs/heads/main' && 85 || 28 }}";
 const SONAR_QUALITY_GATE_TIMEOUT_SECONDS = 1200;
 const SONAR_CHECK_NAME = "SonarQube Cloud quality gate";
 const SONAR_SCAN_CHECK_NAME = "SonarQube Cloud scan";
@@ -133,7 +134,10 @@ function longestJobPathMinutes(
   );
 
   const job = asRecord(jobs[jobName], `${jobName} job`);
-  const configuredTimeout = Number(job["timeout-minutes"]);
+  // This traversal models merge-queue execution, never the main-only scan budget.
+  const configuredTimeout = job["timeout-minutes"] === SONAR_JOB_TIMEOUT_EXPRESSION
+    ? SONAR_JOB_TIMEOUT_MINUTES
+    : Number(job["timeout-minutes"]);
   assert(
     Number.isFinite(configuredTimeout) && configuredTimeout > 0,
     `${jobName} must have a positive timeout-minutes value`,
@@ -285,6 +289,11 @@ describe("merge quality gate workflow", () => {
     try {
       await Deno.writeTextFile(`${dir}/node`, '#!/bin/sh\nprintf "%s" "$INPUT_ARGS"\n');
       await Deno.chmod(`${dir}/node`, 0o755);
+      await Deno.writeTextFile(
+        `${dir}/timeout`,
+        '#!/bin/sh\nlimit=10m\nif [ "$SONAR_REF_NAME" = "main" ] && [ "$SONAR_EVENT_NAME" != "merge_group" ]; then limit=38m; fi\n[ "$1" = "--signal=TERM" ] && [ "$2" = "--kill-after=30s" ] && [ "$3" = "$limit" ] || exit 99\nshift 3\nexec "$@"\n',
+      );
+      await Deno.chmod(`${dir}/timeout`, 0o755);
       const ref = "gh-readonly-queue/main/pr-4910-abcdef012345";
       for (
         const [event, branch, expected, code] of [
@@ -422,7 +431,11 @@ describe("merge quality gate workflow", () => {
       await readRepoFile("sonar-project.properties"),
     );
 
-    assertEquals(sonar["timeout-minutes"], SONAR_JOB_TIMEOUT_MINUTES);
+    assertEquals(sonar["timeout-minutes"], SONAR_JOB_TIMEOUT_EXPRESSION);
+    assertEquals(
+      asRecord(jobs["sonar-main"], "reused main Sonar job")["timeout-minutes"],
+      SONAR_JOB_TIMEOUT_EXPRESSION,
+    );
     assertEquals(
       sonarProperties.get("sonar.qualitygate.wait"),
       "true",
@@ -704,17 +717,25 @@ write_sonar_summary() {
   } >> "$GITHUB_STEP_SUMMARY" || true
 }
 trap write_sonar_summary EXIT
+attempt_minutes=10
+if [ "$SONAR_REF_NAME" = "main" ] && [ "$SONAR_EVENT_NAME" != "merge_group" ]; then
+  attempt_minutes=38
+fi
 for attempt in 1 2; do
   log="$RUNNER_TEMP/sonar-attempt-$attempt.log"
   echo "Sonar scan attempt $attempt of 2"
   set +e
-  node "$RUNNER_TEMP/sonarqube-scan-action/dist/index.js" 2>&1 | tee "$log"
+  timeout --signal=TERM --kill-after=30s "\${attempt_minutes}m" node "$RUNNER_TEMP/sonarqube-scan-action/dist/index.js" 2>&1 | tee "$log"
   statuses=("\${PIPESTATUS[@]}")
   set -e
   if [ "\${statuses[1]}" -ne 0 ]; then
     exit "\${statuses[1]}"
   fi
   status="\${statuses[0]}"
+  if [ "$status" -eq 124 ] || [ "$status" -eq 137 ]; then
+    echo "::error::Sonar attempt exceeded its \${attempt_minutes}-minute bound; refusing an automatic retry"
+    exit "$status"
+  fi
   if [ "$status" -eq 0 ] || [ "$attempt" -eq 2 ]; then
     exit "$status"
   fi

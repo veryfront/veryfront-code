@@ -131,7 +131,7 @@ jobs:
           ''')
                   node.chmod(0o755)
                   env = {**os.environ, 'PATH': str(tmp) + os.pathsep + os.environ['PATH'],
-                         'SONAR_EVENT_NAME': 'push', 'RUNNER_TEMP': str(tmp), 'FIXTURE_ROOT': str(tmp),
+                         'SONAR_EVENT_NAME': 'push', 'SONAR_REF_NAME': 'main', 'RUNNER_TEMP': str(tmp), 'FIXTURE_ROOT': str(tmp),
                          'FIXTURE_RESULTS': json.dumps(results), 'INPUT_SKIPSIGNATUREVERIFICATION': 'false',
                          'GITHUB_STEP_SUMMARY': str(tmp / 'summary.md')}
                   started = time.monotonic()
@@ -156,7 +156,7 @@ jobs:
               for executable in ['node', 'tee']:
                   (tmp / executable).chmod(0o755)
               run = subprocess.run(['bash', '-e', '-o', 'pipefail', '-c', wrapper],
-                                   env={**os.environ, 'PATH': str(tmp) + os.pathsep + os.environ['PATH'], 'SONAR_EVENT_NAME': 'push', 'RUNNER_TEMP': str(tmp)},
+                                   env={**os.environ, 'PATH': str(tmp) + os.pathsep + os.environ['PATH'], 'SONAR_EVENT_NAME': 'push', 'SONAR_REF_NAME': 'main', 'RUNNER_TEMP': str(tmp)},
                                    text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=15)
               assert run.returncode == 9, run.stdout
               assert 'Retrying' not in run.stdout, run.stdout
