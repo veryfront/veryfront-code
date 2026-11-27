@@ -291,7 +291,7 @@ describe("merge quality gate workflow", () => {
       await Deno.chmod(`${dir}/node`, 0o755);
       await Deno.writeTextFile(
         `${dir}/timeout`,
-        '#!/bin/sh\nlimit=10m\nif [ "$SONAR_REF_NAME" = "main" ] && [ "$SONAR_EVENT_NAME" != "merge_group" ]; then limit=38m; fi\n[ "$1" = "--signal=TERM" ] && [ "$2" = "--kill-after=30s" ] && [ "$3" = "$limit" ] || exit 99\nshift 3\nexec "$@"\n',
+        '#!/bin/sh\nlimit=27m\nif [ "$SONAR_REF_NAME" = "main" ] && [ "$SONAR_EVENT_NAME" != "merge_group" ]; then limit=38m; fi\n[ "$1" = "--signal=TERM" ] && [ "$2" = "--kill-after=30s" ] && [ "$3" = "$limit" ] || exit 99\nshift 3\nexec "$@"\n',
       );
       await Deno.chmod(`${dir}/timeout`, 0o755);
       const ref = "gh-readonly-queue/main/pr-4910-abcdef012345";
@@ -717,11 +717,20 @@ write_sonar_summary() {
   } >> "$GITHUB_STEP_SUMMARY" || true
 }
 trap write_sonar_summary EXIT
-attempt_minutes=10
+attempt_minutes=27
+scan_budget_seconds=$((27 * 60 + 30))
 if [ "$SONAR_REF_NAME" = "main" ] && [ "$SONAR_EVENT_NAME" != "merge_group" ]; then
   attempt_minutes=38
+  scan_budget_seconds=$((80 * 60))
 fi
+scan_started=$SECONDS
+status=124
 for attempt in 1 2; do
+  remaining_seconds=$((scan_budget_seconds - (SECONDS - scan_started)))
+  if [ "$remaining_seconds" -lt "$((attempt_minutes * 60 + 30))" ]; then
+    echo "::error::Insufficient budget for a complete Sonar attempt; refusing an automatic retry"
+    exit "$status"
+  fi
   log="$RUNNER_TEMP/sonar-attempt-$attempt.log"
   echo "Sonar scan attempt $attempt of 2"
   set +e

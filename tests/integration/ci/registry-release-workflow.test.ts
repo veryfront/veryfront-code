@@ -2335,7 +2335,7 @@ async function parallelJobs(): Promise<Record<string, ParallelJob>> {
 }
 
 describe("RC publication alongside the reused main Sonar scan", () => {
-  it("bounds both Sonar attempts inside each job without retrying a deadline", async () => {
+  it("bounds main retries while retaining a full queue quality-gate allowance", async () => {
     const graph = await parallelJobs();
     for (const name of ["sonar", "sonar-main"]) {
       const job = asRecord(graph[name], name);
@@ -2346,12 +2346,20 @@ describe("RC publication alongside the reused main Sonar scan", () => {
         wrapper,
         'timeout --signal=TERM --kill-after=30s "${attempt_minutes}m" node',
       );
-      assertStringIncludes(wrapper, "attempt_minutes=10");
+      assertStringIncludes(wrapper, "attempt_minutes=27");
       assertStringIncludes(wrapper, "attempt_minutes=38");
       assertStringIncludes(wrapper, '[ "$SONAR_REF_NAME" = "main" ]');
       assertEquals(job["timeout-minutes"], "${{ github.ref == 'refs/heads/main' && 85 || 28 }}");
       assert(85 >= 2 * (38 + 0.5) + 5, "main admits two full attempts plus setup");
-      assert(28 >= 2 * (10 + 0.5) + 5, "queue retains its existing response budget");
+      assert(28 >= 27 + 0.5 + 0.5, "queue retains a full attempt plus cleanup and setup");
+      assertStringIncludes(
+        wrapper,
+        "remaining_seconds=$((scan_budget_seconds - (SECONDS - scan_started)))",
+      );
+      assertStringIncludes(
+        wrapper,
+        'if [ "$remaining_seconds" -lt "$((attempt_minutes * 60 + 30))" ]; then',
+      );
       assertStringIncludes(wrapper, 'if [ "$status" -eq 124 ] || [ "$status" -eq 137 ]; then');
     }
   });

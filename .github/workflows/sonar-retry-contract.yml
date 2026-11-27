@@ -83,6 +83,7 @@ jobs:
               ('server error then quality gate', [('CE Task finished abnormally', 3), ('QUALITY GATE STATUS: FAILED - coverage 0.0% < 80%', 2)], 2, 2),
               ('quality gate', [('QUALITY GATE STATUS: FAILED - coverage 0.0% < 80%', 2)], 2, 1),
               ('other failure', [('Not authorized', 4)], 4, 1),
+              ('insufficient retry budget', [('CE Task finished abnormally', 3)], 3, 1),
               ('deadline after server text', [('CE Task finished abnormally', 124)], 124, 1),
               ('forced deadline after server text', [('CE Task finished abnormally', 137)], 137, 1),
               ('similar message', [('CE Task timeout', 6)], 6, 1),
@@ -135,7 +136,11 @@ jobs:
                          'FIXTURE_RESULTS': json.dumps(results), 'INPUT_SKIPSIGNATUREVERIFICATION': 'false',
                          'GITHUB_STEP_SUMMARY': str(tmp / 'summary.md')}
                   started = time.monotonic()
-                  run = subprocess.run(['bash', '-e', '-o', 'pipefail', '-c', wrapper], env=env,
+                  case_wrapper = wrapper
+                  if label == 'insufficient retry budget':
+                      case_wrapper = wrapper.replace('for attempt in 1 2; do',
+                          'for attempt in 1 2; do\n  if [ "$attempt" -eq 2 ]; then SECONDS=$((scan_started + 81 * 60)); fi')
+                  run = subprocess.run(['bash', '-e', '-o', 'pipefail', '-c', case_wrapper], env=env,
                                        text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=15)
                   attempts = int((tmp / 'attempts').read_text())
                   assert (run.returncode, attempts) == (expected_status, expected_attempts), (label, run.returncode, attempts, run.stdout)
