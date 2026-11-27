@@ -6,7 +6,6 @@ import type { DiscoveryResult } from "#veryfront/discovery";
 import type { HandlerContext } from "#veryfront/types/server.ts";
 import { skillRegistry } from "#veryfront/skill/registry.ts";
 import { promptRegistry } from "#veryfront/prompt/registry.ts";
-import { getPromptDeadlineRuntime } from "#veryfront/prompt/factory.ts";
 import type { Prompt } from "#veryfront/prompt/types.ts";
 import { agentLogger } from "#veryfront/utils/logger/index.ts";
 import { privateJsonParse } from "#veryfront/security/private-json.ts";
@@ -970,6 +969,10 @@ const PROMPT_RENDER_FAILED = Symbol("prompt-render-failed");
 async function renderPromptSuggestionContent(
   registered: Prompt,
 ): Promise<string | typeof PROMPT_RENDER_TIMED_OUT | typeof PROMPT_RENDER_FAILED> {
+  // Loaded lazily: prompt/factory.ts reaches the agent runtime, whose skill
+  // metadata loader awaits ext-yaml at module load. The standalone proxy imports
+  // this module but does not bundle ext-yaml, so a static import crashes it.
+  const { getPromptDeadlineRuntime } = await import("#veryfront/prompt/factory.ts");
   const runtime = getPromptDeadlineRuntime();
   const controller = new AbortController();
   let timer: ReturnType<typeof setTimeout> | undefined;
