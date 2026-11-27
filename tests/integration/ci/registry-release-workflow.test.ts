@@ -2344,21 +2344,30 @@ describe("RC publication alongside the reused main Sonar scan", () => {
       const wrapper = String(step.run);
       assertStringIncludes(
         wrapper,
-        'timeout --signal=TERM --kill-after=30s "${attempt_minutes}m" node',
+        'timeout --signal=TERM --kill-after=30s "${timeout_seconds}s" node',
       );
-      assertStringIncludes(wrapper, "attempt_minutes=27");
-      assertStringIncludes(wrapper, "attempt_minutes=38");
-      assertStringIncludes(wrapper, '[ "$SONAR_REF_NAME" = "main" ]');
-      assertEquals(job["timeout-minutes"], "${{ github.ref == 'refs/heads/main' && 85 || 28 }}");
+      assertStringIncludes(wrapper, "attempt_seconds=$((27 * 60))");
+      assertStringIncludes(wrapper, "attempt_seconds=$((38 * 60))");
+      assertStringIncludes(wrapper, "push|workflow_dispatch) attempt_seconds=$((38 * 60))");
+      assertEquals(
+        job["timeout-minutes"],
+        "${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && 85 || 28 }}",
+      );
       assert(85 >= 2 * (38 + 0.5) + 5, "main admits two full attempts plus setup");
-      assert(28 >= 27 + 0.5 + 0.5, "queue retains a full attempt plus cleanup and setup");
+      assertStringIncludes(wrapper, "timeout_seconds=$((remaining_seconds - 30))");
       assertStringIncludes(
         wrapper,
-        "remaining_seconds=$((scan_budget_seconds - (SECONDS - scan_started)))",
+        'if [ "$timeout_seconds" -gt "$attempt_seconds" ]; then timeout_seconds=$attempt_seconds; fi',
+      );
+      assertStringIncludes(wrapper, 'if [ "$timeout_seconds" -le 0 ]; then');
+      assertEquals(graph[name].steps[0].id, "sonar-clock");
+      assertStringIncludes(
+        wrapper,
+        "remaining_seconds=$((SONAR_JOB_DEADLINE - ${uptime%%.*}))",
       );
       assertStringIncludes(
         wrapper,
-        'if [ "$attempt" -gt 1 ] && [ "$remaining_seconds" -lt "$((attempt_minutes * 60 + 30))" ]; then',
+        'if [ "$attempt" -gt 1 ] && [ "$remaining_seconds" -lt "$((attempt_seconds + 30))" ]; then',
       );
       assertStringIncludes(wrapper, 'if [ "$status" -eq 124 ] || [ "$status" -eq 137 ]; then');
     }

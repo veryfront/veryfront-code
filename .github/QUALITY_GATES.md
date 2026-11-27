@@ -46,12 +46,15 @@ branch. Each scan still waits for its server-side quality gate, and queue
 analyses never target main's analysis. Sonar does not auto-detect `merge_group`
 events, so the explicit PR properties are required. Ordinary pull requests and
 main pushes retain Sonar's automatic detection.
-PR and queue scans retain the 28-minute job budget and allow a 27-minute
-attempt, including the configured 20-minute server wait. Main scans have an
-85-minute job budget and 38-minute attempts. A server-error retry starts only
-when the remaining scan budget can fit another complete attempt and its
-30-second forced-cleanup bound. A deadline fails without retry. Analysis scope,
-signature verification and the required server-side quality gate are unchanged.
+PR and queue scans retain the 28-minute job budget and configured 20-minute
+server wait. Push and manual branch analyses, including maintenance releases,
+have an 85-minute job budget and attempts capped at 38 minutes. A fixed first
+step records a monotonic deadline before checkout/setup; each scanner uses only
+the remaining allowance after cleanup margins (up to 27 minutes for PR/queue
+analysis). A server-error retry starts only when another complete configured
+attempt and its 30-second forced cleanup can fit. A deadline fails without
+retry. Analysis scope, signature verification and the required server-side
+quality gate are unchanged.
 
 The active merge queue ruleset gives required checks at least 70 minutes to
 report a conclusion. This covers the longest configured dependency path: 60
