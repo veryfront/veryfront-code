@@ -8,7 +8,7 @@ import {
   getAgent as getRegisteredAgent,
   getAllAgentIds as getRegisteredAgentIds,
 } from "../agent/composition/composition.ts";
-import { listRuntimeAgents, type RuntimeAgentDiscoveryDeps } from "./control-plane.ts";
+import type { RuntimeAgentDiscoveryDeps } from "./control-plane.ts";
 import { ensureProjectDiscovery as ensureProjectDiscoveryForProject } from "#veryfront/server/handlers/request/api/project-discovery.ts";
 
 const logger = serverLogger.component("channels-invoke");
@@ -211,15 +211,21 @@ export async function listChannelAssistants(
   ctx: HandlerContext,
   deps: ChannelInvokeDeps,
 ): Promise<ChannelAssistantsResponse> {
-  const response = await listRuntimeAgents(ctx, deps);
-  const assistants = response.agents.map((agent) =>
-    ChannelAssistantSchema.parse({
-      id: agent.id,
-      name: agent.name,
-      description: agent.description ?? null,
-      model: agent.model ?? null,
+  // Read the four fields from config directly: the full runtime listing would
+  // render each agent's prompt starters, which this response never includes.
+  await deps.ensureProjectDiscovery(ctx);
+  const assistants = deps.getAllAgentIds()
+    .flatMap((id) => {
+      const config = deps.getAgent(id)?.config;
+      if (!config) return [];
+      return [ChannelAssistantSchema.parse({
+        id,
+        name: typeof config.name === "string" && config.name.trim().length > 0 ? config.name : id,
+        description: typeof config.description === "string" ? config.description : null,
+        model: config.model ?? null,
+      })];
     })
-  );
+    .sort((left, right) => left.name.localeCompare(right.name));
 
   return ChannelAssistantsResponseSchema.parse({ assistants });
 }

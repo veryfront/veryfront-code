@@ -5,6 +5,8 @@ import type { Agent } from "#veryfront/agent/types.ts";
 import type { DiscoveryResult } from "#veryfront/discovery";
 import type { HandlerContext } from "#veryfront/types/server.ts";
 import { skillRegistry } from "#veryfront/skill/registry.ts";
+import { promptRegistry } from "#veryfront/prompt/registry.ts";
+import { agentLogger } from "#veryfront/utils/logger/index.ts";
 import { privateJsonParse } from "#veryfront/security/private-json.ts";
 import {
   privateByteLength,
@@ -310,10 +312,20 @@ export const getRuntimeAgentSkillSchema = defineSchema((v) =>
 /** Zod schema for runtime agent skill. */
 export const RuntimeAgentSkillSchema = lazySchema(getRuntimeAgentSkillSchema);
 
-/** Zod schema for get runtime suggestion. */
+/**
+ * Zod schema for get runtime suggestion. A prompt reference (`{ type: "prompt", id }`)
+ * is served resolved, carrying the prompt's `title` and `prompt` text. The bare
+ * reference stays valid for metadata from runtimes that do not resolve it.
+ */
 export const getRuntimeSuggestionSchema = defineSchema((v) =>
   v.union([
     v.object({
+      type: v.literal("prompt"),
+      title: v.string().min(1),
+      prompt: v.string().min(1),
+    }).strict(),
+    v.object({
+      id: v.string().min(1),
       type: v.literal("prompt"),
       title: v.string().min(1),
       prompt: v.string().min(1),
@@ -914,18 +926,117 @@ function normalizeConfiguredSuggestions(value: unknown): unknown {
   };
 }
 
-/** Get browser-safe runtime metadata for an agent. */
-export function getRuntimeAgentPublicMetadata(
+const suggestionLogger = agentLogger.component("agent-suggestions");
+
+type PromptSuggestionSkipReason =
+  | "prompt-not-found"
+  | "prompt-requires-arguments"
+  | "prompt-no-suggestion";
+
+function skipPromptSuggestion(
+  agentId: string,
+  promptId: string,
+  reason: PromptSuggestionSkipReason,
+): undefined {
+  const detail = reason === "prompt-not-found"
+    ? "no prompt with this id is registered"
+    : reason === "prompt-requires-arguments"
+    ? "the prompt has a required argument"
+    : "the prompt has no suggestion";
+  suggestionLogger.warn(
+    `Agent "${agentId}" suggestion skipped: prompt "${promptId}" is not shown because ${detail}`,
+    { agentId, promptId, reason },
+  );
+  return undefined;
+}
+
+function nonBlank(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim().length > 0 ? value : undefined;
+}
+
+/**
+ * Resolve a `{ type: "prompt", id }` suggestion against the current project's
+ * prompt registry. The chip sends the prompt's static `suggestion` text; the
+ * label is `mcp.title`, else `description`, else the id. The prompt is never
+ * rendered: the agent metadata routes are public, and a prompt's content can
+ * run project code and depend on the request.
+ */
+function resolvePromptSuggestion(
+  agentId: string,
+  promptId: string,
+): RuntimeSuggestion | undefined {
+  const registered = promptRegistry.get(promptId);
+  if (!registered) return skipPromptSuggestion(agentId, promptId, "prompt-not-found");
+  if (registered.mcp?.arguments?.some((argument) => argument.required === true)) {
+    return skipPromptSuggestion(agentId, promptId, "prompt-requires-arguments");
+  }
+  const text = nonBlank(registered.suggestion);
+  if (text === undefined) return skipPromptSuggestion(agentId, promptId, "prompt-no-suggestion");
+
+  return {
+    id: promptId,
+    type: "prompt",
+    title: nonBlank(registered.mcp?.title) ?? nonBlank(registered.description) ?? promptId,
+    prompt: text,
+  };
+}
+
+/**
+ * The wire schema only requires non-empty strings, but the browser rejects a
+ * whitespace-only id, title or prompt, and with it the whole agent response.
+ */
+function hasBlankField(suggestion: RuntimeSuggestion): boolean {
+  return Object.values(suggestion).some((value) =>
+    typeof value === "string" && value.trim().length === 0
+  );
+}
+
+/**
+ * Parse an agent's configured suggestions one entry at a time, so one bad
+ * entry is left out instead of dropping every suggestion the agent has.
+ */
+function resolveRuntimeSuggestions(
+  agentId: string,
+  configured: unknown,
+): RuntimeSuggestions | undefined {
+  const normalized = normalizeConfiguredSuggestions(configured);
+  if (!isRecord(normalized) || !Array.isArray(normalized.suggestions)) return undefined;
+  const envelope = RuntimeSuggestionsSchema.safeParse({ ...normalized, suggestions: [] });
+  if (!envelope.success) return undefined;
+
+  const entries = normalized.suggestions;
+  const resolved = entries.map((entry) => {
+    const parsed = RuntimeSuggestionSchema.safeParse(entry);
+    if (!parsed.success || hasBlankField(parsed.data)) return undefined;
+    const suggestion = parsed.data;
+    if (suggestion.type === "prompt" && "id" in suggestion && suggestion.id !== undefined) {
+      return resolvePromptSuggestion(agentId, suggestion.id);
+    }
+    return suggestion;
+  });
+  const suggestions = resolved.filter((entry): entry is RuntimeSuggestion => entry !== undefined);
+  if (
+    suggestions.length === 0 && entries.length > 0 && envelope.data.welcomeMessage === undefined
+  ) {
+    return undefined;
+  }
+
+  return { ...envelope.data, suggestions };
+}
+
+/**
+ * Get browser-safe runtime metadata for an agent. Prompt-reference suggestions
+ * resolve against the prompt registry of the current project scope, so call it
+ * inside the request's project context after project discovery.
+ */
+export async function getRuntimeAgentPublicMetadata(
   id: string,
   agent: Agent,
-): RuntimeAgentPublicMetadata {
+): Promise<RuntimeAgentPublicMetadata> {
   const rawConfig = agent.config;
-  const suggestionsParseResult = rawConfig.suggestions === undefined
-    ? null
-    : RuntimeSuggestionsSchema.safeParse(
-      normalizeConfiguredSuggestions(rawConfig.suggestions),
-    );
-  const suggestions = suggestionsParseResult?.success ? suggestionsParseResult.data : undefined;
+  const suggestions = rawConfig.suggestions === undefined
+    ? undefined
+    : resolveRuntimeSuggestions(id, rawConfig.suggestions);
   const avatarUrl = typeof rawConfig.avatarUrl === "string" && rawConfig.avatarUrl.trim().length > 0
     ? rawConfig.avatarUrl
     : typeof rawConfig.avatar_url === "string" && rawConfig.avatar_url.trim().length > 0
@@ -946,7 +1057,7 @@ export function getRuntimeAgentPublicMetadata(
 async function getRuntimeAgentMetadata(id: string, agent: Agent): Promise<RuntimeAgent> {
   const config = agent.config;
   const rawConfig = config as { version?: unknown };
-  const publicMetadata = getRuntimeAgentPublicMetadata(id, agent);
+  const publicMetadata = await getRuntimeAgentPublicMetadata(id, agent);
   // Detach each declaration before either hash awaits. A failed input conversion
   // must not remove the legacy output document from an otherwise usable listing.
   const inputCapture = snapshotRunSchemaPair({});

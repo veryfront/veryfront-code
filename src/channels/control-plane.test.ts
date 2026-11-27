@@ -9,8 +9,13 @@ import { createRuntimeAgentFromMarkdownDefinition } from "#veryfront/agent";
 import { assertEquals } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { registerSkill } from "#veryfront/skill/registry.ts";
+import { prompt } from "#veryfront/prompt/factory.ts";
+import { promptRegistry, promptRegistryInternal } from "#veryfront/prompt/registry.ts";
+import { __subscribeLogRecordEmitter, type LogEntry } from "#veryfront/utils/logger/logger.ts";
 import type { HandlerContext } from "#veryfront/types";
+import { normalizeAgentMetadata } from "#veryfront/agent/react/use-agent-metadata.ts";
 import {
+  getRuntimeAgentPublicMetadata,
   isConfigOptionalControlPlaneRequest,
   isConfigOptionalControlPlaneRunRequest,
   isControlPlaneSurfaceRoute,
@@ -396,10 +401,6 @@ describe("channels/control-plane", () => {
                   prompt: "Help me turn this idea into a concrete plan.",
                 },
                 {
-                  type: "prompt",
-                  id: "project-planning-prompt",
-                },
-                {
                   type: "task",
                   id: "research-topic",
                 },
@@ -407,6 +408,7 @@ describe("channels/control-plane", () => {
             },
           }],
         }),
+        "an unregistered prompt reference is left out; the rest still show",
       );
     });
 
@@ -663,4 +665,354 @@ it("resolveAgentSkills includes the agent's own skills and excludes others'", ()
   } finally {
     skillRegistryInternal.clearAll();
   }
+});
+
+describe("prompt-reference suggestions", () => {
+  function registerPrompts(): void {
+    promptRegistry.register(
+      "triage-ticket",
+      prompt({
+        id: "triage-ticket",
+        description: "Triage a support ticket",
+        content: "You triage tickets. Classify severity and owner.",
+        suggestion: "Triage the newest open ticket.",
+        mcp: { title: "Triage a ticket" },
+      }),
+    );
+    promptRegistry.register(
+      "weekly-summary",
+      prompt({
+        id: "weekly-summary",
+        description: "Summarize the week",
+        content: "Summarize what shipped this week.",
+        suggestion: "Summarize what shipped this week.",
+      }),
+    );
+    promptRegistry.register(
+      "untitled",
+      prompt({
+        id: "untitled",
+        description: "",
+        content: "Draft a release note.",
+        suggestion: "Draft a release note.",
+      }),
+    );
+    promptRegistry.register(
+      "customer-reply",
+      prompt({
+        id: "customer-reply",
+        description: "Reply to a customer",
+        content: "Write a reply to {customer}.",
+        suggestion: "Reply to a customer.",
+        mcp: { arguments: [{ name: "customer", required: true }] },
+      }),
+    );
+  }
+
+  function captureSuggestionLogs(): { records: LogEntry[]; stop: () => void } {
+    const records: LogEntry[] = [];
+    const stop = __subscribeLogRecordEmitter((entry) => {
+      if (entry.component === "agent-suggestions") records.push(entry);
+    });
+    return { records, stop };
+  }
+
+  it("resolves a prompt reference to the prompt's title and suggestion", async () => {
+    promptRegistryInternal.clearAll();
+    try {
+      registerPrompts();
+      const metadata = await getRuntimeAgentPublicMetadata(
+        "support",
+        createAgent({ suggestions: [{ type: "prompt", id: "triage-ticket" }] }),
+      );
+
+      assertEquals(metadata.suggestions, {
+        suggestions: [{
+          type: "prompt",
+          id: "triage-ticket",
+          title: "Triage a ticket",
+          prompt: "Triage the newest open ticket.",
+        }],
+      });
+    } finally {
+      promptRegistryInternal.clearAll();
+    }
+  });
+
+  it("labels a starter with the description, then the id", async () => {
+    promptRegistryInternal.clearAll();
+    try {
+      registerPrompts();
+      const metadata = await getRuntimeAgentPublicMetadata(
+        "support",
+        createAgent({
+          suggestions: {
+            welcomeMessage: "What should we do?",
+            suggestions: [
+              { type: "prompt", id: "weekly-summary" },
+              { type: "prompt", id: "untitled" },
+            ],
+          },
+        }),
+      );
+
+      assertEquals(metadata.suggestions, {
+        welcomeMessage: "What should we do?",
+        suggestions: [
+          {
+            type: "prompt",
+            id: "weekly-summary",
+            title: "Summarize the week",
+            prompt: "Summarize what shipped this week.",
+          },
+          {
+            type: "prompt",
+            id: "untitled",
+            title: "untitled",
+            prompt: "Draft a release note.",
+          },
+        ],
+      });
+    } finally {
+      promptRegistryInternal.clearAll();
+    }
+  });
+
+  it("leaves out a missing or required-argument prompt and keeps the rest", async () => {
+    promptRegistryInternal.clearAll();
+    const logs = captureSuggestionLogs();
+    try {
+      registerPrompts();
+      const metadata = await getRuntimeAgentPublicMetadata(
+        "support",
+        createAgent({
+          suggestions: [
+            "Review status",
+            { type: "prompt", id: "missing-prompt" },
+            { type: "prompt", id: "customer-reply" },
+            { type: "prompt", id: "triage-ticket" },
+            { type: "task", id: "research-topic" },
+          ],
+        }),
+      );
+
+      assertEquals(metadata.suggestions, {
+        suggestions: [
+          { type: "prompt", title: "Review status", prompt: "Review status" },
+          {
+            type: "prompt",
+            id: "triage-ticket",
+            title: "Triage a ticket",
+            prompt: "Triage the newest open ticket.",
+          },
+          { type: "task", id: "research-topic" },
+        ],
+      });
+      assertEquals(
+        logs.records.map((record) => ({
+          level: record.level,
+          agentId: record.agent_id,
+          promptId: record.context?.promptId,
+          reason: record.context?.reason,
+        })),
+        [
+          {
+            level: "warn",
+            agentId: "support",
+            promptId: "missing-prompt",
+            reason: "prompt-not-found",
+          },
+          {
+            level: "warn",
+            agentId: "support",
+            promptId: "customer-reply",
+            reason: "prompt-requires-arguments",
+          },
+        ],
+      );
+    } finally {
+      logs.stop();
+      promptRegistryInternal.clearAll();
+    }
+  });
+
+  it("keeps inline suggestions unchanged", async () => {
+    promptRegistryInternal.clearAll();
+    const metadata = await getRuntimeAgentPublicMetadata(
+      "support",
+      createAgent({
+        suggestions: [
+          "Review status",
+          { title: "Summarize", prompt: "Summarize the latest context." },
+          { type: "prompt", title: "Plan work", prompt: "Turn this idea into a concrete plan." },
+        ],
+      }),
+    );
+
+    assertEquals(metadata.suggestions, {
+      suggestions: [
+        { type: "prompt", title: "Review status", prompt: "Review status" },
+        { type: "prompt", title: "Summarize", prompt: "Summarize the latest context." },
+        { type: "prompt", title: "Plan work", prompt: "Turn this idea into a concrete plan." },
+      ],
+    });
+  });
+
+  it("leaves out a prompt without a suggestion and never renders it", async () => {
+    promptRegistryInternal.clearAll();
+    const logs = captureSuggestionLogs();
+    const calls = { getContent: 0, generate: 0 };
+    try {
+      registerPrompts();
+      promptRegistry.register("content-only", {
+        id: "content-only",
+        description: "Has content but no suggestion",
+        getContent: () => {
+          calls.getContent += 1;
+          return Promise.resolve("Rendered content.");
+        },
+      });
+      promptRegistry.register(
+        "generated",
+        prompt({
+          id: "generated",
+          description: "Generates its content",
+          generate: () => {
+            calls.generate += 1;
+            return "Generated content.";
+          },
+        }),
+      );
+      promptRegistry.register(
+        "blank-suggestion",
+        prompt({
+          id: "blank-suggestion",
+          description: "Blank suggestion",
+          content: "Some content.",
+          suggestion: "   ",
+        }),
+      );
+
+      const metadata = await getRuntimeAgentPublicMetadata(
+        "support",
+        createAgent({
+          suggestions: [
+            { type: "prompt", id: "content-only" },
+            { type: "prompt", id: "generated" },
+            { type: "prompt", id: "blank-suggestion" },
+            { type: "prompt", id: "triage-ticket" },
+          ],
+        }),
+      );
+
+      assertEquals(metadata.suggestions, {
+        suggestions: [{
+          type: "prompt",
+          id: "triage-ticket",
+          title: "Triage a ticket",
+          prompt: "Triage the newest open ticket.",
+        }],
+      });
+      assertEquals(calls, { getContent: 0, generate: 0 }, "a starter never renders its prompt");
+      assertEquals(
+        logs.records.map((record) => ({
+          promptId: record.context?.promptId,
+          reason: record.context?.reason,
+        })),
+        [
+          { promptId: "content-only", reason: "prompt-no-suggestion" },
+          { promptId: "generated", reason: "prompt-no-suggestion" },
+          { promptId: "blank-suggestion", reason: "prompt-no-suggestion" },
+        ],
+      );
+    } finally {
+      logs.stop();
+      promptRegistryInternal.clearAll();
+    }
+  });
+
+  it("drops only the malformed entry, not the agent's other suggestions", async () => {
+    const metadata = await getRuntimeAgentPublicMetadata(
+      "support",
+      {
+        ...createAgent(),
+        config: {
+          ...createAgent().config,
+          suggestions: {
+            suggestions: [
+              { type: "prompt", title: "Plan work", prompt: "Turn this idea into a plan." },
+              { type: "prompt", title: "No prompt text" },
+              { type: "task", id: "research-topic", title: "Unsupported field" },
+            ],
+          },
+        } as unknown as Agent["config"],
+      },
+    );
+
+    assertEquals(metadata.suggestions, {
+      suggestions: [
+        { type: "prompt", title: "Plan work", prompt: "Turn this idea into a plan." },
+      ],
+    });
+  });
+
+  it("drops whitespace-only entries the browser would reject", async () => {
+    const metadata = await getRuntimeAgentPublicMetadata(
+      "support",
+      {
+        ...createAgent(),
+        config: {
+          ...createAgent().config,
+          suggestions: {
+            suggestions: [
+              "Good",
+              " ",
+              { title: "Blank prompt", prompt: "  " },
+              { type: "prompt", title: "\t", prompt: "Blank title" },
+              { type: "task", id: " " },
+              { type: "task", id: "research-topic" },
+            ],
+          },
+        } as unknown as Agent["config"],
+      },
+    );
+
+    const expected = {
+      suggestions: [
+        { type: "prompt" as const, title: "Good", prompt: "Good" },
+        { type: "task" as const, id: "research-topic" },
+      ],
+    };
+    assertEquals(metadata.suggestions, expected);
+    assertEquals(
+      normalizeAgentMetadata(metadata).suggestions,
+      expected,
+    );
+  });
+
+  it("serves resolved references through the control-plane agent list", async () => {
+    promptRegistryInternal.clearAll();
+    try {
+      registerPrompts();
+      const response = await listRuntimeAgents(createHandlerContext(), {
+        ensureProjectDiscovery: async () => createEmptyDiscoveryResult(),
+        getAgent: (id) =>
+          id === "assistant"
+            ? createAgent({ id, suggestions: [{ type: "prompt", id: "triage-ticket" }] })
+            : undefined,
+        getAllAgentIds: () => ["assistant"],
+      });
+
+      assertEquals(response.agents[0]?.suggestions, {
+        suggestions: [{
+          type: "prompt",
+          id: "triage-ticket",
+          title: "Triage a ticket",
+          prompt: "Triage the newest open ticket.",
+        }],
+      });
+    } finally {
+      promptRegistryInternal.clearAll();
+    }
+  });
 });

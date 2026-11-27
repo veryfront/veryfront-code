@@ -11,6 +11,7 @@ import {
 
 interface DenoInfoDependency {
   code?: { specifier: string };
+  isDynamic?: boolean;
   type?: { specifier: string };
 }
 
@@ -276,7 +277,9 @@ it("proxy binary embeds only the runtime-resolved proxy entrypoint", async () =>
   }
 });
 
-it("proxy binary cannot reach declarative config worker modules", async () => {
+async function proxyReachableModules(
+  options: { staticOnly?: boolean } = {},
+): Promise<Set<string>> {
   const command = new Deno.Command(Deno.execPath(), {
     args: ["info", "--json", "cli/proxy-main.ts"],
     stdout: "piped",
@@ -305,12 +308,18 @@ it("proxy binary cannot reach declarative config worker modules", async () => {
   while (pending.length > 0) {
     const specifier = pending.shift()!;
     for (const dependency of modules.get(specifier)?.dependencies ?? []) {
+      if (options.staticOnly && dependency.isDynamic) continue;
       const dependencySpecifier = dependency.code?.specifier;
       if (!dependencySpecifier || reachable.has(dependencySpecifier)) continue;
       reachable.add(dependencySpecifier);
       pending.push(dependencySpecifier);
     }
   }
+  return reachable;
+}
+
+it("proxy binary cannot reach declarative config worker modules", async () => {
+  const reachable = await proxyReachableModules();
   const evaluatorWorkerModules = [...reachable]
     .filter((specifier) => specifier.includes("declarative-evaluator-worker"));
 
@@ -318,6 +327,18 @@ it("proxy binary cannot reach declarative config worker modules", async () => {
     evaluatorWorkerModules,
     [],
     "the proxy must not reach project config evaluation; it only forwards requests to the production server",
+  );
+});
+
+it("proxy startup does not evaluate the agent skill metadata loader", async () => {
+  const reachable = await proxyReachableModules({ staticOnly: true });
+  const skillMetadataModules = [...reachable]
+    .filter((specifier) => specifier.endsWith("/src/agent/runtime/skill-metadata.ts"));
+
+  assertEquals(
+    skillMetadataModules,
+    [],
+    "the proxy must not statically import agent/runtime/skill-metadata.ts; its top-level await loads ext-yaml, which the proxy binary does not embed",
   );
 });
 

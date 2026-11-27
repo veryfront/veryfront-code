@@ -55,12 +55,14 @@ export class PublicAgentsListHandler extends BaseHandler {
 
       await this.deps.ensureProjectDiscovery(ctx);
 
-      const agents: RuntimeAgentPublicMetadata[] = this.deps.getAllAgentIds()
-        .map((id) => ({ id, agent: this.deps.getAgent(id) }))
-        .filter((entry): entry is { id: string; agent: NonNullable<typeof entry.agent> } =>
-          Boolean(entry.agent)
-        )
-        .map(({ id, agent }) => getRuntimeAgentPublicMetadata(id, agent))
+      const agents: RuntimeAgentPublicMetadata[] = (await Promise.all(
+        this.deps.getAllAgentIds()
+          .map((id) => ({ id, agent: this.deps.getAgent(id) }))
+          .filter((entry): entry is { id: string; agent: NonNullable<typeof entry.agent> } =>
+            Boolean(entry.agent)
+          )
+          .map(({ id, agent }) => getRuntimeAgentPublicMetadata(id, agent)),
+      ))
         .sort((left, right) => left.name.localeCompare(right.name));
 
       return this.respond(builder.json({ agents }, 200));
