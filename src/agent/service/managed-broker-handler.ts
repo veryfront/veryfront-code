@@ -1,4 +1,10 @@
 import {
+  inheritHostedToolApprovalCapability,
+  registerHostedToolApprovalCapability,
+} from "../hosted/tool-approval-capability.ts";
+import { bindHostedToolRunAuthorization } from "../hosted/terminal-credential.ts";
+import { getHostedToolApprovalRunId } from "../hosted/tool-run-authorization.ts";
+import {
   RUNTIME_EVENT_PERSISTENCE_HEADER,
   RUNTIME_EVENT_PERSISTENCE_MODE,
 } from "../hosted/event-persistence-contract.ts";
@@ -95,6 +101,9 @@ export function createManagedBrokerHandler<TAuthorization>(options: {
     ingress: BrokerRuntimeAgentIngress<TAuthorization>;
     signal: AbortSignal;
   }): Promise<ManagedBrokerPreparation>;
+  /** Host-only approval transport; never populated from request/project data. */
+  approvalApiBaseUrl?: string;
+  approvalFetch?: typeof fetch;
   onExecutionError?: (error: unknown, runId: string) => void;
 }) {
   const inferenceApiBaseUrl = options.inferenceApiBaseUrl;
@@ -157,6 +166,32 @@ function snapshotManagedResumeToolCall(
   >;
 }
 
+function brokerOwnedApprovalCredential(
+  ingress: unknown,
+  runId: string,
+): { authToken: string; approvalRunId: string } | undefined {
+  if (ingress === null || typeof ingress !== "object") return undefined;
+  const authority = Object.getOwnPropertyDescriptor(ingress, "privateAuthority")?.value;
+  if (authority !== null && typeof authority === "object") {
+    // Signed broker admission owns execution persistence; sourceAuthToken is never approval authority.
+    const token = Object.getOwnPropertyDescriptor(authority, "apiAuthToken")?.value;
+    return typeof token === "string" && token.length > 0
+      ? { authToken: token, approvalRunId: runId }
+      : undefined;
+  }
+  const broker = Object.getOwnPropertyDescriptor(ingress, "broker")?.value;
+  if (!broker || typeof broker.getParsedRequest !== "function") return undefined;
+  const parsed = broker.getParsedRequest();
+  // A public durableRootRun/runId field is insufficient: require the private canonical ingress proof.
+  const carrier = { projectId: parsed.projectId, runId };
+  bindHostedToolRunAuthorization(carrier, parsed);
+  const approvalRunId = getHostedToolApprovalRunId(carrier, carrier);
+  if (approvalRunId === undefined) return undefined;
+  return typeof parsed.authToken === "string" && parsed.authToken.length > 0
+    ? { authToken: parsed.authToken, approvalRunId }
+    : undefined;
+}
+
 function brokerOwnedKnowledgeAuthToken(ingress: unknown): string | undefined {
   if (ingress === null || typeof ingress !== "object") return undefined;
   const privateAuthorityDescriptor = Object.getOwnPropertyDescriptor(ingress, "privateAuthority");
@@ -204,6 +239,9 @@ export function createManagedAgUiBrokerHandler(options: {
     ingress: ManagedAgUiAgentIngressResult;
     signal: AbortSignal;
   }): Promise<ManagedBrokerPreparation>;
+  /** Host-only approval transport; never populated from request/project data. */
+  approvalApiBaseUrl?: string;
+  approvalFetch?: typeof fetch;
   onExecutionError?: (error: unknown, runId: string) => void;
 }) {
   const owner = getHostedExecutorOwnerSchema().parse(options.owner);
@@ -264,6 +302,9 @@ export function createManagedDurableBrokerHandler(options: {
     ingress: ManagedDurableAgentIngressResult;
     signal: AbortSignal;
   }): Promise<ManagedBrokerPreparation>;
+  /** Host-only approval transport; never populated from request/project data. */
+  approvalApiBaseUrl?: string;
+  approvalFetch?: typeof fetch;
   onExecutionError?: (error: unknown, runId: string) => void;
 }) {
   const owner = getHostedExecutorOwnerSchema().parse(options.owner);
@@ -304,6 +345,7 @@ export function createManagedDurableBrokerHandler(options: {
         if (persistence === prepared.start.persistence) return prepared;
         const start = { ...prepared.start, persistence };
         inheritHostedAgentPauseCapability(start, prepared.start);
+        inheritHostedToolApprovalCapability(start, prepared.start);
         return { ...prepared, start };
       }
       const {
@@ -319,6 +361,7 @@ export function createManagedDurableBrokerHandler(options: {
         },
       };
       inheritHostedAgentPauseCapability(start, prepared.start);
+      inheritHostedToolApprovalCapability(start, prepared.start);
       return { ...prepared, start };
     },
     async parse(request, signal) {
@@ -374,6 +417,9 @@ function createManagedBrokerIngressHandler<TIngress>(options: {
   >;
   prepare(input: { ingress: TIngress; signal: AbortSignal }): Promise<ManagedBrokerPreparation>;
   createInferenceResolver(ingress: TIngress): AgentModelRuntimeResolver | undefined;
+  /** Host-only approval transport; never populated from request/project data. */
+  approvalApiBaseUrl?: string;
+  approvalFetch?: typeof fetch;
   onExecutionError?: (error: unknown, runId: string) => void;
 }) {
   const knowledgeApiBaseUrl = options.knowledgeApiBaseUrl;
@@ -441,6 +487,21 @@ function createManagedBrokerIngressHandler<TIngress>(options: {
       try {
         const prepared = await options.prepare({ ingress, signal });
         preparedCleanup = prepared.cleanup;
+        const executionCredential = brokerOwnedApprovalCredential(ingress, runId);
+        if (executionCredential !== undefined) {
+          registerHostedToolApprovalCapability(prepared.start, {
+            runId,
+            apiUrl: options.approvalApiBaseUrl ?? resolveHostOwnedSourceApiBaseUrl(),
+            authToken: executionCredential.authToken,
+            approvalRunId: executionCredential.approvalRunId,
+            signal: AbortSignal.any([
+              prepared.executionSignal,
+              lifetime.signal,
+              ...(options.signal ? [options.signal] : []),
+            ]),
+            ...(options.approvalFetch ? { fetch: options.approvalFetch } : {}),
+          });
+        }
         if (
           prepared.eventPersistence !== undefined && (
             prepared.eventPersistence !== RUNTIME_EVENT_PERSISTENCE_MODE ||
@@ -486,6 +547,7 @@ function createManagedBrokerIngressHandler<TIngress>(options: {
           knowledgeApiBaseUrl,
         );
         inheritHostedAgentPauseCapability(start, prepared.start);
+        inheritHostedToolApprovalCapability(start, prepared.start);
         const runtime = await options.broker.start(start, {
           onAdmitted(settled) {
             admissionSettled = settled;

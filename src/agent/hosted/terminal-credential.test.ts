@@ -1,5 +1,8 @@
 import { bindHostedToolRunAuthorization } from "./terminal-credential.ts";
-import { hasHostedToolRunAuthorization } from "./tool-run-authorization.ts";
+import {
+  getHostedToolApprovalRunId,
+  hasHostedToolRunAuthorization,
+} from "./tool-run-authorization.ts";
 import "#veryfront/schemas/_test-setup.ts";
 import {
   createHostedConversationRunChunkMirrorFromCapability,
@@ -1154,4 +1157,30 @@ Deno.test("terminal credential variants preserve the configured API server ident
   for (const metadata of recorded) assertStrictEquals(metadata, server);
   assertEquals(typeof scopes[0], "object");
   for (const scope of scopes) assertStrictEquals(scope, scopes[0]);
+});
+
+Deno.test("tool approval resolves only the private legacy-to-canonical run mapping", () => {
+  const value = request();
+  const canonical = "33333333-3333-4333-8333-333333333333";
+  registerHostedTerminalCredential(
+    value,
+    `header.${
+      btoa(JSON.stringify({
+        runId: "run-1",
+        canonicalRunId: canonical,
+        tokenUse: "run_event_writer",
+        writerPurpose: "current_run_terminal",
+        dispatchNonce: "fixture-generation",
+      }))
+    }.signature`,
+  );
+  const target = { projectId: "project-1", runId: "run-1", approvalRunId: "forged-public-route" };
+  bindHostedToolRunAuthorization(target, value);
+  assertEquals(getHostedToolApprovalRunId(target, target), canonical);
+  assertEquals(getHostedToolApprovalRunId({ ...target }, target), undefined);
+  assertEquals(getHostedToolApprovalRunId(target, { ...target, runId: canonical }), undefined);
+  assertEquals(
+    getHostedToolApprovalRunId(target, { ...target, projectId: "other-project" }),
+    undefined,
+  );
 });

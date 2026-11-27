@@ -1,4 +1,11 @@
-import { inheritHostedToolRunAuthorization } from "./tool-run-authorization.ts";
+import {
+  getHostedToolApprovalRunId,
+  inheritHostedToolRunAuthorization,
+} from "./tool-run-authorization.ts";
+import {
+  getHostedToolApprovalCapability,
+  registerHostedToolApprovalCapability,
+} from "./tool-approval-capability.ts";
 import { type HostedTaskInput, resolveHostedTaskInput } from "./task-input.ts";
 import { captureHostedPlatformDependencyExecution } from "./platform-dependency-credential.ts";
 import { sealToolPlatformDependencies } from "#veryfront/tool/factory.ts";
@@ -234,6 +241,8 @@ export type CreateDefaultHostedChatRuntimeOptions = {
    */
   projectDefinitionBootstrapEnabled?: boolean;
   projectDefinitionBootstrapSignal?: AbortSignal;
+  /** Host-owned approval transport injection; never read from agent or project configuration. */
+  approvalFetch?: typeof fetch;
   sourceIntegrationPolicy: SourceIntegrationPolicyManifest;
   config: DefaultHostedChatRuntimeConfig;
   buildLocalTools: (
@@ -707,6 +716,22 @@ export async function createDefaultHostedChatRuntime(
         ? input.createTaskContext({ options: input.options, modelId })
         : createDefaultTaskContext({ options: input.options, modelId, taskInput });
       inheritHostedChildInferenceAuthority(taskContext, input.options);
+      const approvalRunId = getHostedToolApprovalRunId(input.options, {
+        projectId: taskContext.projectId,
+        runId: input.options.runId,
+      });
+      if (
+        input.options.runId && approvalRunId &&
+        !getHostedToolApprovalCapability(input.options, input.options.runId)
+      ) {
+        registerHostedToolApprovalCapability(input.options, {
+          apiUrl: input.config.apiUrl,
+          authToken: input.options.authToken,
+          runId: input.options.runId,
+          approvalRunId,
+          fetch: input.approvalFetch,
+        });
+      }
       // The id is normalized, so hosted identity comes from the run's routing,
       // read with the run's credentials and served catalog.
       const providerNativeToolNames = runWithVeryfrontCloudContext(

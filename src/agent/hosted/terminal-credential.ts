@@ -172,13 +172,15 @@ export function bindHostedToolRunAuthorization(
   request: ParsedHostedChatRequest,
 ): void {
   const authority = credentials.get(request);
+  const approvalRunId = hostedTerminalCanonicalRunId(request);
   if (
     !authority?.projectId || authority.projectId !== target.projectId ||
-    authority.runId !== target.runId || !hostedTerminalCanonicalRunId(request)
+    authority.runId !== target.runId || !approvalRunId
   ) return;
   registerHostedToolRunAuthorization(target, {
     projectId: authority.projectId,
     runId: authority.runId,
+    approvalRunId,
   });
 }
 

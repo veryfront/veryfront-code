@@ -1,3 +1,4 @@
+import { inheritHostedToolApprovalCapability } from "./tool-approval-capability.ts";
 import { inheritHostedAgentPauseCapability } from "./manual-pause-credential.ts";
 import type { ExecutorChannel } from "#veryfront/agent/executor/channel.ts";
 import type { ExecutorBinding } from "#veryfront/agent/executor/protocol.ts";
@@ -82,6 +83,7 @@ export function createTrustedRuntimePreparation(input: TrustedRuntimePreparation
     },
   };
   inheritHostedAgentPauseCapability(project, input);
+  inheritHostedToolApprovalCapability(project, input);
   return createRuntimePreparationCore({
     binding: input.binding,
     source: input.source,

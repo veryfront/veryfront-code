@@ -1,3 +1,4 @@
+import { registerHostedToolApprovalCapability } from "./tool-approval-capability.ts";
 import "#veryfront/schemas/_test-setup.ts";
 import { assert, assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
@@ -57,6 +58,9 @@ const grant: ExecutorRuntimePreparationGrant = {
 
 async function fixture(options: {
   ownedTool?: boolean;
+  approval?: "approve" | "deny" | "expired";
+  repeatApprovalCall?: boolean;
+  query?: string;
   forgedAlias?: boolean;
   sourceTools?: string[];
   deniedTools?: string[];
@@ -72,6 +76,9 @@ async function fixture(options: {
   let closed = 0;
   let cleaned = 0;
   const checkpoints: unknown[] = [];
+  const approvalRequests: Array<
+    { url: string; body: Record<string, unknown>; key: string | null }
+  > = [];
   const toolName = options.forgedAlias
     ? "dangerous"
     : options.ownedTool
@@ -79,15 +86,30 @@ async function fixture(options: {
     : "inspect";
   const model = scriptedModel([
     {
-      toolCalls: [{ id: "synthetic-call", name: toolName, input: { query: "authorized input" } }],
+      toolCalls: [{
+        id: "synthetic-call",
+        name: toolName,
+        input: { query: options.query ?? "authorized input" },
+      }],
     },
+    ...(options.repeatApprovalCall
+      ? [{
+        toolCalls: [{
+          id: "synthetic-call",
+          name: toolName,
+          input: { query: options.query ?? "authorized input" },
+        }],
+      }]
+      : []),
     { text: "synthetic-private-model-output" },
   ]);
   const registered = tool({
     id: toolName,
     description: "Inspect a query",
+    ...(options.approval ? { approval: {} } : {}),
     inputSchema: defineSchema((v) => v.object({ query: v.string() }))(),
     execute: (args, call) => {
+      assertEquals(call && Object.hasOwn(call, "authToken"), false);
       seen.push({
         args,
         context: call &&
@@ -184,7 +206,7 @@ async function fixture(options: {
     },
     ...options.facades,
   };
-  const owner = createTrustedRuntimePreparation({
+  const preparationInput: Parameters<typeof createTrustedRuntimePreparation>[0] = {
     binding,
     source,
     channel: trusted,
@@ -204,7 +226,38 @@ async function fixture(options: {
       await Promise.all([trusted.settled, project.settled]);
       await options.closeProject?.();
     },
-  });
+  };
+  if (options.approval) {
+    registerHostedToolApprovalCapability(preparationInput, {
+      apiUrl: "https://api.example.test",
+      authToken: "synthetic-host-only-approval",
+      runId: context.runId,
+      signal: lifetime.signal,
+      fetch: (url, init) => {
+        assertEquals(
+          new Headers(init?.headers).get("authorization"),
+          "Bearer synthetic-host-only-approval",
+        );
+        const body = JSON.parse(String(init?.body));
+        assertEquals(seen.length, options.approval === "approve" ? approvalRequests.length : 0);
+        approvalRequests.push({
+          url: String(url),
+          body,
+          key: new Headers(init?.headers).get("idempotency-key"),
+        });
+        return Promise.resolve(Response.json({
+          ...body,
+          input_request_id: crypto.randomUUID(),
+          status: options.approval === "expired" ? "expired" : "submitted",
+          response: {
+            values: { decision: options.approval },
+            actor: { type: "human", id: "checker" },
+          },
+        }, { status: 201 }));
+      },
+    });
+  }
+  const owner = createTrustedRuntimePreparation(preparationInput);
   const operationContext = {
     binding,
     signal: new AbortController().signal,
@@ -216,6 +269,7 @@ async function fixture(options: {
     seen,
     requested,
     checkpoints,
+    approvalRequests,
     lifetime,
     trusted,
     project,
@@ -251,6 +305,55 @@ async function fixture(options: {
 }
 
 describe("trusted runtime preparation", () => {
+  for (const outcome of ["approve", "deny", "expired"] as const) {
+    it(`gates remote project tools through the host approval channel: ${outcome}`, async () => {
+      const f = await fixture({ approval: outcome, repeatApprovalCall: true });
+      try {
+        const prepared = await f.prepare() as {
+          ok: boolean;
+          value: { preparedRuntimeHandle: string };
+        };
+        assertEquals(prepared.ok, true);
+        const frames = await f.stream(prepared.value.preparedRuntimeHandle);
+        assertEquals(f.approvalRequests.length, 2);
+        assertEquals(f.seen.length, outcome === "approve" ? 2 : 0);
+        const [first, second] = f.approvalRequests;
+        assert(first && second);
+        assertEquals(first.key === second.key, false);
+        assertEquals(
+          first.url,
+          `https://api.example.test/runs/${context.runId}/input-requests`,
+        );
+        assertEquals(JSON.stringify(frames).includes("synthetic-host-only-approval"), false);
+        assertEquals(JSON.stringify(frames).includes("veryfront.tool-approval.request.v1"), false);
+        assertEquals(JSON.stringify(frames).includes("checker"), false);
+      } finally {
+        await f.owner.close();
+        await f.owner.settled;
+      }
+    });
+  }
+
+  it("approves admitted project arguments larger than the progress event budget", async () => {
+    const query = "x".repeat(80 * 1024);
+    const f = await fixture({ approval: "approve", query });
+    try {
+      const prepared = await f.prepare() as {
+        ok: boolean;
+        value: { preparedRuntimeHandle: string };
+      };
+      assertEquals(prepared.ok, true);
+      await f.stream(prepared.value.preparedRuntimeHandle);
+      assertEquals(f.seen.length, 1);
+      const toolCall = f.approvalRequests[0]?.body.tool_call as { arguments: { query: string } };
+      assert(toolCall);
+      assertEquals(toolCall.arguments.query.length, query.length);
+    } finally {
+      await f.owner.close();
+      await f.owner.settled;
+    }
+  });
+
   it("does not let peer aliases widen a trusted host-tool grant", async () => {
     let executed = 0;
     const dangerous = tool({

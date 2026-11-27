@@ -1,3 +1,4 @@
+import { inheritHostedToolApprovalCapability } from "./tool-approval-capability.ts";
 import { registerHostedToolRunAuthorization } from "./tool-run-authorization.ts";
 import { getToolResultReaderReservedToolSlots } from "#veryfront/agent/runtime/tool-result-context.ts";
 import { retainTrustedSkillLoaderAliases } from "../platform-host-tools.ts";
@@ -1240,6 +1241,7 @@ export function createRuntimePreparationCore(input: RuntimePreparationCoreOption
                 : {}),
             };
             if (execution.kind === "canonical" && execution.projectId) {
+              inheritHostedToolApprovalCapability(streamOptions, input.project);
               registerHostedToolRunAuthorization(streamOptions, {
                 projectId: execution.projectId,
                 runId: execution.runId,

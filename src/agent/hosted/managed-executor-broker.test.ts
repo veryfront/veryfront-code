@@ -1,3 +1,4 @@
+import { registerHostedToolApprovalCapability } from "./tool-approval-capability.ts";
 import {
   hasTrustedHostToolProvenance,
   markTrustedHostToolProvenance,
@@ -1761,6 +1762,7 @@ function trustedFixture(
   },
   agentOptions: {
     knowledge?: true;
+    approval?: true;
     executionProfile?: "project-tools";
     sourceIntegrationPolicy?:
       import("#veryfront/integrations/source-policy.ts").SourceIntegrationPolicyManifest;
@@ -1865,6 +1867,7 @@ function trustedFixture(
         installedAgentEntrypoint = input.agentEntrypoint;
         const registered = tool({
           id: "inspect",
+          ...(agentOptions.approval ? { approval: {} } : {}),
           description: "Inspect an approved argument",
           inputSchema: defineSchema((v) => v.object({ query: v.string() }))(),
           execute: (args, call) => {
@@ -2159,6 +2162,48 @@ describe("broker-local trusted runtime", () => {
     const required: undefined extends Start["trustedRuntime"] ? false : true = true;
     assertEquals(required, true);
   });
+
+  for (const approved of [false, true]) {
+    it(`carries private approval across trusted preparation without a bearer on project wire (approve: ${approved})`, async () => {
+      const f = trustedFixture(undefined, false, undefined, undefined, undefined, {
+        approval: true,
+      });
+      let requests = 0;
+      registerHostedToolApprovalCapability(f.input, {
+        runId: "run-1",
+        apiUrl: "https://approval.example.test",
+        authToken: "synthetic-private-approval-token",
+        fetch: ((_url, init) => {
+          assertEquals(f.executions, 0, "Approval request must precede authored Tool execution");
+          requests++;
+          assertEquals(
+            new Headers(init?.headers).get("authorization"),
+            "Bearer synthetic-private-approval-token",
+          );
+          if (!approved) {
+            return Promise.reject(new Error("synthetic approval transport unavailable"));
+          }
+          const body = JSON.parse(String(init?.body));
+          return Promise.resolve(
+            Response.json({
+              ...body,
+              input_request_id: crypto.randomUUID(),
+              status: "submitted",
+              response: {
+                values: { decision: "approve" },
+                actor: { type: "human", id: "checker" },
+              },
+            }, { status: 201 }),
+          );
+        }) as typeof fetch,
+      });
+      const approvalChunks = await drainTrustedFixture(f);
+      assertEquals(requests, 1, JSON.stringify(approvalChunks));
+      assertEquals(f.executions, approved ? 1 : 0);
+      assertEquals(f.projectWire.includes("synthetic-private-approval-token"), false);
+      assertEquals(f.projectWire.includes("requestToolApproval"), false);
+    });
+  }
 
   it("carries approved identity and current skill availability across both channel hops", async () => {
     const observed: ToolExecutionContext[] = [];
