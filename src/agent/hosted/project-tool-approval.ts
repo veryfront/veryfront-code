@@ -26,10 +26,10 @@ import {
 
 const approvalRequests = createPrivateWeakStore<object, true>();
 /** The authenticated tool decoder marks only explicitly opted-in project calls. */
-export function markProjectToolApprovalRequest(context: object): void {
+export function markProjectToolApprovalRequest(context: ToolExecutionContext): void {
   approvalRequests.set(context, true);
 }
-export function hasProjectToolApprovalRequest(context: object): boolean {
+export function hasProjectToolApprovalRequest(context: ToolExecutionContext): boolean {
   return approvalRequests.get(context) === true;
 }
 const REQUEST_EVENT = "veryfront.tool-approval.request.v1";
@@ -197,7 +197,7 @@ export function createProjectToolApprovalReceiver(scope: {
           // Keep the progress frame small. The authenticated broker reads the bounded
           // normalized arguments through the nonce rather than squeezing them into UI progress.
           const { input: _arguments, policy: _policy, ...notice } = event;
-          await context.publishDataEvent(notice as unknown as ToolExecutionDataEvent);
+          await context.publishDataEvent(notice);
           active();
           return await observePrivatePromise(decision.promise);
         } finally {

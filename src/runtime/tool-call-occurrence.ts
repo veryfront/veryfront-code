@@ -10,6 +10,9 @@ export {
   retainToolCallOccurrence,
 } from "./tool-call-occurrence-carrier.ts";
 
+// Capture before project modules load: application hooks cannot choose approval identities.
+const randomUUID = crypto.randomUUID.bind(crypto);
+
 const enabled = createPrivateAsyncLocalStorage<true>();
 const dispatch = createPrivateAsyncLocalStorage<
   Readonly<{ occurrenceId: string; toolCallId: string }>
@@ -28,7 +31,7 @@ export function introduceToolCallOccurrence(call: ToolCallOccurrenceCall): strin
   if (!enabled.getStore()) return undefined;
   const existing = getToolCallOccurrence(call);
   if (existing) return existing;
-  const occurrenceId = crypto.randomUUID();
+  const occurrenceId = randomUUID();
   bindToolCallStartOccurrence(call, occurrenceId);
   return occurrenceId;
 }

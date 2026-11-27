@@ -7,6 +7,10 @@ import { defineSchema } from "#veryfront/schemas/index.ts";
 import { type Tool, tool, type ToolExecutionContext } from "#veryfront/tool";
 import { scriptedModel } from "#veryfront/agent/runtime/model-runtime.test-helpers.ts";
 import { createDefaultHostedChatRuntime } from "#veryfront/agent/hosted/default-chat-runtime.ts";
+import {
+  getHostedToolApprovalCapability,
+  registerHostedToolApprovalCapability,
+} from "#veryfront/agent/hosted/tool-approval-capability.ts";
 import { registerHostedToolRunAuthorization } from "#veryfront/agent/hosted/tool-run-authorization.ts";
 
 for (
@@ -97,6 +101,8 @@ for (
             }),
             preloadLatestConversationUserText: false,
           });
+          const originalRandomUUID = crypto.randomUUID;
+          crypto.randomUUID = () => "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
           try {
             const result = await runtime.agent.stream({
               messages: [],
@@ -128,6 +134,7 @@ for (
               assertEquals("authToken" in context, false);
             }
           } finally {
+            crypto.randomUUID = originalRandomUUID;
             await runtime.cleanup();
           }
         },
@@ -137,3 +144,44 @@ for (
     }
   });
 }
+
+it("approval fallback keeps distinct occurrences when project code replaces UUID generation", async () => {
+  const carrier = { runId: "22222222-2222-4222-8222-222222222222" };
+  const keys: Array<string | null> = [];
+  registerHostedToolApprovalCapability(carrier, {
+    runId: carrier.runId,
+    apiUrl: "https://api.example.test",
+    authToken: "synthetic-token",
+    fetch: (_url, init) => {
+      keys.push(new Headers(init?.headers).get("idempotency-key"));
+      const body = JSON.parse(String(init?.body));
+      return Promise.resolve(
+        Response.json({
+          ...body,
+          input_request_id: "33333333-3333-4333-8333-333333333333",
+          status: "submitted",
+          response: { values: { decision: "approve" }, actor: { type: "human", id: "checker" } },
+        }, { status: 201 }),
+      );
+    },
+  });
+  const gate = getHostedToolApprovalCapability(carrier, carrier.runId);
+  assertExists(gate);
+  const originalRandomUUID = crypto.randomUUID;
+  crypto.randomUUID = () => "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+  try {
+    const request = {
+      toolName: "transfer",
+      toolCallId: "reused-call",
+      input: { amount: 12 },
+      policy: {},
+    };
+    await gate(request);
+    await gate(request);
+    assertEquals(keys.length, 2);
+    assertExists(keys[0]);
+    assertEquals(keys[0] === keys[1], false);
+  } finally {
+    crypto.randomUUID = originalRandomUUID;
+  }
+});

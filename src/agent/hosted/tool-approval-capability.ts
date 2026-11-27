@@ -1,3 +1,10 @@
+import type { TrustedRuntimePreparationOptions } from "./trusted-runtime-prepare.ts";
+import type {
+  ManagedExecutorRuntime,
+  ManagedExecutorStartInput,
+} from "./managed-executor-broker.ts";
+import type { TrustedManagedRuntimeOptions } from "./trusted-managed-runtime-contract.ts";
+import type { RuntimePreparationSource } from "./runtime-preparation-core.ts";
 import { joinPrivateAbortSignals } from "#veryfront/security/private-abort.ts";
 import {
   getCurrentToolCallOccurrenceIdentity,
@@ -11,22 +18,33 @@ import type { ToolApprovalGate } from "#veryfront/tool/approval.ts";
 import { createVeryfrontApiOriginBoundOutboundFetch } from "#veryfront/security/http/outbound-fetch.ts";
 import { requireHostPrivateApiHttps } from "#veryfront/config/host-api-base.ts";
 
+type ToolApprovalCarrier =
+  | { projectId?: string | null; runId?: string }
+  | ManagedExecutorStartInput
+  | ManagedExecutorRuntime
+  | TrustedManagedRuntimeOptions
+  | RuntimePreparationSource
+  | TrustedRuntimePreparationOptions;
+
 const capabilities = createPrivateWeakStore<
-  object,
+  ToolApprovalCarrier,
   Readonly<{ runId: string; gate: ToolApprovalGate }>
 >();
 const freeze = Object.freeze;
 
 /** Host-only construction after canonical admission. Nothing is added to the carrier's public fields. */
-export function registerHostedToolApprovalCapability(target: object, input: {
-  runId: string;
-  /** Verified canonical API target when the execution context uses a legacy routing alias. */
-  approvalRunId?: string;
-  apiUrl: string;
-  authToken: string;
-  signal?: AbortSignal;
-  fetch?: typeof fetch;
-}): void {
+export function registerHostedToolApprovalCapability(
+  target: ToolApprovalCarrier,
+  input: {
+    runId: string;
+    /** Verified canonical API target when the execution context uses a legacy routing alias. */
+    approvalRunId?: string;
+    apiUrl: string;
+    authToken: string;
+    signal?: AbortSignal;
+    fetch?: typeof fetch;
+  },
+): void {
   const apiUrl = requireHostPrivateApiHttps(input.apiUrl);
   const lifetime = input.signal;
   const gate = createInputRequestApprovalGate(freeze({
@@ -56,14 +74,17 @@ export function registerHostedToolApprovalCapability(target: object, input: {
 }
 
 /** Carry only the already-admitted host capability across framework-owned copies. */
-export function inheritHostedToolApprovalCapability(target: object, source: object): void {
+export function inheritHostedToolApprovalCapability(
+  target: ToolApprovalCarrier,
+  source: ToolApprovalCarrier,
+): void {
   const capability = capabilities.get(source);
   if (capability) capabilities.set(target, capability);
 }
 
 /** Public run identifiers alone cannot create an approval channel. */
 export function getHostedToolApprovalCapability(
-  target: object,
+  target: ToolApprovalCarrier,
   runId: string | undefined,
 ): ToolApprovalGate | undefined {
   const capability = capabilities.get(target);
