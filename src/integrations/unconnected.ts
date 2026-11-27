@@ -80,7 +80,8 @@ function trimTrailingSlash(origin: string): string {
   return privateTextEndsWith(origin, "/") ? privateTextSlice(origin, 0, origin.length - 1) : origin;
 }
 
-function integrationDisplayName(integration: string): string {
+/** Catalog display name of an integration, or its id when the catalog does not list it. */
+export function integrationDisplayName(integration: string): string {
   for (let index = 0; index < connectors.length; index++) {
     const connector = connectors[index]!;
     if (connector.name === integration) return connector.displayName;

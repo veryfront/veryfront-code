@@ -8,6 +8,8 @@ import {
   setHostSecret,
 } from "#veryfront/platform/compat/process/env.ts";
 import { refreshEnvironmentConfig } from "#veryfront/config/environment-config.ts";
+import { VeryfrontError } from "#veryfront/errors";
+import type { ToolExecutionContext } from "#veryfront/tool";
 import { runWithExactSourceIntegrationPolicy } from "#veryfront/integrations/source-policy-context.ts";
 import { normalizeSourceIntegrationPolicy } from "#veryfront/integrations/source-policy.ts";
 import { runWithRequestContext } from "#veryfront/platform/adapters/fs/veryfront/request-context.ts";
@@ -1879,5 +1881,235 @@ describe("integrations/remote-tools", () => {
       Array.from({ length: MAX_INTEGRATION_TOOL_LIST_ATTEMPTS - 1 }, () => "debug"),
       "retry attempts must log at debug level only",
     );
+  });
+});
+
+describe("runRemoteIntegrationTool from a workflow step", () => {
+  const WORKFLOW_STEP: ToolExecutionContext = { agentId: "workflow", workflowStep: true };
+
+  function useApiToken(): void {
+    setRemoteToolEnv({
+      VERYFRONT_API_BASE_URL: "https://api.test",
+      VERYFRONT_API_TOKEN: "env-token",
+    });
+  }
+
+  /** Run `github__list_repos` against one mocked response and return the refusal it throws. */
+  async function refusalFor(
+    response: () => Response,
+    context: ToolExecutionContext = WORKFLOW_STEP,
+    toolName = "github__list_repos",
+  ): Promise<VeryfrontError> {
+    const error = await withMockFetch(
+      () => Promise.resolve(response()),
+      () =>
+        assertRejects(
+          () => runRemoteIntegrationTool(toolName, {}, context),
+          VeryfrontError,
+        ),
+    ) as VeryfrontError;
+    assertEquals(error.slug, "integration-tool-call-refused");
+    return error;
+  }
+
+  it("names the API reason and status when the API refuses the call", async () => {
+    useApiToken();
+    const cases: Array<{ response: () => Response; reason: string; status: number }> = [
+      {
+        response: () =>
+          Response.json({ error: "authorization-denied", message: "Insufficient permissions" }, {
+            status: 403,
+          }),
+        reason: "Insufficient permissions",
+        status: 403,
+      },
+      {
+        response: () => Response.json({ error: "rate_limited" }, { status: 429 }),
+        reason: "rate_limited",
+        status: 429,
+      },
+      {
+        response: () => new Response("upstream unavailable", { status: 502 }),
+        reason: "upstream unavailable",
+        status: 502,
+      },
+      {
+        response: () => Response.json({ message: "   " }, { status: 500 }),
+        reason: "the API answered 500",
+        status: 500,
+      },
+      {
+        response: () => new Response("", { status: 503 }),
+        reason: "the API answered 503",
+        status: 503,
+      },
+    ];
+
+    for (const { response, reason, status } of cases) {
+      const error = await refusalFor(response);
+      assertEquals(error.message, `GitHub refused list_repos for this workflow run: ${reason}`);
+      assertEquals(error.status, status);
+    }
+  });
+
+  it("names the integration's reason when it returns an MCP tool error", async () => {
+    useApiToken();
+
+    const textError = await refusalFor(() =>
+      Response.json({ isError: true, content: [{ type: "text", text: "Repository not found" }] })
+    );
+    assertEquals(
+      textError.message,
+      "GitHub refused list_repos for this workflow run: Repository not found",
+    );
+
+    const structuredError = await refusalFor(() =>
+      Response.json({
+        isError: true,
+        content: [],
+        structuredContent: { message: "Search query is too long" },
+        _meta: { condition: { slug: "provider-failed", status: 422, retryable: false } },
+      })
+    );
+    assertEquals(
+      structuredError.message,
+      "GitHub refused list_repos for this workflow run: Search query is too long",
+    );
+    assertEquals(structuredError.status, 422, "the typed failure condition status carries over");
+
+    const bareError = await refusalFor(() => Response.json({ isError: true, content: [] }));
+    assertEquals(
+      bareError.message,
+      "GitHub refused list_repos for this workflow run: the integration returned an error",
+      "an empty MCP error must not surface the internal tool_error wrapper code",
+    );
+  });
+
+  it("names where to connect the integration when the call needs authentication", async () => {
+    useApiToken();
+
+    const error = await refusalFor(() =>
+      Response.json({
+        isError: true,
+        content: [],
+        structuredContent: {
+          error: "authentication_required",
+          integration: "github",
+          connectUrl: "https://app.test/oauth/connect/github",
+        },
+      })
+    );
+
+    assertEquals(
+      error.message,
+      "GitHub refused list_repos for this workflow run: GitHub is not connected. " +
+        "Connect it at https://app.test/oauth/connect/github, then retry the run.",
+    );
+    assertEquals(error.context, { connectUrl: "https://app.test/oauth/connect/github" });
+
+    const reconnect = await refusalFor(() =>
+      Response.json({
+        isError: true,
+        content: [],
+        structuredContent: {
+          error: "reconnect_required",
+          integration: "github",
+          connectUrl: "https://app.test/oauth/connect/github",
+          message: "Reconnect GitHub to continue.",
+        },
+      })
+    );
+    assertEquals(
+      reconnect.message,
+      "GitHub refused list_repos for this workflow run: Reconnect GitHub to continue. " +
+        "Connect it at https://app.test/oauth/connect/github, then retry the run.",
+    );
+  });
+
+  it("uses the integration id when the catalog does not list the integration", async () => {
+    useApiToken();
+
+    const error = await refusalFor(
+      () => Response.json({ message: "Forbidden" }, { status: 403 }),
+      WORKFLOW_STEP,
+      "unlisted-integration__sync",
+    );
+
+    assertEquals(
+      error.message,
+      "unlisted-integration refused sync for this workflow run: Forbidden",
+    );
+  });
+
+  it("throws a 401 refusal without a request when no API token is available", async () => {
+    setRemoteToolEnv({ VERYFRONT_API_BASE_URL: "https://api.test" });
+
+    let fetchCalls = 0;
+    const error = await withMockFetch(() => {
+      fetchCalls++;
+      return Promise.resolve(Response.json({}));
+    }, () =>
+      assertRejects(
+        () => runRemoteIntegrationTool("github__list_repos", {}, WORKFLOW_STEP),
+        VeryfrontError,
+      )) as VeryfrontError;
+
+    assertEquals(fetchCalls, 0);
+    assertEquals(error.slug, "integration-tool-call-refused");
+    assertEquals(error.status, 401);
+    assertEquals(
+      error.message,
+      "GitHub list_repos did not run for this workflow run: no Veryfront API token. " +
+        "Set VERYFRONT_API_TOKEN or run `veryfront login`.",
+    );
+  });
+
+  it("returns a successful result unchanged", async () => {
+    useApiToken();
+
+    const result = await withMockFetch(
+      () =>
+        Promise.resolve(Response.json({
+          isError: false,
+          content: [{ type: "text", text: "[]" }],
+          structuredContent: { repos: [] },
+        })),
+      () => runRemoteIntegrationTool("github__list_repos", {}, WORKFLOW_STEP),
+    );
+
+    assertEquals(result, { repos: [] });
+  });
+
+  it("keeps returning error results to callers that are not workflow steps", async () => {
+    useApiToken();
+    const inherited = Object.create({ workflowStep: true }) as ToolExecutionContext;
+    const callers: Array<[string, ToolExecutionContext | undefined]> = [
+      ["no context", undefined],
+      ["an agent tool call", { agentId: "agent" }],
+      ["workflowStep false", { workflowStep: false }],
+      ["a non-boolean marker", { workflowStep: "true" as unknown as boolean }],
+      ["an inherited marker", inherited],
+    ];
+
+    for (const [label, context] of callers) {
+      const apiError = await withMockFetch(
+        () => Promise.resolve(new Response("Forbidden", { status: 403 })),
+        () => runRemoteIntegrationTool("github__list_repos", {}, context),
+      );
+      assertEquals(apiError, { error: "api_error", status: 403, message: "Forbidden" }, label);
+
+      const toolError = await withMockFetch(
+        () =>
+          Promise.resolve(
+            Response.json({ isError: true, content: [{ type: "text", text: "Not found" }] }),
+          ),
+        () => runRemoteIntegrationTool("github__list_repos", {}, context),
+      );
+      assertEquals(toolError, { error: "tool_error", message: "Not found" }, label);
+    }
+
+    setRemoteToolEnv({ VERYFRONT_API_BASE_URL: "https://api.test" });
+    const noToken = await runRemoteIntegrationTool("github__list_repos", {}, { agentId: "agent" });
+    assertEquals(noToken, { error: "no_api_token", message: "No API token available" });
   });
 });

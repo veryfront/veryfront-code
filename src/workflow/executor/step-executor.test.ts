@@ -5,6 +5,7 @@ import "#veryfront/schemas/_test-setup.ts";
 
 import { assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
+import type { ToolExecutionContext } from "#veryfront/tool";
 import { FakeTime } from "#std/testing/time";
 import { step } from "../dsl/step.ts";
 import type { NodeState, RetryConfig, WorkflowContext, WorkflowNode } from "../types.ts";
@@ -982,5 +983,75 @@ describe("StepExecutor node states", () => {
     assertEquals(failure.status, "failed");
     assertEquals(failure.error, "new failure");
     assertEquals(Object.hasOwn(failure, "output"), false);
+  });
+});
+
+describe("StepExecutor tool context", () => {
+  /** A tool step that records the context the executor hands its tool. */
+  async function captureToolContext(
+    context: WorkflowContext,
+  ): Promise<ToolExecutionContext> {
+    let captured: ToolExecutionContext | undefined;
+    const node = step("capture", {
+      tool: {
+        id: "capture",
+        description: "Capture the tool context",
+        execute: (_input: unknown, toolContext: ToolExecutionContext) => {
+          captured = toolContext;
+          return Promise.resolve({ ok: true });
+        },
+        // deno-lint-ignore no-explicit-any
+      } as any,
+    });
+    const result = await new StepExecutor({}).execute(node, context);
+    assertEquals(result.success, true);
+    return captured!;
+  }
+
+  it("gives a tenantless tool step no own credential or project fields", async () => {
+    const context = await captureToolContext(makeContext());
+
+    assertEquals(context.agentId, "workflow");
+    assertEquals(context.workflowStep, true);
+    for (
+      const key of [
+        "authToken",
+        "projectSlug",
+        "projectId",
+        "productionMode",
+        "releaseId",
+        "branch",
+        "environmentName",
+      ]
+    ) {
+      assertEquals(
+        Object.hasOwn(context, key),
+        false,
+        `an own "${key}" would claim the run's credential and block the runtime fallback`,
+      );
+    }
+  });
+
+  it("gives a tool step every field of the workflow context tenant", async () => {
+    const tenant: CapturedTenantContext = {
+      projectSlug: "tenant-project",
+      projectId: "tenant-project-id",
+      token: "tenant-token",
+      productionMode: true,
+      releaseId: "release-1",
+      branch: "main",
+      environmentName: "production",
+    };
+
+    const context = await captureToolContext({ ...makeContext(), _tenant: tenant });
+
+    assertEquals(context.workflowStep, true);
+    assertEquals(context.authToken, "tenant-token");
+    assertEquals(context.projectSlug, "tenant-project");
+    assertEquals(context.projectId, "tenant-project-id");
+    assertEquals(context.productionMode, true);
+    assertEquals(context.releaseId, "release-1");
+    assertEquals(context.branch, "main");
+    assertEquals(context.environmentName, "production");
   });
 });

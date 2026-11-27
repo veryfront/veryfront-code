@@ -551,16 +551,24 @@ export class StepExecutor {
     const resolvedTool = typeof tool === "string" ? this.getTool(tool) : tool;
     const tenant = context._tenant ?? getWorkflowTenant();
 
+    // An own `authToken` claims the credential, even when it is undefined:
+    // integration calls then never fall back to the runtime's token. A run with
+    // no tenant (a local `veryfront workflow run`) has no credential to claim.
     return resolvedTool.execute(input as Record<string, unknown>, {
       agentId: "workflow",
+      workflowStep: true,
       blobStorage: this.config.blobStorage,
-      projectId: tenant?.projectId,
-      projectSlug: tenant?.projectSlug,
-      authToken: tenant?.token,
-      productionMode: tenant?.productionMode,
-      releaseId: tenant?.releaseId,
-      branch: tenant?.branch,
-      environmentName: tenant?.environmentName,
+      ...(tenant
+        ? {
+          projectId: tenant.projectId,
+          projectSlug: tenant.projectSlug,
+          authToken: tenant.token,
+          productionMode: tenant.productionMode,
+          releaseId: tenant.releaseId,
+          branch: tenant.branch,
+          environmentName: tenant.environmentName,
+        }
+        : {}),
       abortSignal,
     });
   }

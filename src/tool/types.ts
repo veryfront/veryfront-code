@@ -92,6 +92,9 @@ export interface ToolExecutionContext {
   /** False when `runId` is not a control-plane run and must not be sent as a
    * run authorization binding. Absent means it may be. */
   runIdBindsToolAuthorization?: boolean;
+  /** True when a workflow `tool()` step runs the tool. A refused integration
+   * tool call then throws with the reason instead of returning an error result. */
+  workflowStep?: boolean;
   /** Stable ID for the current tool call when the runtime is tracking tool lifecycles */
   toolCallId?: string;
   /** Project identity used by integration token resolution */
