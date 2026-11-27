@@ -857,12 +857,14 @@ export default agent({
   suggestions: [
     "Summarize this ticket",
     { title: "Plan work", prompt: "Turn this idea into a concrete plan." },
-    { type: "prompt", id: "triage-ticket" },
+    { type: "prompt", id: "triageTicket" },
   ],
 });
 ```
 
-The reference names a prompt in `prompts/`:
+The reference names a prompt in `prompts/` by its id. Discovery derives the id
+from the file name in camelCase, so `prompts/triage-ticket.ts` registers as
+`triageTicket`:
 
 ```ts
 // prompts/triage-ticket.ts

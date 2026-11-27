@@ -18,6 +18,7 @@ import type { PromptRenderContext } from "#veryfront/prompt/types.ts";
 import { promptRegistry, promptRegistryInternal } from "#veryfront/prompt/registry.ts";
 import { __subscribeLogRecordEmitter, type LogEntry } from "#veryfront/utils/logger/logger.ts";
 import type { HandlerContext } from "#veryfront/types";
+import { normalizeAgentMetadata } from "#veryfront/agent/react/use-agent-metadata.ts";
 import {
   getRuntimeAgentPublicMetadata,
   isConfigOptionalControlPlaneRequest,
@@ -954,6 +955,40 @@ describe("prompt-reference suggestions", () => {
         { type: "prompt", title: "Plan work", prompt: "Turn this idea into a plan." },
       ],
     });
+  });
+
+  it("drops whitespace-only entries the browser would reject", async () => {
+    const metadata = await getRuntimeAgentPublicMetadata(
+      "support",
+      {
+        ...createAgent(),
+        config: {
+          ...createAgent().config,
+          suggestions: {
+            suggestions: [
+              "Good",
+              " ",
+              { title: "Blank prompt", prompt: "  " },
+              { type: "prompt", title: "\t", prompt: "Blank title" },
+              { type: "task", id: " " },
+              { type: "task", id: "research-topic" },
+            ],
+          },
+        } as unknown as Agent["config"],
+      },
+    );
+
+    const expected = {
+      suggestions: [
+        { type: "prompt" as const, title: "Good", prompt: "Good" },
+        { type: "task" as const, id: "research-topic" },
+      ],
+    };
+    assertEquals(metadata.suggestions, expected);
+    assertEquals(
+      normalizeAgentMetadata(metadata).suggestions,
+      expected,
+    );
   });
 
   it("serves resolved references through the control-plane agent list", async () => {

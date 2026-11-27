@@ -1040,6 +1040,16 @@ async function resolvePromptSuggestion(
 }
 
 /**
+ * The wire schema only requires non-empty strings, but the browser rejects a
+ * whitespace-only id, title or prompt, and with it the whole agent response.
+ */
+function hasBlankField(suggestion: RuntimeSuggestion): boolean {
+  return Object.values(suggestion).some((value) =>
+    typeof value === "string" && value.trim().length === 0
+  );
+}
+
+/**
  * Parse an agent's configured suggestions one entry at a time, so one bad
  * entry is left out instead of dropping every suggestion the agent has.
  */
@@ -1055,7 +1065,7 @@ async function resolveRuntimeSuggestions(
   const entries = normalized.suggestions;
   const resolved = await Promise.all(entries.map(async (entry) => {
     const parsed = RuntimeSuggestionSchema.safeParse(entry);
-    if (!parsed.success) return undefined;
+    if (!parsed.success || hasBlankField(parsed.data)) return undefined;
     const suggestion = parsed.data;
     if (suggestion.type === "prompt" && "id" in suggestion && suggestion.id !== undefined) {
       return await resolvePromptSuggestion(agentId, suggestion.id);
