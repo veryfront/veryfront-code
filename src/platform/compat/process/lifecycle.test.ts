@@ -4,6 +4,7 @@ import { describe, it } from "#veryfront/testing/bdd.ts";
 import { isBun } from "../runtime.ts";
 import {
   getV8HeapSizeLimit,
+  makeStdioWritesBlocking,
   type NodeReadSyncFs,
   testReadStdinByteSyncNode,
 } from "#veryfront/platform/compat/process/lifecycle.ts";
@@ -60,5 +61,66 @@ describe("platform/compat/process/lifecycle", () => {
       testReadStdinByteSyncNode(fakeFs([errorWithCode("EOF")]), new Uint8Array(1), () => {}),
       null,
     );
+  });
+
+  describe("makeStdioWritesBlocking", () => {
+    type StdioHost = NonNullable<Parameters<typeof makeStdioWritesBlocking>[0]>;
+
+    /** A Node stdio stream whose libuv handle records each setBlocking call. */
+    function pipeStream(calls: boolean[]): { _handle: { setBlocking(b: boolean): number } } {
+      return {
+        _handle: {
+          setBlocking(blocking: boolean) {
+            calls.push(blocking);
+            return 0;
+          },
+        },
+      };
+    }
+
+    function host(stdout: unknown, stderr: unknown): StdioHost {
+      return { stdout, stderr } as unknown as StdioHost;
+    }
+
+    it("makes both stdout and stderr pipe handles blocking", () => {
+      const stdoutCalls: boolean[] = [];
+      const stderrCalls: boolean[] = [];
+
+      makeStdioWritesBlocking(host(pipeStream(stdoutCalls), pipeStream(stderrCalls)));
+
+      assertEquals(stdoutCalls, [true], "stdout carries the answer a pipe reader parses");
+      assertEquals(stderrCalls, [true], "stderr carries the error a failing exit prints");
+    });
+
+    it("stays blocking when called again", () => {
+      const calls: boolean[] = [];
+      const stdio = host(pipeStream(calls), pipeStream([]));
+
+      makeStdioWritesBlocking(stdio);
+      makeStdioWritesBlocking(stdio);
+
+      assertEquals(calls, [true, true], "a second call never switches a handle back");
+    });
+
+    it("leaves a file stream alone, which Node already writes synchronously", () => {
+      const stderrCalls: boolean[] = [];
+
+      // Node's SyncWriteStream for a file has no libuv handle.
+      makeStdioWritesBlocking(host({ fd: 1 }, pipeStream(stderrCalls)));
+
+      assertEquals(stderrCalls, [true], "the other stream still becomes blocking");
+    });
+
+    it("leaves a handle without setBlocking alone, as under Bun", () => {
+      const stdoutCalls: boolean[] = [];
+
+      makeStdioWritesBlocking(host(pipeStream(stdoutCalls), { _handle: {} }));
+
+      assertEquals(stdoutCalls, [true]);
+    });
+
+    it("does nothing without a Node process, as under Deno", () => {
+      makeStdioWritesBlocking(null);
+    });
   });
 });
