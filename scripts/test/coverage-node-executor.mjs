@@ -68,7 +68,9 @@ export function buildNativeCoverageGroups() {
       expectedTests: 201,
     },
     ...executorBootstrapTestGroups().map(({ pattern, expectedTests }) => ({
-      testFiles: [bootstrap], pattern, expectedTests,
+      testFiles: [bootstrap],
+      pattern,
+      expectedTests,
     })),
   ];
 }
