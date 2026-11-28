@@ -1,3 +1,7 @@
+import {
+  type RuntimeConfigurationReference,
+  snapshotRuntimeConfigurationReference,
+} from "../runtime/runtime-configuration-reference.ts";
 import { terminalRoute } from "../conversation/terminal-route.ts";
 import type { ChatMessageMetadata, ChatUiMessageChunk } from "#veryfront/chat/protocol.ts";
 import type { ConversationRunEvent } from "../conversation/run-events.ts";
@@ -61,16 +65,18 @@ const getAdmissionScopeSchema = defineSchema((v) =>
 );
 
 /** Authenticated run state needed by broker persistence, without legacy UI projection fields. */
-export type ManagedBrokerRunSnapshot = Pick<
-  ConversationRunProjection,
-  | "canonicalRunId"
-  | "runId"
-  | "conversationId"
-  | "messageId"
-  | "latestEventId"
-  | "latestExternalEventSequence"
-  | "status"
->;
+export type ManagedBrokerRunSnapshot =
+  & Pick<
+    ConversationRunProjection,
+    | "canonicalRunId"
+    | "runId"
+    | "conversationId"
+    | "messageId"
+    | "latestEventId"
+    | "latestExternalEventSequence"
+    | "status"
+  >
+  & { readonly runtimeConfiguration?: RuntimeConfigurationReference };
 
 const getManagedBrokerRunSnapshotSchema = defineSchema((v) =>
   v.object({
@@ -89,10 +95,17 @@ function readManagedBrokerRunSnapshot(
 ): ManagedBrokerRunSnapshot {
   // Preserve the existing camel/snake response normalization. This decodes
   // supplied admission state; it never reads a legacy run projection endpoint.
+  const descriptor = Object.getOwnPropertyDescriptor(value, "runtimeConfiguration");
+  const reference = descriptor === undefined
+    ? undefined
+    : snapshotRuntimeConfigurationReference("value" in descriptor ? descriptor.value : undefined);
   const decoded = getConversationRunProjectionSchema().parse(value);
-  return getManagedBrokerRunSnapshotSchema().parse({
-    ...decoded,
-    canonicalRunId: value.canonicalRunId,
+  return Object.freeze({
+    ...getManagedBrokerRunSnapshotSchema().parse({
+      ...decoded,
+      canonicalRunId: value.canonicalRunId,
+    }),
+    ...(reference ? { runtimeConfiguration: reference } : {}),
   });
 }
 
@@ -558,6 +571,7 @@ export function createManagedBrokerPersistenceFromCapability(input: {
     });
   }
   return {
+    ...(run.runtimeConfiguration ? { runtimeConfiguration: run.runtimeConfiguration } : {}),
     bindSessionOwnedWork,
     modelRunEventSink,
     ...(admitToolCall ? { admitToolCall } : {}),

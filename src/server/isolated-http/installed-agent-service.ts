@@ -183,11 +183,20 @@ export function createInstalledCanonicalAgentService(options: {
       ].filter((name) =>
         isHostedDelegationToolAllowed(name, ingress.executor.input.allowDelegation)
       );
+      const configuration = resolveSession.getProjectExecutionConfiguration(session);
+      const projectExecutionConfiguration = session.runtimeConfiguration && configuration
+        ? { version: 1 as const, reference: session.runtimeConfiguration }
+        : undefined;
+      if (session.runtimeConfiguration && !projectExecutionConfiguration) {
+        throw new TypeError("Project execution configuration unavailable");
+      }
       const source = await broker.prepareSource({
         session,
+        ...(configuration ? { configuration } : {}),
         installation: {
           version: 1,
           mode: "project-tools",
+          ...(projectExecutionConfiguration ? { projectExecutionConfiguration } : {}),
           owner: ingress.executor.owner,
           source: agentSource,
           root: "project",
@@ -383,6 +392,8 @@ export function createInstalledCanonicalAgentService(options: {
   });
   const capabilitySignal = AbortSignal.any([signal, broker.signal]);
   const capabilities = createCanonicalCapabilitiesHandler({
+    projectExecutionConfigurationVersion: options.source.projectExecutionConfigurationVersion,
+    confirmProjectExecutionConfiguration: resolveSession.confirmProjectExecutionConfiguration,
     ...ingressOptions,
     signal: capabilitySignal,
   });

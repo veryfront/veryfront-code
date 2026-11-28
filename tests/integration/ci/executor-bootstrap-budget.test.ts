@@ -5,27 +5,29 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { assert, assertEquals } from "#veryfront/testing/assert.ts";
 import { it } from "#veryfront/testing/bdd.ts";
-import { executorBootstrapTestPatterns } from "../agent/executor-node-bootstrap-groups.fixture.ts";
+import {
+  executorBootstrapInstallationName,
+  executorBootstrapInstallations,
+  executorBootstrapTestGroups,
+} from "../agent/executor-node-bootstrap-groups.fixture.ts";
 
 it("keeps cold executor installations inside independent child budgets without omitting coverage", () => {
   // Recorded integration CI costs from run 36805880628, rounded up. Cold
   // loader startup also consumes the wrapper's unchanged 25-second budget.
   const cases = [
+    ...executorBootstrapInstallations.map((installation) => ({
+      name: executorBootstrapInstallationName(installation),
+      // CI run 46093271162: cold project installations took up to 7.1s each.
+      cost: installation[0] === "project-tools"
+        ? 7200
+        : installation[0] === "runtime"
+        ? 6000
+        : 11200,
+    })),
     {
       name: "rejects missing first-party runtime contracts before reading an allocation key",
       cost: 2,
     },
-    { name: "loads a real project only after fixed runtime installation", cost: 6000 },
-    {
-      name: "loads a real project only after fixed runtime selected-source installation",
-      cost: 6000,
-    },
-    { name: "loads a real project only after fixed project-tools installation", cost: 4300 },
-    {
-      name: "loads a real project only after fixed project-tools selected-source installation",
-      cost: 4300,
-    },
-    { name: "loads a real project only after fixed http installation", cost: 11200 },
     { name: "accepts native Node when a Deno compatibility namespace is present", cost: 2 },
     { name: "rejects missing and noncanonical bootstrap values before reading a key", cost: 2 },
     { name: "requires the schema validator before key I/O", cost: 2 },
@@ -58,7 +60,8 @@ it("keeps cold executor installations inside independent child budgets without o
     "The recorded aggregate workload must reproduce the old child cancellation",
   );
   const suite = "fixed Node executor bootstrap";
-  const patterns = executorBootstrapTestPatterns().map((pattern) => new RegExp(pattern));
+  const groups = executorBootstrapTestGroups();
+  const patterns = groups.map((group) => new RegExp(group.pattern));
   assertEquals(
     patterns.some((pattern) => pattern.test(suite)),
     false,
@@ -71,10 +74,16 @@ it("keeps cold executor installations inside independent child budgets without o
       test.name,
     );
   }
-  assertEquals(
-    patterns.map((pattern) => cases.filter((test) => pattern.test(`${suite} ${test.name}`)).length),
-    [2, 2, 1, 19],
-  );
+  for (const [index, group] of groups.slice(0, -1).entries()) {
+    const names = executorBootstrapInstallations.map((installation) =>
+      `${suite} ${executorBootstrapInstallationName(installation)}`
+    );
+    assertEquals(
+      names.filter((name) => patterns[index]!.test(name)).length,
+      group.expectedTests,
+      `Completion count must match the actual installation matrix: ${group.name}`,
+    );
+  }
   for (const pattern of patterns) {
     const selected = cases.filter((test) => pattern.test(`${suite} ${test.name}`));
     assert(selected.length > 0);

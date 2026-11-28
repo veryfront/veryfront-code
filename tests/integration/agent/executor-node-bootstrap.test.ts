@@ -20,7 +20,7 @@ import { ManualMonotonicClock } from "#veryfront/agent/streaming/lifecycle/testi
 import { register, tryResolve, unregister } from "#veryfront/extensions/contracts.ts";
 import { assert, assertEquals, assertMatch, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
-import { executorBootstrapTestPatterns } from "./executor-node-bootstrap-groups.fixture.ts";
+import { executorBootstrapTestGroups } from "./executor-node-bootstrap-groups.fixture.ts";
 import { registerExecutorRuntimeEntrypointTests } from "./executor-runtime-entrypoint.fixture.ts";
 
 const binding = {
@@ -65,13 +65,7 @@ async function connectCaller(port: number, key: Uint8Array) {
 // Same-process component integration with synthetic keys. The production port
 // is fixed; these tests run sequentially and never stop an unrelated listener.
 if (typeof Deno !== "undefined") {
-  for (const [index, pattern] of executorBootstrapTestPatterns().entries()) {
-    const group = [
-      "runtime installation",
-      "project-tools installation",
-      "HTTP installation",
-      "bootstrap and TLS channel",
-    ][index];
+  for (const { name: group, pattern, expectedTests } of executorBootstrapTestGroups()) {
     it(
       `runs fixed executor ${group} coverage on Node`,
       { timeout: 30_000 },
@@ -96,7 +90,6 @@ if (typeof Deno !== "undefined") {
             child.once("close", resolve);
           });
           assertEquals(code, 0, output);
-          const expectedTests = index < 2 ? 2 : index === 3 ? 22 : 1;
           assertEquals((output.match(/^ {4}# Subtest:/gm) ?? []).length, expectedTests, output);
           assertMatch(output, new RegExp(`# tests ${expectedTests}\\n`));
           assertMatch(output, /# cancelled 0\n/);

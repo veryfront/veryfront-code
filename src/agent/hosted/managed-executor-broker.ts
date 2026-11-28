@@ -1,3 +1,5 @@
+import type { CapturedProjectConfiguration } from "#veryfront/server/project-env/captured-configuration.ts";
+import { createExecutorConfigurationOperation } from "./executor-configuration-transport.ts";
 import {
   type AdmitExecutorToolCall,
   getToolCallAdmissionOwner,
@@ -224,6 +226,7 @@ export function createManagedExecutorBroker(
 
   async function prepareSource(input: {
     session: SessionInput;
+    configuration?: CapturedProjectConfiguration;
     installation: Omit<ExecutorProjectToolInstall, "binding" | "limits"> & {
       limits?: Partial<ExecutorToolLimits>;
     };
@@ -252,13 +255,37 @@ export function createManagedExecutorBroker(
       !sameHostedExecutorOwner(installation.owner, request.owner) ||
       verifyHostedRuntimeSourceBinding(request.source, installation.source)
     ) throw new TypeError("Source preparation does not match its session");
+    let configuration: CapturedProjectConfiguration | undefined;
+    if (installation.projectExecutionConfiguration) {
+      const { snapshotCapturedProjectConfiguration } = await import(
+        "#veryfront/server/project-env/captured-configuration.ts"
+      );
+      configuration = snapshotCapturedProjectConfiguration(
+        input.configuration,
+        installation.projectExecutionConfiguration.reference,
+      );
+    } else if (input.configuration !== undefined) {
+      throw new TypeError("Unbound project execution configuration");
+    }
     const clock = input.session.clock ?? createHostedExecutorSessionClock(Date.now());
     const owner: PreparedSourceRecord["owner"] = {};
     const session = pool.start({
       ...input.session,
       request,
       clock,
-      createOperations: () => ({ operations: new Map(), revoke: () => owner.revoke?.() }),
+      createOperations: (binding) => ({
+        operations: configuration
+          ? new Map([[
+            "project.configuration",
+            createExecutorConfigurationOperation(
+              binding,
+              configuration.configurationId,
+              configuration,
+            ),
+          ]])
+          : new Map(),
+        revoke: () => owner.revoke?.(),
+      }),
     });
     try {
       const channel = await session.ready;

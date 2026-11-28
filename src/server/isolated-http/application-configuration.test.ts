@@ -1,3 +1,4 @@
+import { createInstalledConfigurationRegistry } from "./installed-configuration-registry.ts";
 import "#veryfront/schemas/_test-setup.ts";
 import { assert, assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
@@ -136,5 +137,77 @@ describe("allocation-bound application configuration", () => {
       assert(error instanceof Error);
       assert(!error.message.includes("synthetic-private-text"));
     }
+  });
+});
+
+describe("API v1 captured configuration codec", () => {
+  it("preserves valid special own-data keys through profile parsing and allocation-bound transport", async () => {
+    // Independent API/Python contract vector, not derived from SDK hashing.
+    const configurationId =
+      "configuration-afaf766b6499a05ac73008b9d49a41a9d8171c09ad9cd3a4c2cdaf14c4005954";
+    const source = {
+      projectId: "11111111-1111-4111-8111-111111111111",
+      environmentId: "22222222-2222-4222-8222-222222222222",
+      releaseId: "33333333-3333-4333-8333-333333333333",
+      projectSlug: "example-project",
+      environmentName: "production",
+      configurationId,
+      variables: Object.fromEntries([["toString", "method-value"], [
+        "constructor",
+        "constructor-value",
+      ], ["__proto__", "proto-value"]]),
+    };
+    const reference = {
+      version: 1 as const,
+      projectId: source.projectId,
+      environmentId: source.environmentId,
+      releaseId: source.releaseId,
+      deploymentId: "44444444-4444-4444-8444-444444444444",
+      configurationId,
+    };
+    const registry = createInstalledConfigurationRegistry([{
+      image: `ghcr.io/veryfront/source@sha256:${"a".repeat(64)}`,
+      configuration: source,
+    }], { version: 1, references: [reference] });
+    const selected = registry.select(reference).configuration;
+    const capturedInstallation: ExecutorHttpInstall = {
+      ...installation,
+      owner: { scopeKind: "project", projectId: source.projectId },
+      source: { type: "release", releaseId: source.releaseId },
+      environmentId: source.environmentId,
+      configurationId,
+    };
+    const snapshot = snapshotExecutorHttpApplicationConfiguration(selected, capturedInstallation);
+    for (const value of [selected, snapshot]) {
+      assertEquals(Object.keys(value.variables).sort(), ["__proto__", "constructor", "toString"]);
+      assertEquals(Object.hasOwn(value.variables, "__proto__"), true);
+      assertEquals(value.variables["__proto__"], "proto-value");
+    }
+    const operation = createExecutorHttpConfigurationOperation(binding, snapshot);
+    assert(operation.mode === "stream");
+    const result = await readExecutorHttpApplicationConfiguration(
+      {
+        async *stream(_name, request) {
+          yield* operation.handle(request, context());
+        },
+      },
+      capturedInstallation,
+      new AbortController().signal,
+      1000,
+    );
+    assertEquals(result.configurationId, configurationId);
+    assertEquals(Object.keys(result.variables).sort(), ["__proto__", "constructor", "toString"]);
+    assertEquals(result.variables["__proto__"], "proto-value");
+    assertEquals(
+      Object.getOwnPropertyDescriptor(result.variables, "constructor")?.value,
+      "constructor-value",
+    );
+    assertEquals(
+      Object.getOwnPropertyDescriptor(result.variables, "toString")?.value,
+      "method-value",
+    );
+    assertEquals(Object.getPrototypeOf(result.variables), null);
+    assertEquals(Object.isFrozen(result.variables), true);
+    assertEquals(Object.getPrototypeOf({}), Object.prototype);
   });
 });

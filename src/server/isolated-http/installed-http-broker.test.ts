@@ -4,7 +4,10 @@ import { assertEquals, assertRejects, assertThrows } from "#veryfront/testing/as
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import { createHostedHttpFixture } from "../../../tests/fixtures/hosted-http-broker.ts";
 import type { HostedHttpRequestAuthority } from "./hosted-http-ingress.ts";
-import { createInstalledHttpBroker } from "./installed-http-broker.ts";
+import {
+  createInstalledHttpBroker,
+  type InstalledHttpBrokerOptions,
+} from "./installed-http-broker.ts";
 
 const identity = {
   projectId: "project-a",
@@ -287,5 +290,103 @@ describe("installed HTTP broker", () => {
       await retirement;
     }
     assertEquals(settled, true);
+  });
+});
+
+describe("captured HTTP configuration profile", () => {
+  const base = {
+    projectId: "10000000-1000-4000-8000-100000000001",
+    projectSlug: "captured",
+    environmentId: "20000000-2000-4000-8000-200000000002",
+    environmentName: "production",
+    releaseId: "30000000-3000-4000-8000-300000000003",
+  };
+  const a = {
+    version: 1 as const,
+    projectId: base.projectId,
+    environmentId: base.environmentId,
+    releaseId: base.releaseId,
+    deploymentId: "40000000-4000-4000-8000-400000000004",
+    configurationId:
+      "configuration-977ea9cbd72ac8d4865b7816bab22733a0d47caa9d79e0bcedbbfff120af41e1",
+  };
+  const b = {
+    ...a,
+    deploymentId: "50000000-5000-4000-8000-500000000005",
+    configurationId:
+      "configuration-6c8979e0beaf75caa3d21174691b651598bf6e772a48c138302d7cb8c98312cb",
+  };
+  function create(select: InstalledHttpBrokerOptions["authorize"], legacy = false) {
+    const f = createHostedHttpFixture(() => new Response("unused"));
+    return createInstalledHttpBroker({
+      expectedBrokerInstanceId: "broker-a",
+      maxActive: 2,
+      allocator: f.input.session.allocator,
+      connectTransport: f.input.session.connectTransport,
+      installations: (legacy ? [a] : [a, b]).map((ref, index) => ({
+        image: f.input.session.expectedImage,
+        configuration: {
+          ...base,
+          configurationId: ref.configurationId,
+          variables: { SETTING: index ? "B" : "A" },
+        },
+      })),
+      ...(legacy ? {} : { configurationReferences: { version: 1 as const, references: [a, b] } }),
+      authorize: select,
+    });
+  }
+  it("selects authenticated new deployment B while captured A remains unchanged and restart-resolvable", async () => {
+    let selected = a;
+    const broker = create(async () => selected);
+    const authority = { ...base, sourceToken: "private-source-token" };
+    try {
+      const old = await broker.hostedHttp.resolve(authority, new AbortController().signal);
+      selected = b;
+      const next = await broker.hostedHttp.resolve(authority, new AbortController().signal);
+      assertEquals(old.configuration?.variables.SETTING, "A");
+      assertEquals(next.configuration?.variables.SETTING, "B");
+      assertEquals(next.installation.configurationId, b.configurationId);
+      const restarted = create(async () => JSON.parse(JSON.stringify(a)));
+      try {
+        assertEquals(
+          (await restarted.hostedHttp.resolve(authority, new AbortController().signal))
+            .configuration?.variables.SETTING,
+          "A",
+        );
+      } finally {
+        await restarted.shutdown();
+      }
+    } finally {
+      await broker.shutdown();
+    }
+  });
+  it("refuses missing/foreign host references, legacy reference use and browser selector overrides", async () => {
+    const authority = { ...base, sourceToken: "private-source-token" };
+    for (
+      const [reference, legacy] of [[undefined, false], [{
+        ...a,
+        deploymentId: "90000000-9000-4000-8000-900000000009",
+      }, false], [a, true]] as const
+    ) {
+      const broker = create(async () => reference, legacy);
+      try {
+        await assertRejects(() =>
+          broker.hostedHttp.resolve(authority, new AbortController().signal)
+        );
+      } finally {
+        await broker.shutdown();
+      }
+    }
+    const broker = create(async () => b);
+    try {
+      await assertRejects(() =>
+        broker.hostedHttp.resolve(
+          { ...authority, runtimeConfiguration: a } as never,
+          new AbortController().signal,
+        )
+      );
+    } finally {
+      await broker.shutdown();
+    }
   });
 });

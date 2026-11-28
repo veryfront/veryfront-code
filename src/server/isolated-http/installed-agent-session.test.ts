@@ -1,5 +1,6 @@
+import type { RuntimeConfigurationReference } from "#veryfront/agent/runtime/runtime-configuration-reference.ts";
 import "#veryfront/schemas/_test-setup.ts";
-import { assert, assertEquals, assertThrows } from "#veryfront/testing/assert.ts";
+import { assert, assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
 import {
   BrokerIngressError,
@@ -54,7 +55,7 @@ function host(installations = [installed()]): InstalledProjectAgentSessionOption
     },
   };
 }
-async function executor(deadline?: number) {
+async function executor(deadline?: number, runtimeConfiguration?: RuntimeConfigurationReference) {
   const base = invocation();
   const signed = await signedRequest(
     invocation({
@@ -73,6 +74,12 @@ async function executor(deadline?: number) {
         runtimeTargetEnvironmentName: "Production",
       },
       agentEntrypoint: { path: "agents/selected.ts" },
+      ...(runtimeConfiguration
+        ? {
+          runtimeConfiguration,
+          agentSource: { type: "release" as const, releaseId: runtimeConfiguration.releaseId },
+        }
+        : {}),
     }),
     { projectId: sourceId, audience: "private-source" },
   );
@@ -81,6 +88,9 @@ async function executor(deadline?: number) {
     projectId: sourceId,
     audience: "private-source",
     expectedOwner: { scopeKind: "project", projectId: sourceId },
+    ...(runtimeConfiguration
+      ? { boundSource: { type: "release" as const, releaseId: runtimeConfiguration.releaseId } }
+      : {}),
   })).executor;
 }
 
@@ -221,4 +231,111 @@ Deno.test("installed registry binds only exact source project environment and re
     undefined,
   );
   assertEquals(Object.isFrozen(resolve), true);
+});
+
+describe("captured native configuration references", () => {
+  const a: RuntimeConfigurationReference = {
+    version: 1,
+    projectId: sourceId,
+    environmentId,
+    releaseId: "30000000-3000-4000-8000-300000000003",
+    deploymentId: "40000000-4000-4000-8000-400000000004",
+    configurationId:
+      "configuration-fcb43e37d012b8d6a7f37bf148db776b993344309f13da3bf3997b29c09927fc",
+  };
+  const b = {
+    ...a,
+    deploymentId: "50000000-5000-4000-8000-500000000005",
+    configurationId:
+      "configuration-25db5ea8bcecc6cdcf74310474717005e7532158e6bf595a52e93ccebd11069b",
+  };
+  const entries = [a, b].map((ref, index) => {
+    const entry = installed(ref.releaseId);
+    entry.configuration.configurationId = ref.configurationId;
+    if (index) entry.configuration.variables.SOURCE_SECRET += "-B";
+    return entry;
+  });
+  const configured = () => ({
+    ...host(entries),
+    configurationReferences: { version: 1 as const, references: [a, b] },
+    projectExecutionConfigurationVersion: 1 as const,
+  });
+  it("retains signed A across serialized redispatch/restart while new signed work selects B without HTTP variables", async () => {
+    const input = await executor(undefined, a);
+    assertEquals(input.runtimeConfiguration, a);
+    assert(Object.isFrozen(input.runtimeConfiguration));
+    const resolve = createInstalledProjectAgentSessionResolver(configured());
+    const first = resolve(input, new AbortController().signal);
+    assertEquals(first.runtimeConfiguration, a);
+    assertEquals(
+      resolve(await executor(undefined, b), new AbortController().signal).runtimeConfiguration,
+      b,
+    );
+    const restarted = createInstalledProjectAgentSessionResolver(configured());
+    const captured = JSON.parse(JSON.stringify(input));
+    assertEquals(restarted(captured, new AbortController().signal).runtimeConfiguration, a);
+    assert(Object.isFrozen(first.runtimeConfiguration));
+    assert(Object.isFrozen(first));
+    assertEquals(JSON.stringify(first).includes("must-not-reach-agent-session"), false);
+    assertEquals("configuration" in first, false);
+  });
+  it("rejects mixed or unsupported authored-configuration cohorts at construction", () => {
+    assertThrows(() =>
+      createInstalledProjectAgentSessionResolver({
+        ...host(entries),
+        configurationReferences: { version: 1, references: [a, b] },
+      })
+    );
+    assertThrows(() =>
+      createInstalledProjectAgentSessionResolver({
+        ...host(entries),
+        projectExecutionConfigurationVersion: 1,
+      })
+    );
+    assertThrows(() =>
+      createInstalledProjectAgentSessionResolver({
+        ...configured(),
+        projectExecutionConfigurationVersion: 2 as never,
+      })
+    );
+  });
+  it("rejects a signed reference outside its source scope during ingress parsing", async () => {
+    await assertRejects(() => executor(undefined, { ...a, projectId }));
+  });
+  it("refuses missing, foreign, unknown and legacy references instead of selecting latest", async () => {
+    const input = await executor(undefined, a);
+    const resolve = createInstalledProjectAgentSessionResolver(configured());
+    const { runtimeConfiguration: _reference, ...missing } = input;
+    assertThrows(() => resolve(missing, new AbortController().signal), BrokerIngressError);
+    for (
+      const field of [
+        "projectId",
+        "environmentId",
+        "releaseId",
+        "deploymentId",
+        "configurationId",
+      ] as const
+    ) {
+      const changed = {
+        ...a,
+        [field]: field === "configurationId"
+          ? `configuration-${"f".repeat(64)}`
+          : "90000000-9000-4000-8000-900000000009",
+      };
+      assertThrows(
+        () => resolve({ ...input, runtimeConfiguration: changed }, new AbortController().signal),
+        BrokerIngressError,
+      );
+    }
+    const legacy = createInstalledProjectAgentSessionResolver(host(entries));
+    assertThrows(() => legacy(input, new AbortController().signal), BrokerIngressError);
+    assertThrows(
+      () =>
+        resolve({
+          ...missing,
+          input: { ...missing.input, forwardedProps: { runtimeConfiguration: a } },
+        }, new AbortController().signal),
+      BrokerIngressError,
+    );
+  });
 });

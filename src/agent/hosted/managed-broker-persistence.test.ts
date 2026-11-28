@@ -389,3 +389,62 @@ describe("managed persistence trace propagation", () => {
     );
   });
 });
+
+describe("captured persistence configuration reference", () => {
+  it("snapshots trusted admission provenance and restores the same reference across reconstruction", async () => {
+    const fixture = authorities();
+    const reference = {
+      version: 1 as const,
+      projectId: "10000000-1000-4000-8000-100000000001",
+      environmentId: "20000000-2000-4000-8000-200000000002",
+      releaseId: "30000000-3000-4000-8000-300000000003",
+      deploymentId: "40000000-4000-4000-8000-400000000004",
+      configurationId: `configuration-${"a".repeat(64)}`,
+    };
+    const saved = { ...run, runtimeConfiguration: reference };
+    const create = (snapshot: typeof saved) =>
+      createManagedBrokerPersistence({
+        ...fixture.raw,
+        run: snapshot,
+        completionAuthToken: "synthetic-completion-token",
+        terminalAuthToken: token(run.runId),
+      });
+    const first = create(saved);
+    const serialized = JSON.stringify(saved);
+    reference.configurationId = `configuration-${"b".repeat(64)}`;
+    const restored = create(JSON.parse(serialized));
+    try {
+      assertEquals(first.runtimeConfiguration, restored.runtimeConfiguration);
+      assertEquals(first.runtimeConfiguration?.configurationId, `configuration-${"a".repeat(64)}`);
+      assertEquals(Object.isFrozen(first.runtimeConfiguration), true);
+      fixture.assertNoEffects();
+    } finally {
+      await first.cleanup();
+      await restored.cleanup();
+    }
+  });
+  it("rejects malformed or accessor-backed configuration provenance before persistence effects", () => {
+    const fixture = authorities();
+    let reads = 0;
+    for (
+      const snapshot of [{ ...run, runtimeConfiguration: {} }, {
+        ...run,
+        get runtimeConfiguration() {
+          reads++;
+          return {};
+        },
+      }]
+    ) {
+      assertThrows(() =>
+        createManagedBrokerPersistence({
+          ...fixture.raw,
+          run: snapshot as never,
+          completionAuthToken: "synthetic-completion-token",
+          terminalAuthToken: token(run.runId),
+        })
+      );
+    }
+    assertEquals(reads, 0);
+    fixture.assertNoEffects();
+  });
+});

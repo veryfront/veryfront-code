@@ -1,3 +1,7 @@
+import {
+  executorBootstrapInstallationName,
+  executorBootstrapInstallations,
+} from "../agent/executor-node-bootstrap-groups.fixture.ts";
 import { fileURLToPath } from "node:url";
 import { relative } from "node:path";
 import { assert, assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
@@ -14,18 +18,19 @@ const root = fileURLToPath(new URL("../../../", import.meta.url));
 describe("native executor source coverage", () => {
   it("isolates cold installations under the existing real-file budget", () => {
     const groups = buildNativeCoverageGroups();
-    assertEquals(groups.length, 5);
+    assertEquals(
+      groups.slice(1).reduce((sum, group) => sum + group.expectedTests, 0),
+      executorBootstrapInstallations.length + 22,
+    );
     assert(
       !groups[0]!.testFiles.some((file: string) =>
         file.endsWith("executor-node-bootstrap.test.ts")
       ),
     );
-    const names = ["runtime", "project-tools", "http"].map((profile) =>
-      `fixed Node executor bootstrap loads a real project only after fixed ${profile} installation`
+    const names = executorBootstrapInstallations.map((installation) =>
+      `fixed Node executor bootstrap ${executorBootstrapInstallationName(installation)}`
     );
     names.push(
-      "fixed Node executor bootstrap loads a real project only after fixed runtime selected-source installation",
-      "fixed Node executor bootstrap loads a real project only after fixed project-tools selected-source installation",
       "fixed Node executor bootstrap accepts native Node when a Deno compatibility namespace is present",
     );
     for (const name of names) {

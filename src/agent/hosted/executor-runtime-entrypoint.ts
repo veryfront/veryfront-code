@@ -182,20 +182,58 @@ export async function startExecutorRuntimeEntrypoint(
         const { createExecutorDiscovery } = await import("./executor-discovery.ts");
         const { createExecutorProjectToolRuntime } = await import("./executor-project-runtime.ts");
         runtimeSignal.throwIfAborted();
-        const discovery = createExecutorDiscovery({
-          binding,
-          source: input.source,
-          projectDir: artifact.projectDir,
-          defaultAgentId: input.context.agentId,
-          agentEntrypoint: input.agentEntrypoint,
-          signal: runtimeSignal,
-        });
-        return await createExecutorProjectToolRuntime({
-          input,
-          discovery,
-          signal: runtimeSignal,
-          deadline: context.deadline,
-        });
+        let runProject = <T>(fn: () => T): T => fn();
+        if (input.projectExecutionConfiguration) {
+          const { snapshotCapturedProjectConfiguration } = await import(
+            "#veryfront/server/project-env/captured-configuration.ts"
+          );
+          const { readExecutorConfiguration } = await import(
+            "./executor-configuration-transport.ts"
+          );
+          const { runWithTrustedProjectEnv } = await import(
+            "#veryfront/server/project-env/storage.ts"
+          );
+          const reference = input.projectExecutionConfiguration.reference;
+          const remaining = context.deadline - Date.now();
+          if (remaining <= 0) throw new Error("Project configuration installation expired");
+          const configuration = snapshotCapturedProjectConfiguration(
+            await readExecutorConfiguration(
+              await channel.promise,
+              "project.configuration",
+              reference.configurationId,
+              runtimeSignal,
+              remaining,
+            ),
+            reference,
+          );
+          runtimeSignal.throwIfAborted();
+          runProject = (fn) =>
+            runWithTrustedProjectEnv(configuration.variables, {
+              projectId: reference.projectId,
+              environmentId: reference.environmentId,
+              projectSlug: configuration.projectSlug,
+            }, fn);
+        }
+        const discovery = runProject(() =>
+          createExecutorDiscovery({
+            binding,
+            source: input.source,
+            projectDir: artifact.projectDir,
+            defaultAgentId: input.context.agentId,
+            agentEntrypoint: input.agentEntrypoint,
+            runWithProjectEnvironment: runProject,
+            signal: runtimeSignal,
+          })
+        );
+        return await runProject(() =>
+          createExecutorProjectToolRuntime({
+            input,
+            discovery,
+            signal: runtimeSignal,
+            deadline: context.deadline,
+            runWithProjectRuntime: runProject,
+          })
+        );
       },
     })
     : createExecutorRuntimeInstallation({

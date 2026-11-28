@@ -35,6 +35,13 @@ function setup(
   });
 }
 describe("runtime source API authorization", () => {
+  it("preserves the legacy void authorization return contract", () => {
+    const authorize: (value: typeof authority, signal: AbortSignal) => Promise<void> = setup(
+      async () => Response.json(project),
+    );
+    assertEquals(typeof authorize, "function");
+  });
+
   it("honors the established 64KiB project credential limit", async () => {
     for (const length of [8193, 65536]) {
       const token = "a".repeat(length);
@@ -369,5 +376,51 @@ describe("runtime source API authorization", () => {
     }, async () => "");
     await assertRejects(() => missing(authority, signal()));
     assertEquals(calls, 1);
+  });
+});
+
+describe("captured configuration metadata authorization", () => {
+  const reference = {
+    version: 1 as const,
+    projectId: authority.projectId,
+    environmentId: authority.environmentId,
+    releaseId: authority.releaseId,
+    deploymentId: "40000000-4000-4000-8000-400000000004",
+    configurationId: `configuration-${"a".repeat(64)}`,
+  };
+  function configured(metadata: unknown) {
+    return createRuntimeSourceAuthorizer({
+      baseUrl: "https://api.example",
+      configurationReferenceVersion: 1,
+      readProjectToken,
+      fetch: async (url) =>
+        Response.json(
+          String(url).includes("/releases/") ? source : {
+            ...project,
+            environments: [{ ...environment, active_runtime_configuration: metadata }],
+          },
+        ),
+    });
+  }
+  it("returns only the authenticated exact active captured reference without fetching private variables", async () => {
+    const result = await configured(reference)(authority, signal());
+    assertEquals(result, reference);
+    assertEquals(Object.isFrozen(result), true);
+    assertEquals("variables" in result!, false);
+  });
+  it("refuses missing, unconfirmed and foreign metadata under the explicit capability", async () => {
+    for (
+      const value of [
+        undefined,
+        null,
+        { ...reference, state: "pending" },
+        ...["projectId", "environmentId", "releaseId"].map((field) => ({
+          ...reference,
+          [field]: "90000000-9000-4000-8000-900000000009",
+        })),
+      ]
+    ) {
+      await assertRejects(() => configured(value)(authority, signal()));
+    }
   });
 });

@@ -4,7 +4,7 @@ import { basename, dirname, resolve } from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 import { ensureNpmNodeModulesLinks } from "../../tests/ensure-npm-links.mjs";
-import { executorBootstrapTestPatterns } from "../../tests/integration/agent/executor-node-bootstrap-groups.fixture.ts";
+import { executorBootstrapTestGroups } from "../../tests/integration/agent/executor-node-bootstrap-groups.fixture.ts";
 import { buildRuntimeTestProcessEnv } from "./runtime-env.mjs";
 
 const ROOT = fileURLToPath(new URL("../../", import.meta.url));
@@ -67,10 +67,10 @@ export function buildNativeCoverageGroups() {
       pattern: "",
       expectedTests: 201,
     },
-    ...executorBootstrapTestPatterns().map((pattern, index) => ({
+    ...executorBootstrapTestGroups().map(({ pattern, expectedTests }) => ({
       testFiles: [bootstrap],
       pattern,
-      expectedTests: index < 2 ? 2 : index === 3 ? 22 : 1,
+      expectedTests,
     })),
   ];
 }
