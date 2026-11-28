@@ -1,3 +1,13 @@
+import { projectToolChannelAdmission } from "./project-tool-channel-admission.ts";
+import { joinPrivateAbortSignals } from "#veryfront/security/private-abort.ts";
+import {
+  createProjectToolApprovalReceiver,
+  handleProjectToolApproval,
+  hasProjectToolApprovalRequest,
+  PROJECT_TOOL_APPROVAL_DECISION,
+  PROJECT_TOOL_APPROVAL_REQUEST,
+  warmProjectToolApprovalSchemas,
+} from "./project-tool-approval.ts";
 import { defineSchema } from "#veryfront/schemas/index.ts";
 import { copyPrivateSet, createPrivateSet } from "#veryfront/security/private-set.ts";
 import { copyPrivateMap, createPrivateMap } from "#veryfront/security/private-map.ts";
@@ -113,6 +123,7 @@ const getAliasesSchema = defineSchema((v) =>
 export function warmExecutorProjectToolSchemas(): void {
   getContextSchema();
   getAliasesSchema();
+  warmProjectToolApprovalSchemas();
 }
 
 export interface ExecutorProjectToolOperationsOptions {
@@ -179,6 +190,10 @@ export function createExecutorProjectToolOperations(
   }
   const fixed = captureContext(options.context);
   const limits = executorToolLimits(options.limits);
+  const approvalReceiver = createProjectToolApprovalReceiver(
+    options.scope,
+    limits.maxArgumentBytes,
+  );
   const allowed = captureNames(options.allowedToolNames, limits);
   const tools = copyPrivateMap(options.tools, limits.maxTotalTools);
   if (tools.size > limits.maxTotalTools) {
@@ -264,14 +279,22 @@ export function createExecutorProjectToolOperations(
       if (!selected || !context?.toolCallId) {
         throw new TypeError("Project tool call is not allowed");
       }
-      return await selected.execute(args, {
-        ...fixed,
-        ...captureExecutorProjectCallContext(context),
-        toolCallId: context.toolCallId,
-        ...(context.progressToken === undefined ? {} : { progressToken: context.progressToken }),
-        abortSignal: context.abortSignal,
-        publishDataEvent: context.publishDataEvent,
-      });
+      const approval = hasProjectToolApprovalRequest(context)
+        ? approvalReceiver.forCall(name, context)
+        : undefined;
+      try {
+        return await selected.execute(args, {
+          ...fixed,
+          ...captureExecutorProjectCallContext(context),
+          toolCallId: context.toolCallId,
+          ...(context.progressToken === undefined ? {} : { progressToken: context.progressToken }),
+          ...(approval ? { requestToolApproval: approval.gate } : {}),
+          abortSignal: context.abortSignal,
+          publishDataEvent: context.publishDataEvent,
+        });
+      } finally {
+        approval?.close();
+      }
     },
   };
   const sources = createPrivateMap<string, ExecutorToolCapability>();
@@ -280,6 +303,7 @@ export function createExecutorProjectToolOperations(
     allowedToolNames: createPrivateSet(catalog.keys()),
     context: fixed,
     projectContext: "skill",
+    toolApproval: true,
   });
   const operations = copyPrivateMap(createExecutorToolBroker({
     scope: options.scope,
@@ -312,6 +336,8 @@ export function createExecutorProjectToolOperations(
       return parseExecutorToolData(getAliasesSchema(), { agentId: fixed.agentId, aliases });
     },
   });
+  operations.set(PROJECT_TOOL_APPROVAL_DECISION, approvalReceiver.operation);
+  operations.set(PROJECT_TOOL_APPROVAL_REQUEST, approvalReceiver.requestOperation);
   return operations;
 }
 
@@ -323,6 +349,7 @@ export async function createExecutorProjectToolSource(
   const limits = executorToolLimits(options.limits);
   const allowed = captureNames(options.allowedToolNames, limits);
   const { channel, signal, assertActive } = options;
+  const admission = projectToolChannelAdmission(channel);
   const check = () => {
     assertActive();
     signal.throwIfAborted();
@@ -442,9 +469,46 @@ export async function createExecutorProjectToolSource(
         toolCallId: call.toolCallId,
         ...(call.progressToken === undefined ? {} : { progressToken: call.progressToken }),
       });
-      const result = await remote.executeTool(name, args, call);
-      check();
-      return result;
+      const gate = callField(context, "requestToolApproval");
+      if (gate && !admission.supportsApproval) {
+        throw new TypeError("Project channel cannot carry approval control");
+      }
+      const callSignal = joinPrivateAbortSignals(
+        signal,
+        call.abortSignal
+          ? joinPrivateAbortSignals(call.abortSignal, channel.signal)
+          : channel.signal,
+      );
+      const release = await admission.acquire(callSignal);
+      try {
+        check();
+        callSignal.throwIfAborted();
+        const publisher = call.publishDataEvent;
+        const result = await remote.executeTool(name, args, {
+          ...call,
+          abortSignal: callSignal,
+          ...(gate ? { requestToolApproval: gate } : {}),
+          publishDataEvent: async (event) => {
+            check();
+            if (
+              await handleProjectToolApproval(event, {
+                channel,
+                toolName: name,
+                toolCallId: call.toolCallId,
+                gate,
+                signal: callSignal,
+                maxArgumentBytes: limits.maxArgumentBytes,
+              })
+            ) return;
+            await publisher?.(event);
+            check();
+          },
+        });
+        check();
+        return result;
+      } finally {
+        release();
+      }
     },
   });
 }

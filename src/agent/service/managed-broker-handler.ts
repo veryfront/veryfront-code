@@ -1,3 +1,10 @@
+import { defineSchema } from "#veryfront/schemas/index.ts";
+import {
+  inheritHostedToolApprovalCapability,
+  registerHostedToolApprovalCapability,
+} from "../hosted/tool-approval-capability.ts";
+import { bindHostedToolRunAuthorization } from "../hosted/terminal-credential.ts";
+import { getHostedToolApprovalRunId } from "../hosted/tool-run-authorization.ts";
 import {
   RUNTIME_EVENT_PERSISTENCE_HEADER,
   RUNTIME_EVENT_PERSISTENCE_MODE,
@@ -95,6 +102,9 @@ export function createManagedBrokerHandler<TAuthorization>(options: {
     ingress: BrokerRuntimeAgentIngress<TAuthorization>;
     signal: AbortSignal;
   }): Promise<ManagedBrokerPreparation>;
+  /** Host-only approval transport; never populated from request/project data. */
+  approvalApiBaseUrl?: string;
+  approvalFetch?: typeof fetch;
   onExecutionError?: (error: unknown, runId: string) => void;
 }) {
   const inferenceApiBaseUrl = options.inferenceApiBaseUrl;
@@ -157,6 +167,39 @@ function snapshotManagedResumeToolCall(
   >;
 }
 
+type ApprovalBrokerIngress =
+  | BrokerRuntimeAgentIngress<unknown>
+  | ManagedDurableAgentIngressResult
+  | ManagedAgUiAgentIngressResult;
+const getCanonicalApprovalRunIdSchema = defineSchema((v) => v.string().uuid());
+
+function brokerOwnedApprovalCredential(
+  ingress: ApprovalBrokerIngress,
+  runId: string,
+): { authToken: string; approvalRunId: string } | undefined {
+  if ("privateAuthority" in ingress) {
+    const { privateAuthority, executor } = ingress;
+    const cursor = privateAuthority.projectEventPersistence ?? executor.run.eventCursor;
+    const identity = getCanonicalApprovalRunIdSchema().safeParse(cursor?.canonicalRunId ?? runId);
+    // Signed execution identity, never the source credential or an unverified legacy alias.
+    return identity.success && executor.run.runId === runId &&
+        privateAuthority.apiAuthToken.length > 0
+      ? { authToken: privateAuthority.apiAuthToken, approvalRunId: identity.data }
+      : undefined;
+  }
+  const broker = Object.getOwnPropertyDescriptor(ingress, "broker")?.value;
+  if (!broker || typeof broker.getParsedRequest !== "function") return undefined;
+  const parsed = broker.getParsedRequest();
+  // A public durableRootRun/runId field is insufficient: require the private canonical ingress proof.
+  const carrier = { projectId: parsed.projectId, runId };
+  bindHostedToolRunAuthorization(carrier, parsed);
+  const approvalRunId = getHostedToolApprovalRunId(carrier, carrier);
+  if (approvalRunId === undefined) return undefined;
+  return typeof parsed.authToken === "string" && parsed.authToken.length > 0
+    ? { authToken: parsed.authToken, approvalRunId }
+    : undefined;
+}
+
 function brokerOwnedKnowledgeAuthToken(ingress: unknown): string | undefined {
   if (ingress === null || typeof ingress !== "object") return undefined;
   const privateAuthorityDescriptor = Object.getOwnPropertyDescriptor(ingress, "privateAuthority");
@@ -204,6 +247,9 @@ export function createManagedAgUiBrokerHandler(options: {
     ingress: ManagedAgUiAgentIngressResult;
     signal: AbortSignal;
   }): Promise<ManagedBrokerPreparation>;
+  /** Host-only approval transport; never populated from request/project data. */
+  approvalApiBaseUrl?: string;
+  approvalFetch?: typeof fetch;
   onExecutionError?: (error: unknown, runId: string) => void;
 }) {
   const owner = getHostedExecutorOwnerSchema().parse(options.owner);
@@ -264,6 +310,9 @@ export function createManagedDurableBrokerHandler(options: {
     ingress: ManagedDurableAgentIngressResult;
     signal: AbortSignal;
   }): Promise<ManagedBrokerPreparation>;
+  /** Host-only approval transport; never populated from request/project data. */
+  approvalApiBaseUrl?: string;
+  approvalFetch?: typeof fetch;
   onExecutionError?: (error: unknown, runId: string) => void;
 }) {
   const owner = getHostedExecutorOwnerSchema().parse(options.owner);
@@ -304,6 +353,7 @@ export function createManagedDurableBrokerHandler(options: {
         if (persistence === prepared.start.persistence) return prepared;
         const start = { ...prepared.start, persistence };
         inheritHostedAgentPauseCapability(start, prepared.start);
+        inheritHostedToolApprovalCapability(start, prepared.start);
         return { ...prepared, start };
       }
       const {
@@ -319,6 +369,7 @@ export function createManagedDurableBrokerHandler(options: {
         },
       };
       inheritHostedAgentPauseCapability(start, prepared.start);
+      inheritHostedToolApprovalCapability(start, prepared.start);
       return { ...prepared, start };
     },
     async parse(request, signal) {
@@ -358,7 +409,7 @@ export function createManagedDurableBrokerHandler(options: {
   });
 }
 
-function createManagedBrokerIngressHandler<TIngress>(options: {
+function createManagedBrokerIngressHandler<TIngress extends ApprovalBrokerIngress>(options: {
   broker: ManagedExecutorStarter;
   responseMode: "detached" | "sse";
   maxActiveRuns?: number;
@@ -374,6 +425,9 @@ function createManagedBrokerIngressHandler<TIngress>(options: {
   >;
   prepare(input: { ingress: TIngress; signal: AbortSignal }): Promise<ManagedBrokerPreparation>;
   createInferenceResolver(ingress: TIngress): AgentModelRuntimeResolver | undefined;
+  /** Host-only approval transport; never populated from request/project data. */
+  approvalApiBaseUrl?: string;
+  approvalFetch?: typeof fetch;
   onExecutionError?: (error: unknown, runId: string) => void;
 }) {
   const knowledgeApiBaseUrl = options.knowledgeApiBaseUrl;
@@ -441,6 +495,21 @@ function createManagedBrokerIngressHandler<TIngress>(options: {
       try {
         const prepared = await options.prepare({ ingress, signal });
         preparedCleanup = prepared.cleanup;
+        const executionCredential = brokerOwnedApprovalCredential(ingress, runId);
+        if (executionCredential !== undefined) {
+          registerHostedToolApprovalCapability(prepared.start, {
+            runId,
+            apiUrl: options.approvalApiBaseUrl ?? resolveHostOwnedSourceApiBaseUrl(),
+            authToken: executionCredential.authToken,
+            approvalRunId: executionCredential.approvalRunId,
+            signal: AbortSignal.any([
+              prepared.executionSignal,
+              lifetime.signal,
+              ...(options.signal ? [options.signal] : []),
+            ]),
+            ...(options.approvalFetch ? { fetch: options.approvalFetch } : {}),
+          });
+        }
         if (
           prepared.eventPersistence !== undefined && (
             prepared.eventPersistence !== RUNTIME_EVENT_PERSISTENCE_MODE ||
@@ -486,6 +555,7 @@ function createManagedBrokerIngressHandler<TIngress>(options: {
           knowledgeApiBaseUrl,
         );
         inheritHostedAgentPauseCapability(start, prepared.start);
+        inheritHostedToolApprovalCapability(start, prepared.start);
         const runtime = await options.broker.start(start, {
           onAdmitted(settled) {
             admissionSettled = settled;

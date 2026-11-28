@@ -1,3 +1,4 @@
+import { EXECUTOR_PROJECT_TOOL_SOURCE_ID } from "./executor-runtime-install-schema.ts";
 import type { JsonValue } from "#veryfront/schemas/index.ts";
 import { getCurrentToolCallOccurrenceIdentity } from "#veryfront/runtime/tool-call-occurrence.ts";
 import type {
@@ -197,6 +198,12 @@ export async function createExecutorRemoteToolSources(options: {
           ...callerCorrelation(context),
           ...occurrence,
           ...(projectContext === undefined ? {} : { projectContext }),
+          ...(sourceId === EXECUTOR_PROJECT_TOOL_SOURCE_ID &&
+              typeof (context &&
+                  Object.getOwnPropertyDescriptor(context, "requestToolApproval")?.value) ===
+                "function"
+            ? { toolApproval: 1 }
+            : {}),
         });
         return await consume("tool.execute", request, () => {
           throw new TypeError("Invalid executor tool execution frame");

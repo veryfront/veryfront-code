@@ -1,3 +1,4 @@
+import { registerHostedToolApprovalCapability } from "./tool-approval-capability.ts";
 import "#veryfront/schemas/_test-setup.ts";
 import { assert, assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
@@ -57,10 +58,15 @@ const grant: ExecutorRuntimePreparationGrant = {
 
 async function fixture(options: {
   ownedTool?: boolean;
+  approval?: "approve" | "deny" | "expired";
+  repeatApprovalCall?: boolean;
+  query?: string;
   forgedAlias?: boolean;
   sourceTools?: string[];
   deniedTools?: string[];
   channelTimeoutMs?: number;
+  projectConcurrency?: number;
+  channelCapacity?: number;
   describe?: Extract<ExecutorOperation, { mode: "unary" }>["handle"];
   facades?: Partial<ExecutorRuntimeFacades>;
   facadeInstance?: (facades: ExecutorRuntimeFacades) => ExecutorRuntimeFacades;
@@ -72,6 +78,9 @@ async function fixture(options: {
   let closed = 0;
   let cleaned = 0;
   const checkpoints: unknown[] = [];
+  const approvalRequests: Array<
+    { url: string; body: Record<string, unknown>; key: string | null }
+  > = [];
   const toolName = options.forgedAlias
     ? "dangerous"
     : options.ownedTool
@@ -79,15 +88,30 @@ async function fixture(options: {
     : "inspect";
   const model = scriptedModel([
     {
-      toolCalls: [{ id: "synthetic-call", name: toolName, input: { query: "authorized input" } }],
+      toolCalls: [{
+        id: "synthetic-call",
+        name: toolName,
+        input: { query: options.query ?? "authorized input" },
+      }],
     },
+    ...(options.repeatApprovalCall
+      ? [{
+        toolCalls: [{
+          id: "synthetic-call",
+          name: toolName,
+          input: { query: options.query ?? "authorized input" },
+        }],
+      }]
+      : []),
     { text: "synthetic-private-model-output" },
   ]);
   const registered = tool({
     id: toolName,
     description: "Inspect a query",
+    ...(options.approval ? { approval: {} } : {}),
     inputSchema: defineSchema((v) => v.object({ query: v.string() }))(),
     execute: (args, call) => {
+      assertEquals(call && Object.hasOwn(call, "authToken"), false);
       seen.push({
         args,
         context: call &&
@@ -114,8 +138,8 @@ async function fixture(options: {
     },
     tools: new Map([[toolName, registered]]),
     allowedToolNames: new Set([toolName]),
-    maxCalls: 32,
-    maxConcurrent: 2,
+    maxCalls: options.projectConcurrency ? 64 : 32,
+    maxConcurrent: options.projectConcurrency ?? 2,
   }));
   if (options.forgedAlias) {
     operations.set("project.tool-aliases", {
@@ -144,11 +168,13 @@ async function fixture(options: {
   const backward = new TransformStream<Uint8Array, Uint8Array>();
   const trusted = createExecutorChannel({
     binding,
+    ...(options.channelCapacity ? { maxConcurrentCalls: options.channelCapacity } : {}),
     ...(options.channelTimeoutMs ? { defaultTimeoutMs: options.channelTimeoutMs } : {}),
     transport: { readable: backward.readable, writable: forward.writable },
   });
   const project = createExecutorChannel({
     binding,
+    ...(options.channelCapacity ? { maxConcurrentCalls: options.channelCapacity } : {}),
     operations,
     transport: { readable: forward.readable, writable: backward.writable },
   });
@@ -184,7 +210,7 @@ async function fixture(options: {
     },
     ...options.facades,
   };
-  const owner = createTrustedRuntimePreparation({
+  const preparationInput: Parameters<typeof createTrustedRuntimePreparation>[0] = {
     binding,
     source,
     channel: trusted,
@@ -204,7 +230,38 @@ async function fixture(options: {
       await Promise.all([trusted.settled, project.settled]);
       await options.closeProject?.();
     },
-  });
+  };
+  if (options.approval) {
+    registerHostedToolApprovalCapability(preparationInput, {
+      apiUrl: "https://api.example.test",
+      authToken: "synthetic-host-only-approval",
+      runId: context.runId,
+      signal: lifetime.signal,
+      fetch: (url, init) => {
+        assertEquals(
+          new Headers(init?.headers).get("authorization"),
+          "Bearer synthetic-host-only-approval",
+        );
+        const body = JSON.parse(String(init?.body));
+        assertEquals(seen.length, options.approval === "approve" ? approvalRequests.length : 0);
+        approvalRequests.push({
+          url: String(url),
+          body,
+          key: new Headers(init?.headers).get("idempotency-key"),
+        });
+        return Promise.resolve(Response.json({
+          ...body,
+          input_request_id: crypto.randomUUID(),
+          status: options.approval === "expired" ? "expired" : "submitted",
+          response: {
+            values: { decision: options.approval },
+            actor: { type: "human", id: "checker" },
+          },
+        }, { status: 201 }));
+      },
+    });
+  }
+  const owner = createTrustedRuntimePreparation(preparationInput);
   const operationContext = {
     binding,
     signal: new AbortController().signal,
@@ -216,9 +273,11 @@ async function fixture(options: {
     seen,
     requested,
     checkpoints,
+    approvalRequests,
     lifetime,
     trusted,
     project,
+    projectTools,
     get closed() {
       return closed;
     },
@@ -251,6 +310,122 @@ async function fixture(options: {
 }
 
 describe("trusted runtime preparation", () => {
+  for (const channelCapacity of [2, 32]) {
+    it(`completes 32 concurrent gated project calls with channel capacity ${channelCapacity}`, async () => {
+      const f = await fixture({ approval: "approve", projectConcurrency: 32, channelCapacity });
+      const signal = AbortSignal.timeout(5000);
+      try {
+        const results = await Promise.allSettled(
+          Array.from(
+            { length: 32 },
+            (_, index) =>
+              f.projectTools.executeTool("inspect", { query: `query-${index}` }, {
+                ...context,
+                toolCallId: `call-${index}`,
+                abortSignal: signal,
+                requestToolApproval: () => Promise.resolve({ approved: true, outcome: "approved" }),
+              }),
+          ),
+        );
+        assertEquals(results.filter((result) => result.status === "fulfilled").length, 32);
+        assertEquals(f.seen.length, 32);
+      } finally {
+        await f.owner.close();
+        await f.owner.settled;
+      }
+    });
+  }
+
+  it("cancels queued project calls without executing their tools or retaining channel work", async () => {
+    const f = await fixture({ approval: "approve", projectConcurrency: 32, channelCapacity: 2 });
+    const entered = Promise.withResolvers<void>();
+    const controller = new AbortController();
+    const calls = Array.from(
+      { length: 32 },
+      (_, index) =>
+        f.projectTools.executeTool("inspect", { query: `query-${index}` }, {
+          ...context,
+          toolCallId: `call-${index}`,
+          abortSignal: controller.signal,
+          requestToolApproval: (_request, signal) =>
+            new Promise((_resolve, reject) => {
+              const abort = () => reject(new Error("Synthetic approval cancelled"));
+              signal!.addEventListener("abort", abort, { once: true });
+              if (signal!.aborted) abort();
+              entered.resolve();
+            }),
+        }),
+    );
+    const results = Promise.allSettled(calls);
+    try {
+      await entered.promise;
+      controller.abort();
+      assertEquals((await results).every((result) => result.status === "rejected"), true);
+      assertEquals(f.seen.length, 0);
+      assertEquals(f.lifetime.signal.aborted, false);
+      await f.projectTools.executeTool("inspect", { query: "after cancellation" }, {
+        ...context,
+        toolCallId: "after-cancellation",
+        requestToolApproval: () => Promise.resolve({ approved: true, outcome: "approved" }),
+      });
+      assertEquals(f.seen.length, 1);
+    } finally {
+      controller.abort();
+      await results;
+      await f.owner.close();
+      await f.owner.settled;
+    }
+  });
+
+  for (const outcome of ["approve", "deny", "expired"] as const) {
+    it(`gates remote project tools through the host approval channel: ${outcome}`, async () => {
+      const f = await fixture({ approval: outcome, repeatApprovalCall: true });
+      try {
+        const prepared = await f.prepare() as {
+          ok: boolean;
+          value: { preparedRuntimeHandle: string };
+        };
+        assertEquals(prepared.ok, true);
+        const frames = await f.stream(prepared.value.preparedRuntimeHandle);
+        assertEquals(f.approvalRequests.length, 2);
+        assertEquals(f.seen.length, outcome === "approve" ? 2 : 0);
+        const [first, second] = f.approvalRequests;
+        assert(first && second);
+        assertEquals(first.key === second.key, false);
+        assertEquals(
+          first.url,
+          `https://api.example.test/runs/${context.runId}/input-requests`,
+        );
+        assertEquals(JSON.stringify(frames).includes("synthetic-host-only-approval"), false);
+        assertEquals(JSON.stringify(frames).includes("veryfront.tool-approval.request.v1"), false);
+        assertEquals(JSON.stringify(frames).includes("checker"), false);
+      } finally {
+        await f.owner.close();
+        await f.owner.settled;
+      }
+    });
+  }
+
+  it("approves admitted project arguments larger than the progress event budget", async () => {
+    const query = "x".repeat(80 * 1024);
+    const f = await fixture({ approval: "approve", query });
+    try {
+      const prepared = await f.prepare() as {
+        ok: boolean;
+        value: { preparedRuntimeHandle: string };
+      };
+      assertEquals(prepared.ok, true);
+      await f.stream(prepared.value.preparedRuntimeHandle);
+      assertEquals(f.seen.length, 1);
+      const toolCall = f.approvalRequests[0]?.body.tool_call as { arguments: { query: string } };
+      assert(toolCall);
+      assertEquals(toolCall.arguments.query.length, query.length);
+    } finally {
+      await f.owner.close();
+      await f.owner.settled;
+    }
+  });
+
   it("does not let peer aliases widen a trusted host-tool grant", async () => {
     let executed = 0;
     const dangerous = tool({

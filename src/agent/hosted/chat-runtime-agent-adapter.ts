@@ -1,3 +1,7 @@
+import { joinPrivateAbortSignals } from "#veryfront/security/private-abort.ts";
+import { getHostedToolApprovalCapability } from "./tool-approval-capability.ts";
+import { runWithToolCallOccurrences } from "#veryfront/runtime/tool-call-occurrence.ts";
+import type { ToolApprovalGate } from "#veryfront/tool/approval.ts";
 import {
   hasHostedToolRunAuthorization,
   inheritHostedToolRunAuthorization,
@@ -105,43 +109,77 @@ export async function createHostedChatRuntimeDataStream(
   runStream: HostedChatRuntimeAgentAdapterRunner = input.runStream ?? ((operation) => operation()),
 ): Promise<ReadableStream<Uint8Array>> {
   let publishDataEvent = (_event: ToolExecutionDataEvent) => {};
+  const withOccurrences = getHostedToolApprovalCapability(input, input.runId)
+    ? runWithToolCallOccurrences
+    : <T>(operation: () => T) => operation();
   const streamResponse = await runStream(() =>
-    runWithEffectiveSourceIntegrationPolicy(
-      input.sourceIntegrationPolicy,
-      async () => {
-        const projectContext = input.resolveProjectContext?.() ?? {
-          projectId: input.projectId,
-          projectSlug: input.projectSlug,
-        };
-        const taskInput = resolveHostedTaskInput(input.taskInput, {
-          projectId: projectContext?.projectId,
-          rootRunId: input.rootRunId,
-          runId: input.runId,
-        });
-        const response = await input.runtimeAgent.stream({
-          messages: streamInput.messages,
-          ...(input.maxOutputTokens !== undefined
-            ? { maxOutputTokens: input.maxOutputTokens }
-            : {}),
-          context: {
-            runIdBindsToolAuthorization: hasHostedToolRunAuthorization(input, {
-              projectId: projectContext?.projectId,
-              runId: input.runId,
-            }),
-            ...(taskInput ? { taskInput } : {}),
-            ...(input.rootRunId ? { rootRunId: input.rootRunId } : {}),
-            ...(input.runId ? { runId: input.runId } : {}),
-            ...(input.agentId ? { agentId: input.agentId } : {}),
-            ...(input.conversationId ? { conversationId: input.conversationId } : {}),
-            ...(projectContext?.projectId ? { projectId: projectContext.projectId } : {}),
-            ...(projectContext?.projectSlug ? { projectSlug: projectContext.projectSlug } : {}),
-            ...(streamInput.runtimeObservations ? { runtimeObservations: true } : {}),
-            abortSignal: streamInput.abortSignal,
-            publishDataEvent: (event: ToolExecutionDataEvent) => publishDataEvent(event),
-          },
-        });
-        return response.toDataStreamResponse();
-      },
+    withOccurrences(() =>
+      runWithEffectiveSourceIntegrationPolicy(
+        input.sourceIntegrationPolicy,
+        async () => {
+          const projectContext = input.resolveProjectContext?.() ?? {
+            projectId: input.projectId,
+            projectSlug: input.projectSlug,
+          };
+          const taskInput = resolveHostedTaskInput(input.taskInput, {
+            projectId: projectContext?.projectId,
+            rootRunId: input.rootRunId,
+            runId: input.runId,
+          });
+          const boundProjectId = projectContext?.projectId;
+          const boundRunId = input.runId;
+          const gate =
+            hasHostedToolRunAuthorization(input, { projectId: boundProjectId, runId: boundRunId })
+              ? getHostedToolApprovalCapability(input, boundRunId)
+              : undefined;
+          const requestToolApproval: ToolApprovalGate | undefined = gate
+            ? (request, signal) => {
+              const current = input.resolveProjectContext?.() ?? { projectId: input.projectId };
+              if (
+                current.projectId !== boundProjectId || input.runId !== boundRunId ||
+                !hasHostedToolRunAuthorization(input, {
+                  projectId: current.projectId,
+                  runId: boundRunId,
+                })
+              ) {
+                throw AGENT_ERROR.create({
+                  detail: "Hosted tool approval scope is no longer active",
+                });
+              }
+              return gate(
+                request,
+                signal
+                  ? joinPrivateAbortSignals(streamInput.abortSignal, signal)
+                  : streamInput.abortSignal,
+              );
+            }
+            : undefined;
+          const response = await input.runtimeAgent.stream({
+            messages: streamInput.messages,
+            ...(input.maxOutputTokens !== undefined
+              ? { maxOutputTokens: input.maxOutputTokens }
+              : {}),
+            context: {
+              runIdBindsToolAuthorization: hasHostedToolRunAuthorization(input, {
+                projectId: projectContext?.projectId,
+                runId: input.runId,
+              }),
+              ...(taskInput ? { taskInput } : {}),
+              ...(input.rootRunId ? { rootRunId: input.rootRunId } : {}),
+              ...(input.runId ? { runId: input.runId } : {}),
+              ...(input.agentId ? { agentId: input.agentId } : {}),
+              ...(input.conversationId ? { conversationId: input.conversationId } : {}),
+              ...(projectContext?.projectId ? { projectId: projectContext.projectId } : {}),
+              ...(projectContext?.projectSlug ? { projectSlug: projectContext.projectSlug } : {}),
+              ...(streamInput.runtimeObservations ? { runtimeObservations: true } : {}),
+              ...(requestToolApproval ? { requestToolApproval } : {}),
+              abortSignal: streamInput.abortSignal,
+              publishDataEvent: (event: ToolExecutionDataEvent) => publishDataEvent(event),
+            },
+          });
+          return response.toDataStreamResponse();
+        },
+      )
     )
   );
 

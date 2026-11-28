@@ -1,3 +1,7 @@
+import {
+  PROJECT_TOOL_APPROVAL_DECISION,
+  PROJECT_TOOL_APPROVAL_REQUEST,
+} from "./project-tool-approval.ts";
 import { createExecutorToolBroker } from "#veryfront/agent/hosted/executor-tool-bridge.ts";
 import "#veryfront/schemas/_test-setup.ts";
 import { assert, assertEquals, assertRejects, assertThrows } from "#veryfront/testing/assert.ts";
@@ -296,7 +300,17 @@ describe("executor project tools", () => {
         "tool.list",
         "tool.execute",
         "project.tool-aliases",
+        PROJECT_TOOL_APPROVAL_DECISION,
+        PROJECT_TOOL_APPROVAL_REQUEST,
       ]);
+      // The new receiver cannot authorize or execute anything without a live request nonce.
+      await assertRejects(() =>
+        f.trusted.request(PROJECT_TOOL_APPROVAL_DECISION, {
+          approvalRequestId: crypto.randomUUID(),
+          decision: { approved: true, outcome: "approved" },
+        })
+      );
+      assertEquals(executions, 0);
       const source = await f.source();
       assertEquals(source.id, "project");
       assertEquals((await source.listTools()).map((item) => item.name), ["inspect"]);

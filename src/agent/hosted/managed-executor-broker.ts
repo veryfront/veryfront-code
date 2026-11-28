@@ -1,6 +1,10 @@
 import type { CapturedProjectConfiguration } from "#veryfront/server/project-env/captured-configuration.ts";
 import { createExecutorConfigurationOperation } from "./executor-configuration-transport.ts";
 import {
+  getHostedToolApprovalCapability,
+  inheritHostedToolApprovalCapability,
+} from "./tool-approval-capability.ts";
+import {
   type AdmitExecutorToolCall,
   getToolCallAdmissionOwner,
 } from "#veryfront/runtime/tool-call-admission-dispatch.ts";
@@ -543,6 +547,9 @@ export function createManagedExecutorBroker(
           sourceIntegrationPolicy: trusted.sourceIntegrationPolicy,
           hostedKnowledgeContext: trusted.hostedKnowledgeContext,
           createGate(projectTools) {
+            const approvalGate = installation.grant.execution.kind === "canonical"
+              ? getHostedToolApprovalCapability(input, installation.grant.execution.runId)
+              : undefined;
             const localOperations = buildBrokerOperations(
               channelBinding,
               session.signal,
@@ -559,11 +566,13 @@ export function createManagedExecutorBroker(
                     retired: session.settled,
                     allowedToolNames: new Set(trusted.projectInstallation.allowedToolNames),
                     projectContext: "skill",
-                    context: {
+                    ...(approvalGate ? { toolApproval: true as const } : {}),
+                    context: Object.freeze({
                       ...trusted.projectInstallation.context,
                       projectId: trusted.projectInstallation.context.projectId ?? undefined,
                       runIdBindsToolAuthorization: true,
-                    },
+                      ...(approvalGate ? { requestToolApproval: approvalGate } : {}),
+                    }),
                   }]]),
                 },
               },
@@ -589,6 +598,7 @@ export function createManagedExecutorBroker(
           },
         };
         inheritHostedAgentPauseCapability(runtimeOptions, input);
+        inheritHostedToolApprovalCapability(runtimeOptions, input);
         localRuntime = await session.runOwned(() => trustedRuntimeFactory!(runtimeOptions));
         gate = localRuntime.gate;
       }
@@ -650,6 +660,7 @@ export function createManagedExecutorBroker(
         },
       } as ManagedExecutorRuntime;
       inheritHostedAgentPauseCapability(runtime, input);
+      inheritHostedToolApprovalCapability(runtime, input);
       return runtime;
     } catch (error) {
       gate?.revoke();
@@ -1139,6 +1150,7 @@ function snapshotOperationInput(input: ManagedExecutorStartInput): ManagedExecut
         }),
       ),
       allowedToolNames: new Set(capability.allowedToolNames),
+      ...(capability.toolApproval === true ? { toolApproval: true as const } : {}),
       retired: capability.retired,
       context: Object.freeze({
         ...context,

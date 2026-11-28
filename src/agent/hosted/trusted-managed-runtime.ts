@@ -1,3 +1,4 @@
+import { inheritHostedToolApprovalCapability } from "./tool-approval-capability.ts";
 import { inheritHostedAgentPauseCapability } from "./manual-pause-credential.ts";
 import type { TrustedRuntimePreparationOptions } from "./trusted-runtime-prepare.ts";
 import type {
@@ -163,6 +164,7 @@ export async function createTrustedManagedRuntime(
       },
     };
     inheritHostedAgentPauseCapability(preparation, options);
+    inheritHostedToolApprovalCapability(preparation, options);
     owner = createTrustedRuntimePreparation(preparation);
     setupFinished.resolve();
     return { channel: authority, gate, settled: retired.promise, close };

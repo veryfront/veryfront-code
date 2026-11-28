@@ -1,3 +1,7 @@
+import {
+  PROJECT_TOOL_APPROVAL_DECISION,
+  PROJECT_TOOL_APPROVAL_REQUEST,
+} from "./project-tool-approval.ts";
 import { executorSourcePolicyOperation } from "./executor-discovery-schema.ts";
 import type { ExecutorOperation, ExecutorOperationContext } from "../executor/channel.ts";
 import { copyPrivateMap, createPrivateMap } from "#veryfront/security/private-map.ts";
@@ -90,9 +94,15 @@ export function createExecutorRuntimeInstallation(options: InstallationOptions) 
     ? projectToolOperationModes
     : runtimeOperationModes;
   const operationEntries = Object.entries(operationModes);
-  const optionalEntries = options.mode === "http"
-    ? []
-    : [[executorSourcePolicyOperation, "unary"] as const];
+  const optionalEntries = options.mode === "http" ? [] : [
+    [executorSourcePolicyOperation, "unary"] as const,
+    ...(options.mode === "project-tools"
+      ? [
+        [PROJECT_TOOL_APPROVAL_DECISION, "unary"] as const,
+        [PROJECT_TOOL_APPROVAL_REQUEST, "unary"] as const,
+      ]
+      : []),
+  ];
   const exposedEntries = [...operationEntries, ...optionalEntries];
   const prepareInstallation = (() => {
     if (options.mode === "http") {

@@ -72,6 +72,8 @@ export function createCanonicalManagedBrokerHandler<T>(
     signal: options.signal,
     inferenceApiBaseUrl: options.inferenceApiBaseUrl,
     knowledgeApiBaseUrl: apiUrl,
+    approvalApiBaseUrl: options.approvalApiBaseUrl ?? apiUrl,
+    approvalFetch: options.approvalFetch ?? transport,
     resolveIngressOptions: (input) => ({
       ...resolveIngressOptions(input),
       pauseApiBaseUrl: apiUrl,

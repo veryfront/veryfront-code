@@ -1,3 +1,4 @@
+import { markProjectToolApprovalRequest } from "./project-tool-approval.ts";
 import type { JsonValue } from "#veryfront/schemas/index.ts";
 import { copyPrivateSet, createPrivateSet } from "#veryfront/security/private-set.ts";
 import { copyPrivateMap, createPrivateMap } from "#veryfront/security/private-map.ts";
@@ -62,6 +63,8 @@ export interface ExecutorToolCapability {
 
   /** Explicit permission for caller-supplied skill context; ordinary host capabilities reject it. */
   readonly projectContext?: "skill";
+  /** Project-only request/decision handshake; contains no host credential or approval authority. */
+  readonly toolApproval?: true;
 }
 
 /**
@@ -112,6 +115,7 @@ export function createExecutorToolBroker(options: {
     retired?: Promise<void>;
 
     projectContext: "skill" | undefined;
+    toolApproval: boolean;
   }>();
   let allowedTools = 0;
   let sourceCount = 0;
@@ -130,6 +134,13 @@ export function createExecutorToolBroker(options: {
       throw new TypeError("Invalid executor tool capability");
     }
     const projectContext = contextGrant?.value;
+    const approvalGrant = getOwnPropertyDescriptor(capability, "toolApproval");
+    if (
+      approvalGrant && (!hasOwn(approvalGrant, "value") ||
+        (approvalGrant.value !== undefined && approvalGrant.value !== true))
+    ) {
+      throw new TypeError("Invalid executor project approval capability");
+    }
     if (
       ++sourceCount > limits.maxSources || sources.has(id) || !capability.context ||
       capability.source.id !== id || typeof capability.source.listTools !== "function" ||
@@ -157,6 +168,7 @@ export function createExecutorToolBroker(options: {
       retired: capability.retired,
 
       projectContext,
+      toolApproval: approvalGrant?.value === true,
     });
   }
   let calls = 0;
@@ -228,6 +240,9 @@ export function createExecutorToolBroker(options: {
         if (call?.projectContext !== undefined && capability.projectContext !== "skill") {
           throw new TypeError("Executor project context is not granted");
         }
+        if (call?.toolApproval !== undefined && !capability.toolApproval) {
+          throw new TypeError("Executor project approval protocol is unavailable");
+        }
         return capability;
       };
       const capability = resolveCapability();
@@ -248,6 +263,9 @@ export function createExecutorToolBroker(options: {
         async invoke(context) {
           remoteRetirement = capability.retired;
           try {
+            if (call?.toolApproval === 1 && capability.toolApproval) {
+              markProjectToolApprovalRequest(context);
+            }
             let receipt;
             if (call && admitToolCall) {
               if (!call.occurrenceId || !call.toolCallId) {
