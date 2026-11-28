@@ -33,6 +33,14 @@ import type { InstalledExecutorRuntime } from "#veryfront/agent/hosted/executor-
 import { verifyHostedRuntimeSourceBinding } from "#veryfront/agent/hosted/runtime-source-binding.ts";
 
 const apply = Reflect.apply;
+const Controller = AbortController;
+const abortController = AbortController.prototype.abort;
+const controllerSignal = Object.getOwnPropertyDescriptor(AbortController.prototype, "signal")!.get!;
+const signalAborted = Object.getOwnPropertyDescriptor(AbortSignal.prototype, "aborted")!.get!;
+const signalReason = Object.getOwnPropertyDescriptor(AbortSignal.prototype, "reason")!.get!;
+const addListener = EventTarget.prototype.addEventListener;
+const removeListener = EventTarget.prototype.removeEventListener;
+const createObject = Object.create;
 
 /** Called only after the authenticated project-only installation has matched the fixed image. */
 export async function createExecutorProjectToolRuntime(options: {
@@ -46,7 +54,25 @@ export async function createExecutorProjectToolRuntime(options: {
   const { discovery, deadline } = options;
   const runProject = options.runWithProjectRuntime ?? (<T>(fn: () => T): T => fn());
   const close = discovery.close;
-  const signal = AbortSignal.any([options.signal, discovery.signal]);
+  // Source-owned signals dispatch authored abort listeners inside the same environment as execution.
+  function bindProjectSignal(original: AbortSignal) {
+    const controller = new Controller();
+    const signal = apply(controllerSignal, controller, []) as AbortSignal;
+    const forward = () =>
+      runProject(() => apply(abortController, controller, [apply(signalReason, original, [])]));
+    const listenerOptions = createObject(null) as AddEventListenerOptions;
+    listenerOptions.once = true;
+    apply(addListener, original, ["abort", forward, listenerOptions]);
+    if (apply(signalAborted, original, [])) forward();
+    return {
+      signal,
+      dispose: () => {
+        apply(removeListener, original, ["abort", forward]);
+      },
+    };
+  }
+  const lifetime = bindProjectSignal(AbortSignal.any([options.signal, discovery.signal]));
+  const signal = lifetime.signal;
   try {
     // Capture all admitted authority before discovery evaluates project modules.
     const input = parseExecutorInstallation(getExecutorProjectToolInstallSchema(), options.input);
@@ -126,22 +152,36 @@ export async function createExecutorProjectToolRuntime(options: {
       operation.mode === "unary"
         ? {
           mode: "unary",
-          handle: (value, context) => runProject(() => operation.handle(value, context)),
+          async handle(value, context) {
+            const call = bindProjectSignal(context.signal);
+            try {
+              return await runProject(() =>
+                operation.handle(value, { ...context, signal: call.signal })
+              );
+            } finally {
+              call.dispose();
+            }
+          },
         }
         : {
           mode: "stream",
           async *handle(value, context) {
-            const iterator = runProject(() =>
-              operation.handle(value, context)[Symbol.asyncIterator]()
-            );
+            const call = bindProjectSignal(context.signal);
             try {
-              while (true) {
-                const next = await runProject(() => iterator.next());
-                if (next.done) return;
-                yield next.value;
+              const iterator = runProject(() =>
+                operation.handle(value, { ...context, signal: call.signal })[Symbol.asyncIterator]()
+              );
+              try {
+                while (true) {
+                  const next = await runProject(() => iterator.next());
+                  if (next.done) return;
+                  yield next.value;
+                }
+              } finally {
+                await runProject(() => iterator.return?.());
               }
             } finally {
-              await runProject(() => iterator.return?.());
+              call.dispose();
             }
           },
         };
@@ -165,11 +205,21 @@ export async function createExecutorProjectToolRuntime(options: {
     }
     return {
       operations,
-      close: () => runProject(() => apply(close, discovery, [])),
+      close: async () => {
+        try {
+          await runProject(() => apply(close, discovery, []));
+        } finally {
+          lifetime.dispose();
+        }
+      },
       settled,
     };
   } catch (error) {
-    await runProject(() => apply(close, discovery, []));
+    try {
+      await runProject(() => apply(close, discovery, []));
+    } finally {
+      lifetime.dispose();
+    }
     throw error;
   }
 }

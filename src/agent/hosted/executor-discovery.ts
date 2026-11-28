@@ -66,6 +66,8 @@ export interface ExecutorDiscoveryOptions {
   signal: AbortSignal;
   /** Local dependency injection; never populated from the protocol. */
   backend?: ExecutorDiscoveryBackend;
+  /** Trusted image-owned scope for authored cleanup, including abort-triggered retirement. */
+  runWithProjectEnvironment?: <T>(fn: () => T) => T;
 }
 
 export interface ExecutorDiscovery {
@@ -131,6 +133,7 @@ export function createExecutorDiscovery(input: ExecutorDiscoveryOptions): Execut
   warmExecutorToolSchemas();
   warmExecutorProjectToolSchemas();
   const projectDir = input.projectDir;
+  const runProject = input.runWithProjectEnvironment ?? (<T>(fn: () => T): T => fn());
   const lifetime = new AbortController();
   const settled = createPrivateDeferred<void>();
   void chain(settled.promise, () => {}, () => {});
@@ -160,7 +163,10 @@ export function createExecutorDiscovery(input: ExecutorDiscoveryOptions): Execut
           for (const task of runtimeTasks) await task;
         }
         cleanupStarted = true;
-        if (loadStarted && backend) await observePrivatePromise(backend.cleanup(runtime));
+        if (loadStarted && backend) {
+          const cleanupBackend = backend;
+          await observePrivatePromise(runProject(() => cleanupBackend.cleanup(runtime)));
+        }
       } catch {
         throw new ExecutorDiscoveryError("EXECUTOR_DISCOVERY_CLEANUP_FAILED");
       } finally {

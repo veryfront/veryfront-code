@@ -221,6 +221,7 @@ export async function startExecutorRuntimeEntrypoint(
             projectDir: artifact.projectDir,
             defaultAgentId: input.context.agentId,
             agentEntrypoint: input.agentEntrypoint,
+            runWithProjectEnvironment: runProject,
             signal: runtimeSignal,
           })
         );

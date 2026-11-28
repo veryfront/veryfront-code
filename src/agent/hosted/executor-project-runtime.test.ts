@@ -1,3 +1,4 @@
+import type { ToolExecutionContext } from "#veryfront/tool/types.ts";
 import { getEnv } from "#veryfront/platform/compat/process/env.ts";
 import {
   getTrustedProjectEnvIdentity,
@@ -42,8 +43,9 @@ function fixture(
     schemaVersion: 1 as const,
     mode: "unrestricted" as const,
   },
-  onExecute?: () => unknown,
+  onExecute?: (context?: ToolExecutionContext) => unknown,
   onCleanup?: () => void,
+  runWithProjectEnvironment?: <T>(fn: () => T) => T,
 ) {
   let cleaned = 0;
   let loads = 0;
@@ -58,7 +60,7 @@ function fixture(
       calls++;
       started.resolve();
       await wait;
-      const executed = onExecute?.();
+      const executed = await onExecute?.(context);
       return {
         query: args.query,
         agentId: context?.agentId,
@@ -96,6 +98,7 @@ function fixture(
     source,
     signal: lifetime.signal,
     projectDir: "/synthetic-project",
+    runWithProjectEnvironment,
     backend: {
       load: () => {
         loads++;
@@ -520,4 +523,89 @@ describe("captured authored callback environment", () => {
       }]);
     }
   });
+});
+
+Deno.test("abort-triggered discovery cleanup retains its captured environment outside the project scope", async () => {
+  const cleaned: unknown[] = [];
+  const runProject = <T>(fn: () => T): T =>
+    runWithTrustedProjectEnv({ CAPTURED_SETTING: "A" }, {
+      projectId: "source-a",
+      environmentId: "source-environment",
+    }, fn);
+  const f = runProject(() =>
+    fixture(undefined, undefined, undefined, undefined, () =>
+      cleaned.push({
+        value: getEnv("CAPTURED_SETTING"),
+        host: getEnv("PATH") ?? null,
+        source: getTrustedProjectEnvIdentity()?.projectId,
+      }), runProject)
+  );
+  const runtime = await createExecutorProjectToolRuntime({
+    input: install(),
+    discovery: f.discovery,
+    signal: f.lifetime.signal,
+    deadline: Date.now() + 5000,
+    runWithProjectRuntime: runProject,
+  });
+  // Abort's listener starts cleanup before explicit close can supply any ambient scope.
+  f.lifetime.abort();
+  await runtime.close();
+  assertEquals(cleaned, [{ value: "A", host: null, source: "source-a" }]);
+  assertEquals(getTrustedProjectEnvIdentity(), undefined);
+});
+
+Deno.test("authored cancellation listeners retain the captured environment when the caller aborts outside it", async () => {
+  const observed: unknown[] = [];
+  const ready = Promise.withResolvers<void>();
+  const cancelled = Promise.withResolvers<void>();
+  const runProject = <T>(fn: () => T): T =>
+    runWithTrustedProjectEnv({ CAPTURED_SETTING: "A" }, {
+      projectId: "source-a",
+      environmentId: "source-environment",
+    }, fn);
+  const f = fixture(
+    undefined,
+    undefined,
+    undefined,
+    async (context) => {
+      assert(context?.abortSignal);
+      context.abortSignal.addEventListener("abort", () => {
+        observed.push({ value: getEnv("CAPTURED_SETTING"), host: getEnv("PATH") ?? null });
+        cancelled.resolve();
+      }, { once: true });
+      ready.resolve();
+      await cancelled.promise;
+      return "cancelled";
+    },
+    undefined,
+    runProject,
+  );
+  const runtime = await createExecutorProjectToolRuntime({
+    input: install(),
+    discovery: f.discovery,
+    signal: f.lifetime.signal,
+    deadline: Date.now() + 5000,
+    runWithProjectRuntime: runProject,
+  });
+  const call = new AbortController();
+  try {
+    const operation = runtime.operations.get("tool.execute");
+    assert(operation?.mode === "stream");
+    const consuming = Array.fromAsync(
+      operation.handle({
+        sourceId: "project",
+        toolName: "inspect",
+        toolCallId: "cancelled",
+        args: { query: "test" },
+      }, { binding, signal: call.signal, deadline: Date.now() + 5000 }),
+    ).catch(() => undefined);
+    await ready.promise;
+    call.abort();
+    await consuming;
+    assertEquals(observed, [{ value: "A", host: null }]);
+  } finally {
+    call.abort();
+    cancelled.resolve();
+    await runtime.close();
+  }
 });
