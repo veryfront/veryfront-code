@@ -258,6 +258,7 @@ describe("captured native configuration references", () => {
   const configured = () => ({
     ...host(entries),
     configurationReferences: { version: 1 as const, references: [a, b] },
+    projectExecutionConfigurationVersion: 1 as const,
   });
   it("retains signed A across serialized redispatch/restart while new signed work selects B without HTTP variables", async () => {
     const input = await executor(undefined, a);
@@ -277,6 +278,26 @@ describe("captured native configuration references", () => {
     assert(Object.isFrozen(first));
     assertEquals(JSON.stringify(first).includes("must-not-reach-agent-session"), false);
     assertEquals("configuration" in first, false);
+  });
+  it("rejects mixed or unsupported authored-configuration cohorts at construction", () => {
+    assertThrows(() =>
+      createInstalledProjectAgentSessionResolver({
+        ...host(entries),
+        configurationReferences: { version: 1, references: [a, b] },
+      })
+    );
+    assertThrows(() =>
+      createInstalledProjectAgentSessionResolver({
+        ...host(entries),
+        projectExecutionConfigurationVersion: 1,
+      })
+    );
+    assertThrows(() =>
+      createInstalledProjectAgentSessionResolver({
+        ...configured(),
+        projectExecutionConfigurationVersion: 2 as never,
+      })
+    );
   });
   it("rejects a signed reference outside its source scope during ingress parsing", async () => {
     await assertRejects(() => executor(undefined, { ...a, projectId }));

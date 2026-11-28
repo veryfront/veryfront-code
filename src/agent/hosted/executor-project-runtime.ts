@@ -1,3 +1,7 @@
+import {
+  getTrustedProjectEnvIdentity,
+  isProjectEnvActive,
+} from "#veryfront/server/project-env/storage.ts";
 import { copyPrivateMap, createPrivateMap } from "#veryfront/security/private-map.ts";
 import { createPrivateSet } from "#veryfront/security/private-set.ts";
 import {
@@ -36,13 +40,27 @@ export async function createExecutorProjectToolRuntime(options: {
   discovery: ExecutorDiscovery;
   signal: AbortSignal;
   deadline: number;
+  /** Image-owned captured environment scope, never a protocol callback. */
+  runWithProjectRuntime?: <T>(fn: () => T) => T;
 }): Promise<InstalledExecutorRuntime> {
   const { discovery, deadline } = options;
+  const runProject = options.runWithProjectRuntime ?? (<T>(fn: () => T): T => fn());
   const close = discovery.close;
   const signal = AbortSignal.any([options.signal, discovery.signal]);
   try {
     // Capture all admitted authority before discovery evaluates project modules.
     const input = parseExecutorInstallation(getExecutorProjectToolInstallSchema(), options.input);
+    if (input.projectExecutionConfiguration) {
+      const reference = input.projectExecutionConfiguration.reference;
+      const admitted = runProject(() => ({
+        active: isProjectEnvActive(),
+        identity: getTrustedProjectEnvIdentity(),
+      }));
+      if (
+        !admitted.active || admitted.identity?.projectId !== reference.projectId ||
+        admitted.identity.environmentId !== reference.environmentId
+      ) throw new TypeError("Captured project execution overlay unavailable");
+    }
     const binding = input.binding;
     const source = input.source;
     const context: ExecutorProjectToolContext = {
@@ -70,9 +88,11 @@ export async function createExecutorProjectToolRuntime(options: {
     const result = parseDiscoveryData(
       agentDescribeResultSchema,
       await chainPrivatePromise(resolvePrivatePromise(), () =>
-        describe.handle(
-          { agentId: context.agentId },
-          { binding, signal, deadline },
+        runProject(() =>
+          describe.handle(
+            { agentId: context.agentId },
+            { binding, signal, deadline },
+          )
         )),
       true,
     );
@@ -84,25 +104,51 @@ export async function createExecutorProjectToolRuntime(options: {
       throw new Error("Project discovery did not match installation");
     }
     const runtime: ReturnType<typeof getRuntime> = apply(getRuntime, discovery, []);
-    const tools = runWithProjectAgentRuntime(runtime, () => {
-      const runtimeTools = copyPrivateMap(runtime.tools, limits.maxTotalTools);
-      for (const [name, tool] of getProjectAgentRuntimeInlineTools(runtime, context.agentId)) {
-        runtimeTools.set(name, tool);
-      }
-      return createExecutorProjectToolOperations({
-        scope: { binding, signal, assertActive: () => signal.throwIfAborted() },
-        context,
-        tools: runtimeTools,
-        runWithProjectRuntime: (fn) => runWithProjectAgentRuntime(runtime, fn),
-        allowedToolNames,
-        maxCalls,
-        maxConcurrent,
-        limits,
-      });
-    });
+    const tools = runProject(() =>
+      runWithProjectAgentRuntime(runtime, () => {
+        const runtimeTools = copyPrivateMap(runtime.tools, limits.maxTotalTools);
+        for (const [name, tool] of getProjectAgentRuntimeInlineTools(runtime, context.agentId)) {
+          runtimeTools.set(name, tool);
+        }
+        return createExecutorProjectToolOperations({
+          scope: { binding, signal, assertActive: () => signal.throwIfAborted() },
+          context,
+          tools: runtimeTools,
+          runWithProjectRuntime: (fn) => runProject(() => runWithProjectAgentRuntime(runtime, fn)),
+          allowedToolNames,
+          maxCalls,
+          maxConcurrent,
+          limits,
+        });
+      })
+    );
+    const scoped = (operation: ExecutorOperation): ExecutorOperation =>
+      operation.mode === "unary"
+        ? {
+          mode: "unary",
+          handle: (value, context) => runProject(() => operation.handle(value, context)),
+        }
+        : {
+          mode: "stream",
+          async *handle(value, context) {
+            const iterator = runProject(() =>
+              operation.handle(value, context)[Symbol.asyncIterator]()
+            );
+            try {
+              while (true) {
+                const next = await runProject(() => iterator.next());
+                if (next.done) return;
+                yield next.value;
+              }
+            } finally {
+              await runProject(() => iterator.return?.());
+            }
+          },
+        };
     const operations = createPrivateMap<string, ExecutorOperation>();
-    for (const [name, operation] of discoveryOperations) operations.set(name, operation);
-    for (const [name, operation] of tools) {
+    for (const [name, operation] of discoveryOperations) operations.set(name, scoped(operation));
+    for (const [name, rawOperation] of tools) {
+      const operation = scoped(rawOperation);
       if (operation.mode === "unary") operations.set(name, operation);
       else {operations.set(name, {
           mode: "stream",
@@ -119,11 +165,11 @@ export async function createExecutorProjectToolRuntime(options: {
     }
     return {
       operations,
-      close: () => apply(close, discovery, []),
+      close: () => runProject(() => apply(close, discovery, [])),
       settled,
     };
   } catch (error) {
-    await apply(close, discovery, []);
+    await runProject(() => apply(close, discovery, []));
     throw error;
   }
 }

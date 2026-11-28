@@ -1,3 +1,8 @@
+import { getEnv } from "#veryfront/platform/compat/process/env.ts";
+import {
+  getTrustedProjectEnvIdentity,
+  runWithTrustedProjectEnv,
+} from "#veryfront/server/project-env/storage.ts";
 import "#veryfront/schemas/_test-setup.ts";
 import { assert, assertEquals, assertRejects } from "#veryfront/testing/assert.ts";
 import { describe, it } from "#veryfront/testing/bdd.ts";
@@ -38,6 +43,7 @@ function fixture(
     mode: "unrestricted" as const,
   },
   onExecute?: () => unknown,
+  onCleanup?: () => void,
 ) {
   let cleaned = 0;
   let loads = 0;
@@ -98,6 +104,7 @@ function fixture(
       },
       cleanup: () => {
         cleaned++;
+        onCleanup?.();
         return Promise.resolve();
       },
     },
@@ -430,6 +437,87 @@ describe("installed project tool runtime", () => {
       }]);
     } finally {
       await owner.close();
+    }
+  });
+});
+
+describe("captured authored callback environment", () => {
+  it("keeps concurrent source environments separate from consuming execution identity and host values", async () => {
+    const release = Promise.withResolvers<void>();
+    const loaded: unknown[] = [];
+    const cleaned: unknown[] = [];
+    const describe = () => ({
+      value: getEnv("CAPTURED_SETTING"),
+      host: getEnv("PATH") ?? null,
+      source: getTrustedProjectEnvIdentity()?.projectId,
+    });
+    const a = fixture(
+      release.promise,
+      () => loaded.push(describe()),
+      undefined,
+      describe,
+      () => cleaned.push(describe()),
+    );
+    const b = fixture(
+      release.promise,
+      () => loaded.push(describe()),
+      undefined,
+      describe,
+      () => cleaned.push(describe()),
+    );
+    const scoped = (value: string, source: string) => <T>(fn: () => T): T =>
+      runWithTrustedProjectEnv({ CAPTURED_SETTING: value }, {
+        projectId: source,
+        environmentId: "source-environment",
+      }, fn);
+    const first = await createExecutorProjectToolRuntime({
+      input: install(),
+      discovery: a.discovery,
+      signal: a.lifetime.signal,
+      deadline: Date.now() + 5000,
+      runWithProjectRuntime: scoped("A", "source-a"),
+    });
+    const second = await createExecutorProjectToolRuntime({
+      input: install(),
+      discovery: b.discovery,
+      signal: b.lifetime.signal,
+      deadline: Date.now() + 5000,
+      runWithProjectRuntime: scoped("B", "source-b"),
+    });
+    try {
+      const invoke = (runtime: typeof first) => {
+        const operation = runtime.operations.get("tool.execute");
+        assert(operation?.mode === "stream");
+        return Array.fromAsync(
+          operation.handle({
+            sourceId: "project",
+            toolName: "inspect",
+            toolCallId: "captured",
+            args: { query: "test" },
+          }, { binding, signal: new AbortController().signal, deadline: Date.now() + 5000 }),
+        );
+      };
+      const one = invoke(first), two = invoke(second);
+      release.resolve();
+      const [x, y] = await Promise.all([one, two]);
+      assertEquals(loaded, [{ value: "A", host: null, source: "source-a" }, {
+        value: "B",
+        host: null,
+        source: "source-b",
+      }]);
+      assertEquals(JSON.stringify(x).includes('"value":"A"'), true);
+      assertEquals(JSON.stringify(y).includes('"value":"B"'), true);
+      assertEquals(JSON.stringify(x).includes('"projectId":"synthetic-project"'), true);
+      assertEquals(getTrustedProjectEnvIdentity(), undefined);
+    } finally {
+      release.resolve();
+      await first.close();
+      await second.close();
+      assertEquals(cleaned, [{ value: "A", host: null, source: "source-a" }, {
+        value: "B",
+        host: null,
+        source: "source-b",
+      }]);
     }
   });
 });

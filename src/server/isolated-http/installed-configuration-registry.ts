@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { snapshotCapturedProjectConfiguration } from "../project-env/captured-configuration.ts";
 import {
   type RuntimeConfigurationReference,
   snapshotRuntimeConfigurationReference,
@@ -56,25 +56,7 @@ export function createInstalledConfigurationRegistry(
     }
     const raw = entry as { image: unknown; configuration: unknown };
     const image = getHostedExecutorImageSchema().parse(raw.image);
-    const configuration = getExecutorHttpApplicationConfigurationSchema().parse(raw.configuration);
-    // Exact API v1 content codec: deployment provenance is deliberately excluded.
-    const { projectId, environmentId, releaseId, projectSlug, environmentName, variables } =
-      configuration;
-    const canonical = JSON.stringify({
-      projectId,
-      environmentId,
-      releaseId,
-      projectSlug,
-      environmentName,
-      variables: Object.fromEntries(
-        Object.keys(variables).sort().map((key) => [key, variables[key]]),
-      ),
-    });
-    const expectedId = "configuration-" +
-      createHash("sha256").update(canonical, "utf8").digest("hex");
-    if (configuration.configurationId !== expectedId) {
-      throw new TypeError("Installed configuration content identity mismatch");
-    }
+    const configuration = snapshotCapturedProjectConfiguration(raw.configuration);
     const key = contentKey(configuration);
     const source = scopeKey(configuration);
     if (contents.has(key) || (images.has(source) && images.get(source) !== image)) {

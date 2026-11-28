@@ -1,4 +1,9 @@
 import {
+  getRuntimeConfigurationReferenceSchema,
+  type RuntimeConfigurationReference,
+  snapshotRuntimeConfigurationReference,
+} from "../runtime/runtime-configuration-reference.ts";
+import {
   CONTROL_PLANE_JWS_HEADER,
   CONTROL_PLANE_RUNTIME_CAPABILITIES_PATH,
   getControlPlaneProjectMetadataRequestSchema,
@@ -18,10 +23,23 @@ export function createCanonicalCapabilitiesHandler(
       BrokerRuntimeAgentIngressOptions<unknown>,
       "publicKeyPem" | "audience" | "projectId" | "expectedSurface"
     >
-    & { signal: AbortSignal },
+    & {
+      signal: AbortSignal;
+      projectExecutionConfigurationVersion?: 1;
+      confirmProjectExecutionConfiguration?: (
+        reference: RuntimeConfigurationReference,
+      ) => RuntimeConfigurationReference;
+    },
 ) {
   const { publicKeyPem, audience, projectId, expectedSurface, signal } = input;
-  const schema = getControlPlaneProjectMetadataRequestSchema();
+  const confirmConfiguration = input.confirmProjectExecutionConfiguration;
+  const configured = input.projectExecutionConfigurationVersion;
+  if (
+    (configured !== undefined && configured !== 1) || (configured === 1 && !confirmConfiguration)
+  ) throw new TypeError("Invalid agent execution configuration capability");
+  const schema = getControlPlaneProjectMetadataRequestSchema().extend({
+    runtimeConfiguration: getRuntimeConfigurationReferenceSchema().optional(),
+  });
   return {
     async handle(request: Request): Promise<Response> {
       const unavailable = () => Response.json({ errorCode: "BROKER_UNAVAILABLE" }, { status: 503 });
@@ -67,9 +85,44 @@ export function createCanonicalCapabilitiesHandler(
           return Response.json({ errorCode: "BROKER_INGRESS_AUTH_INVALID" }, { status: 401 });
         }
         if (operationSignal.aborted) return unavailable();
+        let installedReference: RuntimeConfigurationReference | undefined;
+        if (payload.runtimeConfiguration) {
+          try {
+            if (
+              configured !== 1 || !confirmConfiguration ||
+              payload.runtimeConfiguration.projectId !== projectId
+            ) {
+              return unavailable();
+            }
+            installedReference = snapshotRuntimeConfigurationReference(
+              confirmConfiguration(payload.runtimeConfiguration),
+            );
+            for (
+              const key of Object.keys(
+                installedReference,
+              ) as (keyof RuntimeConfigurationReference)[]
+            ) {
+              if (installedReference[key] !== payload.runtimeConfiguration[key]) {
+                return unavailable();
+              }
+            }
+          } catch {
+            return unavailable();
+          }
+        }
         return Response.json({
           project_id: projectId,
-          capabilities: { account_agent_publications: { version: 2 } },
+          capabilities: {
+            account_agent_publications: { version: 2 },
+            ...(configured === 1
+              ? {
+                agent_execution_configuration: {
+                  version: 1,
+                  ...(installedReference ? { reference: installedReference } : {}),
+                },
+              }
+              : {}),
+          },
         }, { headers: { "cache-control": "no-store" } });
       } finally {
         clearTimeout(timer);

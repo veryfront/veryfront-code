@@ -22,10 +22,17 @@ const executor = await startExecutorRuntimeEntrypoint({
       manifest: {
         version: 1,
         root: "project",
-        owner: mode === "http"
+        owner: process.argv[4] === "captured-project"
+          ? { scopeKind: "project", projectId: "11111111-1111-4111-8111-111111111111" }
+          : mode === "http"
           ? { scopeKind: "project", projectId: "synthetic-project" }
           : { scopeKind: "global", serviceName: "veryfront-agent" },
-        source: { type: "release", releaseId: "synthetic-release" },
+        source: {
+          type: "release",
+          releaseId: process.argv[4] === "captured-project"
+            ? "33333333-3333-4333-8333-333333333333"
+            : "synthetic-release",
+        },
       },
       projectDir: process.argv[2]!,
     }),

@@ -5,8 +5,8 @@ export function executorBootstrapTestPatterns(): readonly string[] {
   const installation = "loads a real project only after fixed";
   return [
     `${installation} runtime(?: selected-source)? installation$`,
-    `${installation} project-tools(?: selected-source)? installation$`,
+    `${installation} project-tools(?: selected-source(?: captured-[a-z]+)?)? installation$`,
     `${installation} http installation$`,
-    `^fixed Node executor bootstrap (?!${installation} (?:runtime(?: selected-source)?|project-tools(?: selected-source)?|http) installation$).+`,
+    `^fixed Node executor bootstrap (?!${installation} (?:runtime(?: selected-source)?|project-tools(?: selected-source(?: captured-[a-z]+)?)?|http) installation$).+`,
   ];
 }

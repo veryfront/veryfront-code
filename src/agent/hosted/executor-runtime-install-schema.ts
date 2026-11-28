@@ -1,3 +1,4 @@
+import { getRuntimeConfigurationReferenceSchema } from "../runtime/runtime-configuration-reference.ts";
 import type { InferSchema, Schema, SchemaValidator } from "#veryfront/extensions/schema/index.ts";
 import { defineSchema } from "#veryfront/schemas/index.ts";
 import { getRuntimeAgentEntrypointSchema } from "#veryfront/agent/runtime/agent-invocation-contract.ts";
@@ -130,6 +131,10 @@ export const getExecutorProjectToolInstallSchema = defineSchema((v) =>
     ...artifactShape(v),
     mode: v.literal("project-tools"),
     binding: getExecutorBindingSchema(),
+    projectExecutionConfiguration: v.object({
+      version: v.literal(1),
+      reference: getRuntimeConfigurationReferenceSchema(),
+    }).strict().optional(),
     agentEntrypoint: getRuntimeAgentEntrypointSchema().optional(),
     context: v.object({
       agentId: getExecutorDiscoveryIdSchema(),
@@ -147,6 +152,10 @@ export const getExecutorProjectToolInstallSchema = defineSchema((v) =>
     limits: getExecutorToolLimitsSchema().optional(),
   }).strict().refine(
     (input) =>
+      (!input.projectExecutionConfiguration ||
+        (input.owner.scopeKind === "project" && input.source.type === "release" &&
+          input.projectExecutionConfiguration.reference.projectId === input.owner.projectId &&
+          input.projectExecutionConfiguration.reference.releaseId === input.source.releaseId)) &&
       new Set(input.allowedToolNames).size === input.allowedToolNames.length &&
       (input.context.projectId !== null ||
         (input.owner.scopeKind === "global" && input.context.projectSlug === undefined &&

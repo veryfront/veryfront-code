@@ -60,26 +60,67 @@ export function registerExecutorRuntimeEntrypointTests(): void {
     }
   });
   for (
-    const [profile, selectedSource] of [
-      ["runtime", false],
-      ["runtime", true],
-      ["project-tools", false],
-      ["project-tools", true],
-      ["http", false],
+    const [profile, selectedSource, scenario] of [
+      ["runtime", false, undefined],
+      ["runtime", true, undefined],
+      ["project-tools", false, undefined],
+      ["project-tools", true, "a"],
+      ["project-tools", true, "b"],
+      ["project-tools", true, "retained"],
+      ["project-tools", true, "missing"],
+      ["project-tools", true, "mismatch"],
+      ["project-tools", true, "reserved"],
+      ["http", false, undefined],
     ] as const
   ) {
-    const selection = selectedSource ? " selected-source" : "";
+    const selection = selectedSource
+      ? ` selected-source${scenario ? " captured-" + scenario : ""}`
+      : "";
     const name = `loads a real project only after fixed ${profile}${selection} installation`;
     it(name, { timeout: 45_000 }, async () => {
+      const captured = profile === "project-tools" && selectedSource;
+      const setting = scenario === "retained" || scenario === "a"
+        ? "A"
+        : scenario === "b"
+        ? "B"
+        : scenario;
+      const reference = {
+        version: 1 as const,
+        projectId: "11111111-1111-4111-8111-111111111111",
+        environmentId: "22222222-2222-4222-8222-222222222222",
+        releaseId: "33333333-3333-4333-8333-333333333333",
+        deploymentId: setting === "B"
+          ? "55555555-5555-4555-8555-555555555555"
+          : "44444444-4444-4444-8444-444444444444",
+        configurationId: setting === "reserved"
+          ? "configuration-f2e7a50644c125832a04f379791148b26538ece085b253dd77dda083b087e551"
+          : setting === "B"
+          ? "configuration-1635c7ea2906cda233b8adb437cdfc5918c5212ce6eafeb108fd7898e9843786"
+          : "configuration-daa7bd4d7762ba975b8a9bd921699b0538bcfad2fa4b23f99ab78801cee32bab",
+      };
+      const capturedConfiguration = {
+        projectId: reference.projectId,
+        environmentId: reference.environmentId,
+        releaseId: reference.releaseId,
+        projectSlug: "example-project",
+        environmentName: "production",
+        configurationId: reference.configurationId,
+        variables: setting === "reserved"
+          ? { OTEL_EXPORTER_OTLP_HEADERS: "must-not-install" }
+          : { CAPTURED_SETTING: setting! },
+      };
+      const capturedOwner: Record<string, string> = captured
+        ? { scopeKind: "project", projectId: reference.projectId }
+        : { scopeKind: "global", serviceName: "veryfront-agent" };
       const dir = await mkdtemp(join(tmpdir(), "vf-managed-executor-"));
       const marker = join(dir, "loaded.json");
       const streamCanceled = join(dir, "stream-canceled.txt");
       await mkdir(join(dir, "crew"));
       await writeFile(
         join(dir, "veryfront.config.ts"),
-        `import { writeFileSync } from "node:fs"; import process from "node:process"; writeFileSync(${
+        `import { writeFileSync } from "node:fs"; import process from "node:process"; import { getEnv } from "veryfront"; writeFileSync(${
           JSON.stringify(marker)
-        }, JSON.stringify({pid:process.pid})); export default { ai: { agents: { discovery: { paths: ["crew"] } } } };`,
+        }, JSON.stringify({pid:process.pid, captured:getEnv("CAPTURED_SETTING"), host:getEnv("VF_TEST_HOST_ONLY_SECRET")})); export default { ai: { agents: { discovery: { paths: ["crew"] } } } };`,
       );
       await writeFile(
         join(dir, "crew", "writer.md"),
@@ -139,7 +180,7 @@ export function registerExecutorRuntimeEntrypointTests(): void {
         await mkdir(join(dir, "tools"));
         await writeFile(
           join(dir, "tools", "inspect.ts"),
-          'import { tool } from "veryfront/tool"; import { defineSchema } from "veryfront/schemas"; export default tool({ id: "inspect", description: "Inspect approved data", inputSchema: defineSchema(v => v.object({ query: v.string() }))(), execute: (input, context) => ({ query: input.query, agentId: context.agentId, projectId: context.projectId, runId: context.runId, toolCallId: context.toolCallId }) });',
+          'import { tool } from "veryfront/tool"; import { defineSchema } from "veryfront/schemas"; import { getEnv } from "veryfront"; export default tool({ id: "inspect", description: "Inspect approved data", inputSchema: defineSchema(v => v.object({ query: v.string() }))(), execute: (input, context) => ({ query: input.query, agentId: context.agentId, projectId: context.projectId, runId: context.runId, toolCallId: context.toolCallId, ...(getEnv("CAPTURED_SETTING") ? { captured:getEnv("CAPTURED_SETTING"), host:getEnv("VF_TEST_HOST_ONLY_SECRET") ?? null } : {}) }) });',
         );
       }
       const binding = { allocationId: randomUUID(), generation: 1, invocationId: randomUUID() };
@@ -156,10 +197,12 @@ export function registerExecutorRuntimeEntrypointTests(): void {
         fileURLToPath(new URL("tests/fixtures/executor-runtime-process.ts", root)),
         dir,
         profile,
+        ...(captured ? ["captured-project"] : []),
       ], {
         cwd: fileURLToPath(root),
         env: {
           PATH: "/usr/local/bin:/usr/bin:/bin",
+          ...(captured ? { VF_TEST_HOST_ONLY_SECRET: "must-not-fall-through" } : {}),
           // The test runner owns this directory; preserve child-process coverage
           // without inheriting the broker's environment or credentials.
           ...(process.env.NODE_V8_COVERAGE
@@ -233,7 +276,17 @@ export function registerExecutorRuntimeEntrypointTests(): void {
               ],
             ])
             : (profile === "project-tools"
-              ? new Map()
+              ? captured && setting !== "missing"
+                ? new Map([[
+                  "project.configuration",
+                  (await import("#veryfront/agent/hosted/executor-configuration-transport.ts"))
+                    .createExecutorConfigurationOperation(
+                      binding,
+                      reference.configurationId,
+                      capturedConfiguration,
+                    ),
+                ]])
+                : new Map()
               : (await import("#veryfront/agent/hosted/executor-model-bridge.ts"))
                 .createExecutorModelBroker({
                   allowedModelIds: new Set([modelId]),
@@ -257,8 +310,11 @@ export function registerExecutorRuntimeEntrypointTests(): void {
           version: 1,
           binding,
           root: "project",
-          owner: { scopeKind: "global", serviceName: "veryfront-agent" },
-          source: { type: "release", releaseId: "synthetic-release" },
+          owner: capturedOwner,
+          source: {
+            type: "release",
+            releaseId: captured ? reference.releaseId : "synthetic-release",
+          },
           grant: {
             agentId: "writer",
             defaultModelId: modelId,
@@ -293,6 +349,7 @@ export function registerExecutorRuntimeEntrypointTests(): void {
           : {
             version: 1,
             mode: "project-tools",
+            ...(captured ? { projectExecutionConfiguration: { version: 1, reference } } : {}),
             ...(selectedSource ? { agentEntrypoint: { path: "agents/writer.md" } } : {}),
             binding,
             root: "project",
@@ -310,6 +367,16 @@ export function registerExecutorRuntimeEntrypointTests(): void {
           })
         );
         assertEquals(existsSync(marker), false);
+        if (
+          captured && (setting === "missing" || setting === "mismatch" || setting === "reserved")
+        ) {
+          await assertRejects(() => channel!.request("runtime.install", input));
+          assertEquals(existsSync(marker), false);
+          channel.close();
+          await channel.settled;
+          assertEquals(await exited, 0, stderr);
+          return;
+        }
         const installed = await channel.request("runtime.install", input).catch((error) => {
           throw new Error(`Executor installation failed: ${stderr}`, { cause: error });
         });
@@ -413,7 +480,13 @@ export function registerExecutorRuntimeEntrypointTests(): void {
             });
           }
         }
-        assertEquals(JSON.parse(await readFile(marker, "utf8")).pid, endpoint.pid);
+        const loaded = JSON.parse(await readFile(marker, "utf8"));
+        assertEquals(loaded.pid, endpoint.pid);
+        if (captured) {
+          assertEquals(loaded.captured, setting);
+          assertEquals(loaded.host, undefined);
+        }
+
         await assertRejects(() => channel!.request("runtime.install", input));
         if (profile === "project-tools") {
           await assertRejects(() => channel!.request("runtime.prepare", { agentId: "writer" }));
@@ -441,6 +514,7 @@ export function registerExecutorRuntimeEntrypointTests(): void {
               query: "approved",
               ...projectContext,
               toolCallId: "call",
+              ...(captured ? { captured: setting, host: null } : {}),
             },
           );
         }

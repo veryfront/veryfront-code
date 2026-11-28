@@ -1,3 +1,4 @@
+import type { CapturedProjectConfiguration } from "../project-env/captured-configuration.ts";
 import type { RuntimeConfigurationReference } from "#veryfront/agent/runtime/runtime-configuration-reference.ts";
 import { createInstalledConfigurationRegistry } from "./installed-configuration-registry.ts";
 import { EXECUTOR_MAX_TIMEOUT_MS } from "#veryfront/agent/executor/protocol.ts";
@@ -38,6 +39,8 @@ export type InstalledProjectAgentSessionOptions =
     lifetimeMs?: number;
     /** Default thirty seconds, clamped to the whole allocation and signed run deadline. */
     preparationMs?: number;
+    /** Distinct opt-in for captured authored-execution env delivery, never ambient HTTP inheritance. */
+    projectExecutionConfigurationVersion?: 1;
   };
 
 /**
@@ -68,6 +71,14 @@ export function createInstalledProjectAgentSessionResolver(
   ) {
     throw new TypeError("Invalid installed project release registry");
   }
+  const configured = options.projectExecutionConfigurationVersion;
+  if (
+    (configured !== undefined && configured !== 1) ||
+    (options.configurationReferences !== undefined) !== (configured === 1)
+  ) {
+    throw new TypeError("Mixed project execution configuration capability");
+  }
+  const configurations = new WeakMap<object, CapturedProjectConfiguration>();
   const captured = options.configurationReferences === undefined
     ? undefined
     : createInstalledConfigurationRegistry(snapshot.value, options.configurationReferences);
@@ -115,6 +126,7 @@ export function createInstalledProjectAgentSessionResolver(
     ) return undefined;
     let reference: BrokerRuntimeAgentExecutorInput["runtimeConfiguration"];
     let image: string | undefined;
+    let configuration: CapturedProjectConfiguration | undefined;
     if (captured) {
       try {
         const selected = captured.select(input.runtimeConfiguration);
@@ -125,6 +137,7 @@ export function createInstalledProjectAgentSessionResolver(
           reference.releaseId !== source.releaseId
         ) return undefined;
         image = selected.image;
+        configuration = selected.configuration;
       } catch {
         return undefined;
       }
@@ -136,6 +149,7 @@ export function createInstalledProjectAgentSessionResolver(
     }
     return image === undefined ? undefined : {
       image,
+      ...(configuration ? { configuration } : {}),
       ...(reference ? { runtimeConfiguration: reference } : {}),
       source: { type: "release" as const, releaseId: source.releaseId },
     };
@@ -189,7 +203,21 @@ export function createInstalledProjectAgentSessionResolver(
       ...(requestTimeoutMs === undefined ? {} : { requestTimeoutMs }),
       ...(cleanupTimeoutMs === undefined ? {} : { cleanupTimeoutMs }),
     };
+    if (selection.configuration) configurations.set(session, selection.configuration);
     return selection.runtimeConfiguration ? Object.freeze(session) : session;
   };
-  return Object.freeze(Object.assign(resolve, { resolveBoundSource }));
+  return Object.freeze(
+    Object.assign(resolve, {
+      resolveBoundSource,
+      getProjectExecutionConfiguration(session: Session) {
+        return configurations.get(session);
+      },
+      confirmProjectExecutionConfiguration(reference: RuntimeConfigurationReference) {
+        if (configured !== 1 || !captured) {
+          throw new TypeError("Project execution configuration unavailable");
+        }
+        return captured.select(reference).reference;
+      },
+    }),
+  );
 }
