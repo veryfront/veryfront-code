@@ -1,5 +1,5 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
-import { ToolCall } from "veryfront/chat";
+import { ChatContextProvider, ToolCall } from "veryfront/chat";
 import {
   DocsCode,
   DocsComposition,
@@ -14,6 +14,7 @@ import {
   erroredToolPart,
   loadedSkillToolPart,
   loadingSkillToolPart,
+  notConnectedToolPart,
   runningToolPart,
 } from "../fixtures/chat";
 import { StoryFrame } from "../support/StoryFrame";
@@ -56,6 +57,13 @@ function ToolCallDocsPage() {
         description="When a tool fails, the card surfaces the failure text in an error Alert."
       >
         <DocsExampleAuto of={ErrorState} />
+      </DocsSection>
+
+      <DocsSection
+        title="App not connected"
+        description="When a tool stops because its app isn't connected, the card names the app, shows the command that connects it, and runs the turn again."
+      >
+        <DocsExampleAuto of={NotConnected} />
       </DocsSection>
 
       <DocsSection
@@ -173,6 +181,33 @@ export const Completed: Story = {
   render: () => (
     <StoryFrame maxWidth="720px">
       <ToolCall tool={completedToolPart} defaultExpanded />
+    </StoryFrame>
+  ),
+};
+
+export const NotConnected: Story = {
+  tags: ["!dev"],
+  render: () => (
+    <StoryFrame maxWidth="720px">
+      <ChatContextProvider
+        value={{
+          messages: [],
+          isLoading: false,
+          error: null,
+          input: "",
+          setInput: () => {},
+          onSubmit: () => {},
+          onReload: () => {},
+          models: [],
+          attachments: [],
+          isEmpty: false,
+          isAtBottom: true,
+          scrollToBottom: () => {},
+          theme: {},
+        }}
+      >
+        <ToolCall tool={notConnectedToolPart} />
+      </ChatContextProvider>
     </StoryFrame>
   ),
 };
