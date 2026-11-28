@@ -69,14 +69,16 @@ export function createInstalledConfigurationRegistry(
     contents.set(key, Object.freeze({ image, configuration: Object.freeze(configuration) }));
   }
   const references = new Set<string>();
+  const deployments = new Set<string>();
   const referencedContents = new Set<string>();
   for (const raw of admitted.references) {
     const reference = snapshotRuntimeConfigurationReference(raw);
     const key = referenceKey(reference);
-    if (references.has(key) || !contents.has(contentKey(reference))) {
+    if (deployments.has(reference.deploymentId) || !contents.has(contentKey(reference))) {
       throw new TypeError("Invalid installed configuration reference");
     }
     references.add(key);
+    deployments.add(reference.deploymentId);
     referencedContents.add(contentKey(reference));
   }
   if (referencedContents.size !== contents.size) {

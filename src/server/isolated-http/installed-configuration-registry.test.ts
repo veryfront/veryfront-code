@@ -65,6 +65,19 @@ describe("exact installed configuration references", () => {
     assert(Object.isFrozen(registry.select(reference).reference));
     assert(Object.isFrozen(registry.select(reference).configuration.variables));
   });
+  it("refuses two valid configuration contents bound to the same deployment", () => {
+    const replacement = {
+      ...reference,
+      configurationId:
+        "configuration-0f57c2bb6846a391624d488ec82601eb2bcde66ad9a4f195591f67850d427da7",
+    };
+    assertThrows(() =>
+      createInstalledConfigurationRegistry([entry(), entry(replacement, "B")], {
+        version: 1,
+        references: [reference, replacement],
+      })
+    );
+  });
   it("refuses changed immutable values or metadata under a retained ID across registry reconstruction", () => {
     const capability = { version: 1 as const, references: [reference] };
     const first = createInstalledConfigurationRegistry([entry()], capability);
