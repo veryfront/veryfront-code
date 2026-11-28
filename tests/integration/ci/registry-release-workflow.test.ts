@@ -1571,6 +1571,24 @@ printf '%064d  %s\n' 0 "$1"
       ) {
         continue;
       }
+      if (name === "dispatch-framework-pins") {
+        // Runs no repository code at all: no checkout, no scripts, no local actions.
+        assertEquals(
+          jobSteps.map((step) => String(step.name ?? step.uses)),
+          ["Build dispatch payload", "Create release GitHub App token", "Trigger framework pin"],
+          `${name} must hold only its fixed dispatch steps`,
+        );
+        for (const step of jobSteps) {
+          const uses = String(step.uses ?? "");
+          assertEquals(uses.startsWith("./"), false, `${name} must not use local actions`);
+          assertEquals(uses.startsWith("actions/checkout@"), false, `${name} must not check out`);
+          if (uses !== "") {
+            assert(/@[0-9a-f]{40}$/.test(uses), `${name} must pin ${uses} to a commit`);
+          }
+          assertEquals(String(step.run ?? "").includes("scripts/"), false);
+        }
+        continue;
+      }
       assertEquals(name, "quality-gate-registry");
       assert(
         jobSteps.indexOf(registryStep) <

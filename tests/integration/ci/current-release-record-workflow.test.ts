@@ -197,6 +197,69 @@ describe("current release record", () => {
     assertEquals(String(step.run).includes("scripts/"), false);
   });
 
+  it("dispatches framework pins only after the record is published, one repository per job", async () => {
+    const all = await jobs();
+    const job = asRecord(all["dispatch-framework-pins"], "dispatch-framework-pins");
+    assertEquals(job.needs, ["quality-gate-registry", "publish-current-release"]);
+    for (
+      const clause of [
+        "github.event_name != 'pull_request'",
+        "github.ref == 'refs/heads/main'",
+        "needs.quality-gate-registry.result == 'success'",
+        "needs.quality-gate-registry.outputs.current_release != ''",
+        "needs.publish-current-release.result == 'success'",
+      ]
+    ) assertStringIncludes(String(job.if), clause);
+    assertEquals(job.permissions, {});
+    const strategy = asRecord(job.strategy, "pin dispatch strategy");
+    assertEquals(strategy["fail-fast"], false);
+    assertEquals(asRecord(strategy.matrix, "pin dispatch matrix").repository, [
+      "veryfront-api",
+      "veryfront-studio",
+      "veryfront-agent",
+      "veryfront-e2e",
+      "veryfront-operator",
+    ]);
+    assert(Array.isArray(job.steps));
+    const steps = job.steps.map((step) => asRecord(step, "pin dispatch step"));
+    const token = steps.find((step) => step.id === "release-app-token");
+    assertEquals(
+      asRecord(token?.with, "pin dispatch token inputs").repositories,
+      "${{ matrix.repository }}",
+      "each token reaches only the repository it dispatches to",
+    );
+    const dispatch = asRecord(
+      steps.find((step) => step.name === "Trigger framework pin")?.with,
+      "pin dispatch inputs",
+    );
+    assertEquals(dispatch.repository, "veryfront/${{ matrix.repository }}");
+    assertEquals(dispatch["event-type"], "veryfront-code-released");
+    assertEquals(
+      asRecord(steps.find((step) => step.id === "payload")?.env, "payload env").VERSION,
+      "${{ needs.quality-gate-registry.outputs.current_release }}",
+    );
+
+    // The record's own dispatch gate must not wait on these repositories.
+    const gate = asRecord(all["quality-gate-registry"], "quality-gate-registry");
+    assert(Array.isArray(gate.steps));
+    const gateSteps = JSON.stringify(gate.steps);
+    for (
+      const repository of [
+        "veryfront-api",
+        "veryfront-studio",
+        "veryfront-agent",
+        "veryfront-e2e",
+        "veryfront-operator",
+      ]
+    ) {
+      assertEquals(
+        gateSteps.includes(`veryfront/${repository}`),
+        false,
+        `${repository} is dispatched outside the registry gate`,
+      );
+    }
+  });
+
   it("creates the record from provenance that matches the published tarball", async () => {
     const result = await run();
     assertEquals(result.output.code, 0, stderr(result));
