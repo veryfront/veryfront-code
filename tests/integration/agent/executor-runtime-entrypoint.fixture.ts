@@ -1,3 +1,7 @@
+import {
+  executorBootstrapInstallationName,
+  executorBootstrapInstallations,
+} from "./executor-node-bootstrap-groups.fixture.ts";
 import "#veryfront/schemas/_test-setup.ts";
 import { spawn } from "node:child_process";
 import { randomBytes, randomUUID } from "node:crypto";
@@ -59,24 +63,9 @@ export function registerExecutorRuntimeEntrypointTests(): void {
       await executor?.close();
     }
   });
-  for (
-    const [profile, selectedSource, scenario] of [
-      ["runtime", false, undefined],
-      ["runtime", true, undefined],
-      ["project-tools", false, undefined],
-      ["project-tools", true, "a"],
-      ["project-tools", true, "b"],
-      ["project-tools", true, "retained"],
-      ["project-tools", true, "missing"],
-      ["project-tools", true, "mismatch"],
-      ["project-tools", true, "reserved"],
-      ["http", false, undefined],
-    ] as const
-  ) {
-    const selection = selectedSource
-      ? ` selected-source${scenario ? " captured-" + scenario : ""}`
-      : "";
-    const name = `loads a real project only after fixed ${profile}${selection} installation`;
+  for (const installation of executorBootstrapInstallations) {
+    const [profile, selectedSource, scenario] = installation;
+    const name = executorBootstrapInstallationName(installation);
     it(name, { timeout: 45_000 }, async () => {
       const captured = profile === "project-tools" && selectedSource;
       const setting = scenario === "retained" || scenario === "a"
