@@ -29,6 +29,20 @@ function entry(ref = reference, value = "A") {
   };
 }
 describe("exact installed configuration references", () => {
+  it("matches the API content digest using locale-independent key order", () => {
+    // Fixed API v1 digest: Z, a, Ä use UTF-16 order, regardless of host locale or insertion order.
+    const configurationId =
+      "configuration-b71a921222122fd6c156e1de2a1110e386257515ee2caea98f8b746e09c02714";
+    const ref = { ...reference, configurationId };
+    const registry = createInstalledConfigurationRegistry([{
+      ...entry(ref),
+      configuration: {
+        ...entry(ref).configuration,
+        variables: { Ä: "accent", a: "first lowercase", Z: "last capital" },
+      },
+    }], { references: [ref], version: 1 });
+    assertEquals(registry.select(ref).configuration.configurationId, configurationId);
+  });
   it("retains same-release content versions and deduplicates deployment provenance", () => {
     const a = entry(),
       bRef = {

@@ -46,7 +46,10 @@ export function snapshotCapturedProjectConfiguration(
     projectSlug,
     environmentName,
     variables: Object.fromEntries(
-      Object.keys(variables).sort().map((key) => [key, variables[key]]),
+      Object.keys(variables).sort((left, right) => {
+        if (left === right) return 0;
+        return left < right ? -1 : 1;
+      }).map((key) => [key, variables[key]]),
     ),
   });
   const id = "configuration-" + createHash("sha256").update(canonical, "utf8").digest("hex");

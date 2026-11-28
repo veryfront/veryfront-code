@@ -34,7 +34,8 @@ export function createInstalledConfigurationRegistry(
   const admitted = input.capability;
   if (
     !admitted || typeof admitted !== "object" || Array.isArray(admitted) ||
-    Object.keys(admitted).sort().join() !== "references,version" ||
+    Object.keys(admitted).length !== 2 ||
+    !Object.hasOwn(admitted, "references") || !Object.hasOwn(admitted, "version") ||
     admitted.version !== 1 || !Array.isArray(admitted.references) ||
     admitted.references.length < 1 || admitted.references.length > 64 ||
     !Array.isArray(input.installations) || input.installations.length < 1 ||
@@ -50,7 +51,8 @@ export function createInstalledConfigurationRegistry(
   for (const entry of input.installations) {
     if (
       !entry || typeof entry !== "object" || Array.isArray(entry) ||
-      Object.keys(entry).sort().join() !== "configuration,image"
+      Object.keys(entry).length !== 2 ||
+      !Object.hasOwn(entry, "configuration") || !Object.hasOwn(entry, "image")
     ) {
       throw new TypeError("Invalid installed configuration entry");
     }
